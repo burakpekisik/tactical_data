@@ -10,10 +10,7 @@
 #include "crypto_utils.h"
 #include "json_utils.h"
 #include "database.h"
-
-#define PORT 8080
-#define BUFFER_SIZE 8192
-#define MAX_CLIENTS 10
+#include "config.h"
 
 // Function prototypes
 int parse_protocol_message(const char* message, char** command, char** filename, char** content);
@@ -87,7 +84,7 @@ int main() {
     // Adres konfigurasyonu
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
+    address.sin_port = htons(CONFIG_PORT);
     
     // Socket'i porta bagla
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
@@ -97,14 +94,14 @@ int main() {
     }
     
     // Dinlemeye basla
-    if (listen(server_fd, MAX_CLIENTS) < 0) {
+    if (listen(server_fd, CONFIG_MAX_CLIENTS) < 0) {
         perror("Listen hatasi");
         db_close();
         exit(EXIT_FAILURE);
     }
     
     printf("Server baslatildi\n");
-    printf("Port %d'de sifreli JSON parse istekleri bekleniyor...\n", PORT);
+    printf("Port %d'de sifreli JSON parse istekleri bekleniyor...\n", CONFIG_PORT);
     printf("Desteklenen komutlar:\n");
     printf("  PARSE:filename:{json_data}      - Normal JSON parse\n");
     printf("  ENCRYPTED:filename:{hex_data}   - Sifreli JSON parse\n");
@@ -139,12 +136,12 @@ int main() {
 
 // Client ile iletisimi yonet
 void handle_client(int client_socket) {
-    char buffer[BUFFER_SIZE];
+    char buffer[CONFIG_BUFFER_SIZE];
     
     while (1) {
-        memset(buffer, 0, BUFFER_SIZE);
+        memset(buffer, 0, CONFIG_BUFFER_SIZE);
         
-        ssize_t bytes_received = read(client_socket, buffer, BUFFER_SIZE - 1);
+        ssize_t bytes_received = read(client_socket, buffer, CONFIG_BUFFER_SIZE - 1);
         if (bytes_received <= 0) {
             printf("Client baglantisi kesildi\n");
             fflush(stdout);

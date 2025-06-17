@@ -6,10 +6,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include "crypto_utils.h"
-
-#define PORT 8080
-#define BUFFER_SIZE 8192
-#define MAX_FILENAME 256
+#include "config.h"
 
 // Function prototypes
 char* read_file_content(const char* filename, size_t* file_size);
@@ -22,7 +19,7 @@ void show_menu(void);
 int main() {
     int sock = 0;
     struct sockaddr_in serv_addr;
-    char filename[MAX_FILENAME];
+    char filename[CONFIG_MAX_FILENAME];
     int choice;
     
     printf("Encrypted JSON Client - Sifreli dosya gonderme istemcisi\n");
@@ -36,7 +33,7 @@ int main() {
     
     // Server adres konfigurasyonu
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(PORT);
+    serv_addr.sin_port = htons(CONFIG_PORT);
     
     // Server IP adresini environment variable'dan al (Docker için)
     const char* server_host = getenv("SERVER_HOST");
@@ -44,7 +41,7 @@ int main() {
         server_host = "127.0.0.1"; // Default localhost
     }
     
-    printf("Server'a baglaniliyor: %s:%d\n", server_host, PORT);
+    printf("Server'a baglaniliyor: %s:%d\n", server_host, CONFIG_PORT);
     
     // Hostname veya IP adresini çözümle
     struct hostent *host_entry;
@@ -61,7 +58,7 @@ int main() {
     // Server'a baglan
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         printf("Baglanti hatasi\n");
-        printf("Server'in calistiginden emin olun (localhost:%d)\n", PORT);
+        printf("Server'in calistiginden emin olun (localhost:%d)\n", CONFIG_PORT);
         return -1;
     }
     
@@ -82,7 +79,7 @@ int main() {
         switch (choice) {
             case 1: // Normal JSON gonder
                 printf("JSON dosya adini girin: ");
-                if (fgets(filename, MAX_FILENAME, stdin) != NULL) {
+                if (fgets(filename, CONFIG_MAX_FILENAME, stdin) != NULL) {
                     filename[strcspn(filename, "\n")] = 0; // Newline kaldir
                     if (strlen(filename) > 0) {
                         if (send_json_file(sock, filename, 0) == 0) {
@@ -94,7 +91,7 @@ int main() {
                 
             case 2: // Sifreli JSON gonder
                 printf("JSON dosya adini girin: ");
-                if (fgets(filename, MAX_FILENAME, stdin) != NULL) {
+                if (fgets(filename, CONFIG_MAX_FILENAME, stdin) != NULL) {
                     filename[strcspn(filename, "\n")] = 0;
                     if (strlen(filename) > 0) {
                         if (send_json_file(sock, filename, 1) == 0) {
@@ -276,9 +273,9 @@ int send_json_file(int socket, const char* filename, int encrypt) {
 
 // Server yanitini isle
 void handle_server_response(int socket) {
-    char buffer[BUFFER_SIZE] = {0};
+    char buffer[CONFIG_BUFFER_SIZE] = {0};
     
-    ssize_t bytes_received = read(socket, buffer, BUFFER_SIZE - 1);
+    ssize_t bytes_received = read(socket, buffer, CONFIG_BUFFER_SIZE - 1);
     if (bytes_received > 0) {
         buffer[bytes_received] = '\0';
         printf("\nServer yaniti:\n");

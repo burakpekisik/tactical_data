@@ -13,11 +13,11 @@ LIBS = -lcjson -lsqlite3
 # Source files
 SERVER_SOURCES = $(SRC_DIR)/server/server.c
 JSON_SERVER_SOURCES = $(SRC_DIR)/server/json_server.c $(SRC_DIR)/common/json_utils.c
-ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/db_test_utils.c
+ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/common/config.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/db_test_utils.c
 
 CLIENT_SOURCES = $(SRC_DIR)/client/client.c
 JSON_CLIENT_SOURCES = $(SRC_DIR)/client/json_client.c $(SRC_DIR)/common/json_utils.c
-ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c
+ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/common/config.c $(SRC_DIR)/crypto/aes.c
 
 PARSER_SOURCES = $(SRC_DIR)/common/json_parser.c
 

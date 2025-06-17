@@ -3,13 +3,8 @@
 #include <string.h>
 #include <time.h>
 #include "crypto_utils.h"
+#include "config.h"
 #include "aes.h"
-
-// Sabit AES anahtarı (production'da güvenli key management kullanın)
-static const uint8_t DEFAULT_KEY[CRYPTO_KEY_SIZE] = {
-    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
-    0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c
-};
 
 // Veriyi şifrele
 crypto_result_t* encrypt_data(const char* plaintext, const uint8_t* key, const uint8_t* iv) {
@@ -39,7 +34,7 @@ crypto_result_t* encrypt_data(const char* plaintext, const uint8_t* key, const u
     // AES context oluştur
     struct AES_ctx ctx;
     if (key == NULL) {
-        key = DEFAULT_KEY;
+        key = CONFIG_DEFAULT_KEY;
     }
     
     AES_init_ctx_iv(&ctx, key, iv);
@@ -71,7 +66,7 @@ char* decrypt_data(const uint8_t* ciphertext, size_t length, const uint8_t* key,
     // AES context oluştur
     struct AES_ctx ctx;
     if (key == NULL) {
-        key = DEFAULT_KEY;
+        key = CONFIG_DEFAULT_KEY;
     }
     
     AES_init_ctx_iv(&ctx, key, iv);
