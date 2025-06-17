@@ -9,6 +9,7 @@
 #include <cjson/cJSON.h>
 #include "crypto_utils.h"
 #include "json_utils.h"
+#include "database.h"
 
 #define PORT 8080
 #define BUFFER_SIZE 8192
@@ -29,15 +30,57 @@ int main() {
     printf("===================================================\n");
     fflush(stdout);
     
+    // Database baslat
+    printf("Database baslatiiliyor...\n");
+    fflush(stdout);
+    
+    if (db_init("data/tactical_data.db") != 0) {
+        fprintf(stderr, "Database baglantisi basarisiz!\n");
+        fflush(stderr);
+        exit(EXIT_FAILURE);
+    }
+    
+    if (db_create_tables() != 0) {
+        fprintf(stderr, "Database tablolari olusturulamadi!\n");
+        fflush(stderr);
+        db_close();
+        exit(EXIT_FAILURE);
+    }
+    
+    printf("Database basariyla baslatildi ve tablolar hazir\n");
+    
+    // Test verilerini yükle (sadece ilk çalıştırmada)
+    printf("Test verileri kontrol ediliyor...\n");
+    unit_t *existing_units;
+    int unit_count;
+    
+    if (db_select_units(&existing_units, &unit_count) == 0) {
+        if (unit_count == 0) {
+            printf("Database boş, test verileri ekleniyor...\n");
+            if (db_insert_test_data() == 0) {
+                printf("Test verileri başarıyla eklendi\n");
+            } else {
+                printf("Test verileri eklenirken hata oluştu\n");
+            }
+        } else {
+            printf("Database'de %d birim mevcut, test verileri atlanıyor\n", unit_count);
+        }
+        if (existing_units) free(existing_units);
+    }
+    
+    fflush(stdout);
+    
     // Socket olustur
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
         perror("Socket olusturma hatasi");
+        db_close();
         exit(EXIT_FAILURE);
     }
     
     // Socket secenekleri
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
         perror("setsockopt hatasi");
+        db_close();
         exit(EXIT_FAILURE);
     }
     
@@ -49,12 +92,14 @@ int main() {
     // Socket'i porta bagla
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
         perror("Bind hatasi");
+        db_close();
         exit(EXIT_FAILURE);
     }
     
     // Dinlemeye basla
     if (listen(server_fd, MAX_CLIENTS) < 0) {
         perror("Listen hatasi");
+        db_close();
         exit(EXIT_FAILURE);
     }
     
@@ -86,6 +131,9 @@ int main() {
     }
     
     close(server_fd);
+    db_close();
+    printf("Server kapatildi ve database baglantisi sonlandirildi\n");
+    fflush(stdout);
     return 0;
 }
 

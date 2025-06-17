@@ -1,0 +1,164 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <sqlite3.h>
+#include <string.h>
+#include "../../include/database.h"
+
+extern sqlite3 *g_db;
+
+static int unit_callback(void *data, int argc, char **argv, char **azColName) {
+    unit_t **units = (unit_t **)((void**)data)[0];
+    int *count = (int *)((void**)data)[1];
+    int *capacity = (int *)((void**)data)[2];
+
+    if (*count >= *capacity) {
+        *capacity *= 2;
+        *units = realloc(*units, *capacity * sizeof(unit_t));
+    }
+
+    unit_t *unit = &(*units)[*count];
+    memset(unit, 0, sizeof(unit_t));
+
+    for(int i = 0; i < argc; i++) {
+        if (strcmp(azColName[i], "ID") == 0 && argv[i]) {
+            unit->id = atoi(argv[i]);
+        } else if (strcmp(azColName[i], "UNIT_ID") == 0 && argv[i]) {
+            strncpy(unit->unit_id, argv[i], sizeof(unit->unit_id) - 1);
+        } else if (strcmp(azColName[i], "UNIT_NAME") == 0 && argv[i]) {
+            strncpy(unit->unit_name, argv[i], sizeof(unit->unit_name) - 1);
+        } else if (strcmp(azColName[i], "UNIT_TYPE") == 0 && argv[i]) {
+            strncpy(unit->unit_type, argv[i], sizeof(unit->unit_type) - 1);
+        } else if (strcmp(azColName[i], "LOCATION") == 0 && argv[i]) {
+            strncpy(unit->location, argv[i], sizeof(unit->location) - 1);
+        } else if (strcmp(azColName[i], "ACTIVE") == 0 && argv[i]) {
+            unit->active = atoi(argv[i]);
+        } else if (strcmp(azColName[i], "CREATED_AT") == 0 && argv[i]) {
+            strncpy(unit->created_at, argv[i], sizeof(unit->created_at) - 1);
+        }
+    }
+    (*count)++;
+    return 0;
+}
+
+static int report_callback(void *data, int argc, char **argv, char **azColName) {
+    report_t **reports = (report_t **)((void**)data)[0];
+    int *count = (int *)((void**)data)[1];
+    int *capacity = (int *)((void**)data)[2];
+
+    if (*count >= *capacity) {
+        *capacity *= 2;
+        *reports = realloc(*reports, *capacity * sizeof(report_t));
+    }
+
+    report_t *report = &(*reports)[*count];
+    memset(report, 0, sizeof(report_t));
+
+    for(int i = 0; i < argc; i++) {
+        if (strcmp(azColName[i], "ID") == 0 && argv[i]) {
+            report->id = atoi(argv[i]);
+        } else if (strcmp(azColName[i], "UNIT_ID") == 0 && argv[i]) {
+            report->unit_id = atoi(argv[i]);
+        } else if (strcmp(azColName[i], "STATUS") == 0 && argv[i]) {
+            strncpy(report->status, argv[i], sizeof(report->status) - 1);
+        } else if (strcmp(azColName[i], "LATITUDE") == 0 && argv[i]) {
+            report->latitude = atof(argv[i]);
+        } else if (strcmp(azColName[i], "LONGITUDE") == 0 && argv[i]) {
+            report->longitude = atof(argv[i]);
+        } else if (strcmp(azColName[i], "DESCRIPTION") == 0 && argv[i]) {
+            strncpy(report->description, argv[i], sizeof(report->description) - 1);
+        } else if (strcmp(azColName[i], "TIMESTAMP") == 0 && argv[i]) {
+            report->timestamp = atol(argv[i]);
+        } else if (strcmp(azColName[i], "CREATED_AT") == 0 && argv[i]) {
+            strncpy(report->created_at, argv[i], sizeof(report->created_at) - 1);
+        }
+    }
+    (*count)++;
+    return 0;
+}
+
+int db_select_units(unit_t **units, int *count) {
+    char *zErrMsg = 0;
+    int rc;
+    char *sql = "SELECT * FROM UNITS ORDER BY CREATED_AT DESC";
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    *count = 0;
+    int capacity = 10;
+    *units = malloc(capacity * sizeof(unit_t));
+
+    void *callback_data[] = {units, count, &capacity};
+    
+    rc = sqlite3_exec(g_db, sql, unit_callback, callback_data, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error selecting units: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        free(*units);
+        return -1;
+    }
+
+    return 0;
+}
+
+int db_select_reports(report_t **reports, int *count) {
+    char *zErrMsg = 0;
+    int rc;
+    char *sql = "SELECT * FROM REPORTS ORDER BY TIMESTAMP DESC";
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    *count = 0;
+    int capacity = 10;
+    *reports = malloc(capacity * sizeof(report_t));
+
+    void *callback_data[] = {reports, count, &capacity};
+    
+    rc = sqlite3_exec(g_db, sql, report_callback, callback_data, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error selecting reports: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        free(*reports);
+        return -1;
+    }
+
+    return 0;
+}
+
+int db_select_reports_by_unit(int unit_id, report_t **reports, int *count) {
+    char *zErrMsg = 0;
+    char sql[256];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql), 
+        "SELECT * FROM REPORTS WHERE UNIT_ID = %d ORDER BY TIMESTAMP DESC", unit_id);
+
+    *count = 0;
+    int capacity = 10;
+    *reports = malloc(capacity * sizeof(report_t));
+
+    void *callback_data[] = {reports, count, &capacity};
+    
+    rc = sqlite3_exec(g_db, sql, report_callback, callback_data, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error selecting reports by unit: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        free(*reports);
+        return -1;
+    }
+
+    return 0;
+}

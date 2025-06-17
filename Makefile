@@ -8,12 +8,12 @@ DATA_DIR = data
 # Compiler settings
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -I$(INCLUDE_DIR)
-LIBS = -lcjson
+LIBS = -lcjson -lsqlite3
 
 # Source files
 SERVER_SOURCES = $(SRC_DIR)/server/server.c
 JSON_SERVER_SOURCES = $(SRC_DIR)/server/json_server.c $(SRC_DIR)/common/json_utils.c
-ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c
+ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/db_test_utils.c
 
 CLIENT_SOURCES = $(SRC_DIR)/client/client.c
 JSON_CLIENT_SOURCES = $(SRC_DIR)/client/json_client.c $(SRC_DIR)/common/json_utils.c
@@ -21,8 +21,11 @@ ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/commo
 
 PARSER_SOURCES = $(SRC_DIR)/common/json_parser.c
 
+# Database tools
+DATABASE_SOURCES = $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/open.c
+
 # Targets
-all: directories encrypted-server encrypted-client
+all: directories encrypted-server encrypted-client db-tools
 
 directories:
 	mkdir -p $(BIN_DIR) $(BUILD_DIR)
@@ -33,6 +36,15 @@ encrypted-server:
 encrypted-client:
 	$(CC) $(CFLAGS) -o $(BUILD_DIR)/encrypted_client $(ENCRYPTED_CLIENT_SOURCES) $(LIBS)
 
+# Database tools
+db-test-standalone:
+	$(CC) $(CFLAGS) -o $(BUILD_DIR)/db_test_standalone $(SRC_DIR)/database/tests/test_data_standalone.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(LIBS)
+
+db-test-operations:
+	$(CC) $(CFLAGS) -o $(BUILD_DIR)/db_test_operations $(SRC_DIR)/database/tests/test_operations.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(LIBS)
+
+db-tools: db-test-standalone db-test-operations
+
 # Run targets
 run-encrypted-server:
 	./$(BUILD_DIR)/encrypted_server
@@ -40,7 +52,14 @@ run-encrypted-server:
 run-encrypted-client:
 	./$(BUILD_DIR)/encrypted_client
 
-clean:
-	rm -rf $(BIN_DIR)/* $(BUILD_DIR)/*
+# Database run targets
+run-db-test-standalone:
+	./$(BUILD_DIR)/db_test_standalone
 
-.PHONY: all directories clean run-server run-client run-json-server run-json-client run-encrypted-server run-encrypted-client run-json-parser
+run-db-test-operations:
+	./$(BUILD_DIR)/db_test_operations
+
+clean:
+	rm -rf $(BIN_DIR)/* $(BUILD_DIR)/* *.db
+
+.PHONY: all directories clean run-server run-client run-json-server run-json-client run-encrypted-server run-encrypted-client run-json-parser db-tools db-test-standalone db-test-operations run-db-test-standalone run-db-test-operations

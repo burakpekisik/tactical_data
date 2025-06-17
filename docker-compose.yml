@@ -10,10 +10,17 @@ services:
     networks:
       - tactical-network
     volumes:
-      - ./data:/app/data:ro  # Data klasörünü read-only mount et
+      - ./data:/app/shared_data:ro  # Host data klasörünü read-only mount et
+      - tactical-db:/app/data       # Database için persistent volume
     restart: unless-stopped
     environment:
       - TERM=xterm
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     
   # Encrypted JSON Client (Interactive)
   encrypted-client:
@@ -22,17 +29,43 @@ services:
       dockerfile: Dockerfile.client
     container_name: tactical-data-client
     depends_on:
-      - encrypted-server
+      encrypted-server:
+        condition: service_healthy
     networks:
       - tactical-network
     volumes:
-      - ./data:/app/data:ro  # Data klasörünü read-only mount et
+      - ./data:/app/shared_data:ro  # Host data klasörünü read-only mount et
     stdin_open: true  # Interactive mode için
     tty: true         # TTY enable
     environment:
       - TERM=xterm
       - SERVER_HOST=encrypted-server  # Docker service adı
 
+  # Database Admin Tool (Opsiyonel - Development için)
+  db-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: tactical-db-admin
+    depends_on:
+      encrypted-server:
+        condition: service_healthy
+    networks:
+      - tactical-network
+    volumes:
+      - tactical-db:/app/data       # Database volume'ü mount et
+    stdin_open: true
+    tty: true
+    environment:
+      - TERM=xterm
+    command: ["bash"]  # Interactive shell için
+    profiles:
+      - admin  # Sadece profil ile çalıştır: docker-compose --profile admin up
+
 networks:
   tactical-network:
     driver: bridge
+
+volumes:
+  tactical-db:
+    driver: local

@@ -22,6 +22,9 @@ print_usage() {
     echo "  clean     - Container'ları ve image'ları temizle"
     echo "  logs      - Server loglarını göster"
     echo "  status    - Container durumlarını göster"
+    echo "  db-admin  - Database admin console'u açar"
+    echo "  db-test   - Database test araçlarını çalıştır"
+    echo "  db-backup - Database'i yedekle"
     echo ""
     echo "Örnekler:"
     echo "  $0 build    # Image'ları derle"
@@ -81,6 +84,35 @@ show_status() {
     echo ""
     echo -e "${GREEN}Docker image'ları:${NC}"
     docker images | grep "tactical\|encrypted"
+    echo ""
+    echo -e "${GREEN}Database volume durumu:${NC}"
+    docker volume ls | grep tactical
+}
+
+start_db_admin() {
+    echo -e "${GREEN}Database Admin Console başlatılıyor...${NC}"
+    echo -e "${YELLOW}SQLite console'u açılacak. Çıkmak için .quit yazın.${NC}"
+    docker compose --profile admin run --rm db-admin sqlite3 /app/data/tactical_data.db
+}
+
+run_db_test() {
+    echo -e "${GREEN}Database test araçları çalıştırılıyor...${NC}"
+    docker compose --profile admin run --rm db-admin bash -c "
+        echo 'Database test araçları derleniyor...'
+        make db-tools
+        echo 'Test verileri kontrol ediliyor...'
+        ./build/db_test
+    "
+}
+
+backup_database() {
+    echo -e "${GREEN}Database yedekleniyor...${NC}"
+    BACKUP_FILE="tactical_data_backup_$(date +%Y%m%d_%H%M%S).db"
+    docker compose --profile admin run --rm -v "$(pwd):/backup" db-admin bash -c "
+        cp /app/data/tactical_data.db /backup/$BACKUP_FILE
+        echo 'Database yedeklendi: $BACKUP_FILE'
+    "
+    echo -e "${GREEN}Yedek dosyası: $BACKUP_FILE${NC}"
 }
 
 case "${1:-}" in
@@ -107,6 +139,15 @@ case "${1:-}" in
         ;;
     status)
         show_status
+        ;;
+    db-admin)
+        start_db_admin
+        ;;
+    db-test)
+        run_db_test
+        ;;
+    db-backup)
+        backup_database
         ;;
     help|--help|-h)
         print_usage
