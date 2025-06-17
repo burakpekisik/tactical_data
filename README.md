@@ -19,22 +19,82 @@ Bu proje, C dilinde yazılmış TCP server-client mesajlaşma sistemi ve JSON do
 
 ## 🚀 Kurulum ve Çalıştırma
 
-### Gereksinimler
+### Yöntem 1: Docker ile Çalıştırma (Önerilen)
+
+#### Gereksinimler
+- Docker
+- Docker Compose
+
+#### Hızlı Başlangıç
+```bash
+# 1. Image'ları derle
+./docker.sh build
+
+# 2. Server'ı başlat
+./docker.sh server
+
+# 3. Başka bir terminalde client'ı başlat
+./docker.sh client
+```
+
+#### Docker Komutları
+```bash
+./docker.sh build     # Image'ları derle
+./docker.sh server    # Server'ı başlat
+./docker.sh client    # Client'ı interactive modda başlat
+./docker.sh both      # Server ve client'ı birlikte başlat
+./docker.sh stop      # Tüm container'ları durdur
+./docker.sh clean     # Container'ları ve image'ları temizle
+./docker.sh logs      # Server loglarını göster
+./docker.sh status    # Container durumlarını göster
+```
+
+### Yöntem 2: Manuel Derleme
+
+#### Gereksinimler
 ```bash
 sudo apt update
 sudo apt install libcjson-dev gcc make
 ```
 
-### 1. Derleme
+#### Derleme
 ```bash
 # Tüm programları derle
 make
 
-# Veya sadece JSON sistemi:
-make json_server json_client
+# Veya sadece encrypted sistemi:
+make encrypted-server encrypted-client
 ```
 
-## 📡 JSON File Transfer Sistemi
+## � Docker Kullanımı
+
+### Docker Compose ile Çalıştırma
+```bash
+# Server'ı arka planda başlat
+docker-compose up -d encrypted-server
+
+# Client'ı interactive modda başlat
+docker-compose run --rm encrypted-client
+
+# Her ikisini birden başlat
+docker-compose up
+```
+
+### Manuel Docker Komutları
+```bash
+# Server image'ını derle ve çalıştır
+docker build -f Dockerfile.server -t tactical-server .
+docker run -p 8080:8080 tactical-server
+
+# Client image'ını derle ve çalıştır
+docker build -f Dockerfile.client -t tactical-client .
+docker run -it --network host tactical-client
+```
+
+### Docker Network
+Container'lar `tactical-network` bridge network'ü üzerinde haberleşir. Client otomatik olarak server'a bağlanır.
+
+## �📡 JSON File Transfer Sistemi
 
 ### Protocol Format
 ```
@@ -120,16 +180,28 @@ skills: Array (4 oge)
 =============
 ```
 
-## 🛠️ Makefile Komutları
+## 🛠️ Geliştirme Komutları
 
+### Docker Komutları (Önerilen)
 ```bash
-make                    # Tüm programları derle
-make json_server        # JSON server'ı derle
-make json_client        # JSON client'ı derle
-make clean              # Temizlik
-make run-json-server    # JSON server'ı çalıştır
-make run-json-client    # JSON client'ı çalıştır
-make help               # Yardım
+./docker.sh build          # Image'ları derle
+./docker.sh server         # Server'ı başlat
+./docker.sh client         # Client'ı başlat
+./docker.sh both           # Server ve client'ı birlikte başlat
+./docker.sh stop           # Container'ları durdur
+./docker.sh clean          # Temizlik
+./docker.sh logs           # Server logları
+./docker.sh status         # Durum kontrolü
+```
+
+### Makefile Komutları (Manuel)
+```bash
+make                        # Tüm programları derle
+make encrypted-server       # Encrypted server'ı derle
+make encrypted-client       # Encrypted client'ı derle
+make clean                  # Temizlik
+make run-encrypted-server   # Encrypted server'ı çalıştır
+make run-encrypted-client   # Encrypted client'ı çalıştır
 ```
 
 ## 🔧 Teknik Detaylar

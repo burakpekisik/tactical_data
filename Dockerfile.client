@@ -1,0 +1,21 @@
+# Client için Dockerfile
+FROM ubuntu:22.04
+
+# Sistem güncellemelerini ve gerekli paketleri yükle
+RUN apt-get update && apt-get install -y \
+    gcc \
+    make \
+    libcjson-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Çalışma dizinini oluştur
+WORKDIR /app
+
+# Proje dosyalarını kopyala
+COPY . .
+
+# Executable'ları derle
+RUN make directories && make encrypted-client
+
+# Client'ı başlat (interactive mode için)
+CMD ["./build/encrypted_client"]

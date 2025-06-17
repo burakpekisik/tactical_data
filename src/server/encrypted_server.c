@@ -27,6 +27,7 @@ int main() {
     
     printf("Encrypted JSON Server - Sifreli dosya parse sunucusu\n");
     printf("===================================================\n");
+    fflush(stdout);
     
     // Socket olustur
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
@@ -63,9 +64,11 @@ int main() {
     printf("  PARSE:filename:{json_data}      - Normal JSON parse\n");
     printf("  ENCRYPTED:filename:{hex_data}   - Sifreli JSON parse\n");
     printf("Cikis icin Ctrl+C'ye basin\n\n");
+    fflush(stdout);
     
     while (1) {
         printf("Yeni baglanti bekleniyor...\n");
+        fflush(stdout);
         
         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
             perror("Accept hatasi");
@@ -74,10 +77,12 @@ int main() {
         
         printf("Yeni client baglandi: %s:%d\n", 
                inet_ntoa(address.sin_addr), ntohs(address.sin_port));
+        fflush(stdout);
         
         handle_client(new_socket);
         close(new_socket);
         printf("Client baglantisi kapatildi\n\n");
+        fflush(stdout);
     }
     
     close(server_fd);
@@ -94,6 +99,7 @@ void handle_client(int client_socket) {
         ssize_t bytes_received = read(client_socket, buffer, BUFFER_SIZE - 1);
         if (bytes_received <= 0) {
             printf("Client baglantisi kesildi\n");
+            fflush(stdout);
             break;
         }
         
@@ -101,6 +107,7 @@ void handle_client(int client_socket) {
         
         char *current_time = get_current_time();
         printf("[%s] Mesaj alindi (%zd byte)\n", current_time, bytes_received);
+        fflush(stdout);
         free(current_time);
         
         // Protokol mesajini parse et
@@ -116,15 +123,18 @@ void handle_client(int client_socket) {
         
         printf("Komut: %s\n", command);
         printf("Dosya: %s\n", filename);
+        fflush(stdout);
         
         char *parsed_result = NULL;
         
         // Komut tipine gore islem yap
         if (strcmp(command, "PARSE") == 0) {
             printf("Normal JSON parse ediliyor...\n");
+            fflush(stdout);
             parsed_result = parse_json_to_string(content, filename);
         } else if (strcmp(command, "ENCRYPTED") == 0) {
             printf("Sifreli JSON parse ediliyor...\n");
+            fflush(stdout);
             parsed_result = handle_encrypted_request(filename, content);
         } else {
             parsed_result = malloc(256);
@@ -135,6 +145,7 @@ void handle_client(int client_socket) {
         if (parsed_result != NULL) {
             send(client_socket, parsed_result, strlen(parsed_result), 0);
             printf("Parse sonucu gonderildi\n");
+            fflush(stdout);
             free(parsed_result);
         }
         

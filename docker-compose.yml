@@ -1,0 +1,38 @@
+services:
+  # Encrypted JSON Server
+  encrypted-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: tactical-data-server
+    ports:
+      - "8080:8080"
+    networks:
+      - tactical-network
+    volumes:
+      - ./data:/app/data:ro  # Data klasörünü read-only mount et
+    restart: unless-stopped
+    environment:
+      - TERM=xterm
+    
+  # Encrypted JSON Client (Interactive)
+  encrypted-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: tactical-data-client
+    depends_on:
+      - encrypted-server
+    networks:
+      - tactical-network
+    volumes:
+      - ./data:/app/data:ro  # Data klasörünü read-only mount et
+    stdin_open: true  # Interactive mode için
+    tty: true         # TTY enable
+    environment:
+      - TERM=xterm
+      - SERVER_HOST=encrypted-server  # Docker service adı
+
+networks:
+  tactical-network:
+    driver: bridge

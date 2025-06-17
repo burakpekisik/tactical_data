@@ -1,0 +1,28 @@
+# Server için Dockerfile
+FROM ubuntu:22.04
+
+# Sistem güncellemelerini ve gerekli paketleri yükle
+RUN apt-get update && apt-get install -y \
+    gcc \
+    make \
+    libcjson-dev \
+    coreutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Çalışma dizinini oluştur
+WORKDIR /app
+
+# Proje dosyalarını kopyala
+COPY . .
+
+# Executable'ları derle
+RUN make directories && make encrypted-server
+
+# Port'u expose et
+EXPOSE 8080
+
+# Unbuffered output için
+ENV TERM=xterm
+
+# Server'ı başlat
+CMD ["stdbuf", "-o0", "-e0", "./build/encrypted_server"]

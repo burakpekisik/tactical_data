@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include "crypto_utils.h"
 
 #define PORT 8080
@@ -37,9 +38,24 @@ int main() {
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(PORT);
     
-    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
-        printf("Gecersiz adres\n");
-        return -1;
+    // Server IP adresini environment variable'dan al (Docker için)
+    const char* server_host = getenv("SERVER_HOST");
+    if (server_host == NULL) {
+        server_host = "127.0.0.1"; // Default localhost
+    }
+    
+    printf("Server'a baglaniliyor: %s:%d\n", server_host, PORT);
+    
+    // Hostname veya IP adresini çözümle
+    struct hostent *host_entry;
+    if (inet_pton(AF_INET, server_host, &serv_addr.sin_addr) <= 0) {
+        // IP adresi değilse hostname olarak çözümle
+        host_entry = gethostbyname(server_host);
+        if (host_entry == NULL) {
+            printf("Host cozumlenemedi: %s\n", server_host);
+            return -1;
+        }
+        serv_addr.sin_addr = *((struct in_addr*)host_entry->h_addr_list[0]);
     }
     
     // Server'a baglan
