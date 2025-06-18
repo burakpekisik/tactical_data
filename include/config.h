@@ -9,6 +9,19 @@
 #define CONFIG_MAX_CLIENTS 10
 #define CONFIG_MAX_FILENAME 256
 
+// Queue Configuration
+#define CONFIG_MAX_QUEUE_SIZE 20
+#define CONFIG_QUEUE_TIMEOUT 300  // 5 dakika
+#define CONFIG_QUEUE_CHECK_INTERVAL 2  // 2 saniye
+
+// Thread Monitoring Configuration
+#define CONFIG_MAX_THREAD_NAME 64
+#define CONFIG_THREAD_LOG_INTERVAL 10  // saniye
+
+// Health Check Configuration
+#define CONFIG_ENABLE_HEALTHCHECK_LOGGING 1
+#define CONFIG_HEALTHCHECK_MIN_MESSAGE_SIZE 5
+
 // Crypto Configuration
 #define CONFIG_CRYPTO_KEY_SIZE 16
 extern const uint8_t CONFIG_DEFAULT_KEY[CONFIG_CRYPTO_KEY_SIZE];

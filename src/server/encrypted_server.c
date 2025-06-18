@@ -2,29 +2,47 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <time.h>
 #include <cjson/cJSON.h>
+#include <pthread.h>
 #include "crypto_utils.h"
 #include "json_utils.h"
 #include "database.h"
 #include "config.h"
+#include "thread_monitor.h"
 
 // Function prototypes
 int parse_protocol_message(const char* message, char** command, char** filename, char** content);
-void handle_client(int client_socket);
+void* handle_client(void* arg);
 char* handle_encrypted_request(const char* filename, const char* encrypted_content);
+void* queue_processor(void* arg);
 
 int main() {
     int server_fd, new_socket;
     struct sockaddr_in address;
     int opt = 1;
     int addrlen = sizeof(address);
+
+    // Thread monitoring sistemini başlat
+    init_thread_monitoring();
+
+    pthread_t monitor_thread;
+    pthread_create(&monitor_thread, NULL, thread_monitor, NULL);
+    pthread_detach(monitor_thread);
+    
+    // Queue processor thread'ini başlat
+    pthread_t queue_thread;
+    pthread_create(&queue_thread, NULL, queue_processor, NULL);
+    pthread_detach(queue_thread);
     
     printf("Encrypted JSON Server - Sifreli dosya parse sunucusu\n");
     printf("===================================================\n");
+    printf("Thread monitoring sistemi aktif\n");
+    printf("Queue processing sistemi aktif\n");
     fflush(stdout);
     
     // Database baslat
@@ -116,14 +134,52 @@ int main() {
             perror("Accept hatasi");
             continue;
         }
+
+        char client_ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &address.sin_addr, client_ip, INET_ADDRSTRLEN);
+        int client_port = ntohs(address.sin_port);
         
-        printf("Yeni client baglandi: %s:%d\n", 
-               inet_ntoa(address.sin_addr), ntohs(address.sin_port));
-        fflush(stdout);
+        // Health check detection - Docker daemon IP'si veya localhost kontrolü
+        if (strcmp(client_ip, "172.17.0.1") == 0 || strcmp(client_ip, "127.0.0.1") == 0) {
+            printf("🔍 HEALTHCHECK: Docker health check bağlantısı tespit edildi: %s:%d\n", 
+                   client_ip, client_port);
+            increment_healthcheck_count();
+            increment_total_connections();
+            fflush(stdout);
+            close(new_socket);
+            continue;
+        }
         
-        handle_client(new_socket);
-        close(new_socket);
-        printf("Client baglantisi kapatildi\n\n");
+        printf("✅ CLIENT: Gerçek client bağlantısı: %s:%d (socket_fd: %d)\n", 
+               client_ip, client_port, new_socket);
+        increment_total_connections();
+
+        // Thread kapasitesi kontrolü
+        if (get_active_thread_count() >= CONFIG_MAX_CLIENTS) {
+            printf("⚠️  Server dolu! Client queue'ya ekleniyor: %s:%d\n", client_ip, client_port);
+            
+            // Client'ı queue'ya ekle
+            add_to_queue(new_socket, address);
+            continue;
+        }
+        
+        pthread_t thread_id;
+        int *client_socket_ptr = malloc(sizeof(int));
+        *client_socket_ptr = new_socket;
+
+        if (pthread_create(&thread_id, NULL, handle_client, client_socket_ptr) != 0) {
+            perror("Thread olusturma hatasi");
+            free(client_socket_ptr);
+            close(new_socket);
+            continue;
+        }
+
+        add_thread_info(thread_id, new_socket, client_ip, client_port);
+
+        
+        pthread_detach(thread_id);
+        printf("Client thread olusturuldu (Thread ID: %lu, Aktif: %d)\n", 
+               thread_id, get_active_thread_count());
         fflush(stdout);
     }
     
@@ -135,20 +191,56 @@ int main() {
 }
 
 // Client ile iletisimi yonet
-void handle_client(int client_socket) {
+void* handle_client(void* arg) {
+    int client_socket = *(int*)arg;
+    pthread_t current_thread = pthread_self();
+    free(arg); // malloc'ed memory'yi temizle
+
+    printf("Client thread baslatildi (Thread ID: %lu, Socket: %d)\n", 
+           current_thread, client_socket);
+    fflush(stdout);
+
     char buffer[CONFIG_BUFFER_SIZE];
+    int request_count = 0;
     
     while (1) {
         memset(buffer, 0, CONFIG_BUFFER_SIZE);
         
         ssize_t bytes_received = read(client_socket, buffer, CONFIG_BUFFER_SIZE - 1);
         if (bytes_received <= 0) {
-            printf("Client baglantisi kesildi\n");
-            fflush(stdout);
+            if (bytes_received == 0) {
+                printf("Client normal olarak ayrıldı (Thread: %lu)\n", current_thread);
+            } else {
+                printf("Client bağlantı hatası (Thread: %lu, Hata: %s)\n", 
+                       current_thread, strerror(errno));
+            }
             break;
         }
         
+        request_count++;
+        printf("İstek alındı (Thread: %lu, İstek #%d, Boyut: %zd bytes)\n", 
+               current_thread, request_count, bytes_received);
+        
         buffer[bytes_received] = '\0';
+        
+        // Health check detection - Docker healthcheck'i tespit et
+        if (bytes_received == 0 || (bytes_received > 0 && buffer[0] == '\0')) {
+            printf("🔍 HEALTHCHECK: Docker health check tespit edildi (Thread: %lu)\n", current_thread);
+            fflush(stdout);
+            close(client_socket);
+            remove_thread_info(current_thread);
+            return NULL;
+        }
+        
+        // Boş veya çok kısa mesajları health check olarak değerlendir
+        if (bytes_received < 5) {
+            printf("🔍 HEALTHCHECK: Kısa mesaj - muhtemelen health check (Thread: %lu, Boyut: %zd)\n", 
+                   current_thread, bytes_received);
+            fflush(stdout);
+            close(client_socket);
+            remove_thread_info(current_thread);
+            return NULL;
+        }
         
         char *current_time = get_current_time();
         printf("[%s] Mesaj alindi (%zd byte)\n", current_time, bytes_received);
@@ -199,6 +291,19 @@ void handle_client(int client_socket) {
         free(filename);
         free(content);
     }
+
+    close(client_socket);
+    printf("Client bağlantısı kapatıldı (Thread: %lu, Toplam istek: %d)\n", 
+           current_thread, request_count);
+    
+    // Thread bilgilerini temizle
+    remove_thread_info(current_thread);
+    
+    printf("✅ Thread slot serbest kaldı - Queue kontrol ediliyor...\n");
+    fflush(stdout);
+    
+    fflush(stdout);
+    return NULL; // void* döndürmek için
 }
 
 // Sifreli istek ile bas et
@@ -285,6 +390,34 @@ int parse_protocol_message(const char* message, char** command, char** filename,
     strcpy(*content, second_colon + 1);
     
     return 0;
+}
+
+// Queue processor thread - boş slot olduğunda queue'yu işler
+void* queue_processor(void* arg) {
+    (void)arg; // unused parameter warning'ini bastır
+    
+    printf("Queue processor thread başlatıldı\n");
+    fflush(stdout);
+    
+    while (1) {
+        // Queue'da client var mı ve boş thread slot'u var mı kontrol et
+        while (get_queue_size() > 0 && get_active_thread_count() < CONFIG_MAX_CLIENTS) {
+            printf("🔄 Queue işleniyor... (Queue: %d, Aktif: %d/%d)\n", 
+                   get_queue_size(), get_active_thread_count(), CONFIG_MAX_CLIENTS);
+            
+            if (process_queue() == 0) {
+                break; // Queue boş
+            }
+            
+            // Thread oluşturma sonrası kısa bekleme
+            sleep(100000); // 100ms
+        }
+        
+        // Queue kontrol aralığı
+        sleep(CONFIG_QUEUE_CHECK_INTERVAL);
+    }
+    
+    return NULL;
 }
 
 

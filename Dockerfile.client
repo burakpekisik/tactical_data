@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     libcjson-dev \
     libsqlite3-dev \
     sqlite3 \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Çalışma dizinini oluştur

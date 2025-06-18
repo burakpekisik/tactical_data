@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y \
     libsqlite3-dev \
     sqlite3 \
     coreutils \
+    procps \
+    libssl-dev \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
@@ -18,8 +20,8 @@ WORKDIR /app
 # Proje dosyalarını kopyala
 COPY . .
 
-# Executable'ları derle
-RUN make directories && make encrypted-server
+# Executable'ları derle - thread_monitor.c dahil
+RUN make directories && make all
 
 # Database dizinini oluştur
 RUN mkdir -p /app/data
@@ -33,9 +35,9 @@ EXPOSE 8080
 # Unbuffered output için
 ENV TERM=xterm
 
-# Healthcheck ekle - TCP port kontrol
+# Process tabanlı healthcheck - port'a bağlanmaz
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD nc -z localhost 8080 || exit 1
+    CMD pgrep -f encrypted_server > /dev/null || exit 1
 
-# Server'ı başlat (database dosyasını data dizininde tutacak şekilde)
+# Server'ı başlat
 CMD ["stdbuf", "-o0", "-e0", "./build/encrypted_server"]
