@@ -38,10 +38,10 @@ encrypted-client:
 
 # Database tools
 db-test-standalone:
-	$(CC) $(CFLAGS) -o $(BUILD_DIR)/db_test_standalone $(SRC_DIR)/database/tests/test_data_standalone.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(LIBS)
+	$(CC) $(CFLAGS) -o $(BUILD_DIR)/db_test_standalone $(SRC_DIR)/database/tests/test_data_standalone.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/common/json_utils.c $(LIBS)
 
 db-test-operations:
-	$(CC) $(CFLAGS) -o $(BUILD_DIR)/db_test_operations $(SRC_DIR)/database/tests/test_operations.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(LIBS)
+	$(CC) $(CFLAGS) -o $(BUILD_DIR)/db_test_operations $(SRC_DIR)/database/tests/test_operations.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/common/json_utils.c $(LIBS)
 
 db-tools: db-test-standalone db-test-operations
 

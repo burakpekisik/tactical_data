@@ -266,11 +266,22 @@ void* handle_client(void* arg) {
         
         // Komut tipine gore islem yap
         if (strcmp(command, "PARSE") == 0) {
-            printf("Normal JSON parse ediliyor...\n");
+            printf("Normal JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
-            parsed_result = parse_json_to_string(content, filename);
+            
+            // JSON'u tactical data struct'ına parse et
+            tactical_data_t* tactical_data = parse_json_to_tactical_data(content, filename);
+            if (tactical_data != NULL && tactical_data->is_valid) {
+                // Tactical data'yı database'e kaydet ve response al
+                parsed_result = db_save_tactical_data_and_get_response(tactical_data, filename);
+                free_tactical_data(tactical_data);
+            } else {
+                parsed_result = malloc(256);
+                strcpy(parsed_result, "HATA: JSON tactical data formatına uygun değil");
+                if (tactical_data) free_tactical_data(tactical_data);
+            }
         } else if (strcmp(command, "ENCRYPTED") == 0) {
-            printf("Sifreli JSON parse ediliyor...\n");
+            printf("Sifreli JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
             parsed_result = handle_encrypted_request(filename, content);
         } else {
@@ -347,10 +358,21 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
     
     printf("Decrypted JSON: %s\n", decrypted_json);
     
-    // JSON'u parse et
-    char* result = parse_json_to_string(decrypted_json, filename);
-    free(decrypted_json);
+    // JSON'u tactical data struct'ına parse et
+    tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename);
+    char* result;
     
+    if (tactical_data != NULL && tactical_data->is_valid) {
+        // Tactical data'yı database'e kaydet ve response al
+        result = db_save_tactical_data_and_get_response(tactical_data, filename);
+        free_tactical_data(tactical_data);
+    } else {
+        result = malloc(256);
+        strcpy(result, "HATA: Decrypted JSON tactical data formatına uygun değil");
+        if (tactical_data) free_tactical_data(tactical_data);
+    }
+    
+    free(decrypted_json);
     return result;
 }
 

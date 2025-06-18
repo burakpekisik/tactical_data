@@ -10,8 +10,9 @@ services:
     networks:
       - tactical-network
     volumes:
-      - ./data:/app/shared_data:ro  # Host data klasörünü read-only mount et
-      - tactical-db:/app/data       # Database için persistent volume
+      - type: bind
+        source: ./data
+        target: /app/data
     restart: unless-stopped
     environment:
       - TERM=xterm
