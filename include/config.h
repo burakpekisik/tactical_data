@@ -25,9 +25,14 @@
 #define CONFIG_ENABLE_HEALTHCHECK_LOGGING 1
 #define CONFIG_HEALTHCHECK_MIN_MESSAGE_SIZE 5
 
-// Şifreleme konfigürasyonu
-#define CONFIG_CRYPTO_KEY_SIZE 16
-extern const uint8_t CONFIG_DEFAULT_KEY[CONFIG_CRYPTO_KEY_SIZE];
+// Şifreleme konfigürasyonu - AES256 için 32 byte anahtar
+#define CONFIG_CRYPTO_KEY_SIZE 32
+#define CONFIG_AES_IV_SIZE 16
+
+// ECDH konfigürasyonu
+#define CONFIG_ECDH_KEY_SIZE ECC_PRV_KEY_SIZE
+#define CONFIG_ECDH_PUBLIC_KEY_SIZE ECC_PUB_KEY_SIZE
+#define CONFIG_ECDH_SHARED_SECRET_SIZE ECC_PUB_KEY_SIZE
 
 // Veritabanı konfigürasyonu
 #define CONFIG_DB_PATH "data/tactical_data.db"

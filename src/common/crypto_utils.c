@@ -2,9 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include "crypto_utils.h"
 #include "config.h"
 #include "aes.h"
+#include "ecdh.h"
 
 // Veriyi şifrele
 crypto_result_t* encrypt_data(const char* plaintext, const uint8_t* key, const uint8_t* iv) {
@@ -34,7 +37,10 @@ crypto_result_t* encrypt_data(const char* plaintext, const uint8_t* key, const u
     // AES context oluştur
     struct AES_ctx ctx;
     if (key == NULL) {
-        key = CONFIG_DEFAULT_KEY;
+        fprintf(stderr, "Error: AES anahtarı NULL - ECDH ile anahtar üretilmeli\n");
+        free(padded_data);
+        free(result);
+        return NULL;
     }
     
     AES_init_ctx_iv(&ctx, key, iv);
@@ -66,7 +72,9 @@ char* decrypt_data(const uint8_t* ciphertext, size_t length, const uint8_t* key,
     // AES context oluştur
     struct AES_ctx ctx;
     if (key == NULL) {
-        key = CONFIG_DEFAULT_KEY;
+        fprintf(stderr, "Error: AES anahtarı NULL - ECDH ile anahtar üretilmeli\n");
+        free(decrypted_data);
+        return NULL;
     }
     
     AES_init_ctx_iv(&ctx, key, iv);
@@ -211,4 +219,114 @@ uint8_t* hex_to_bytes(const char* hex, size_t* out_length) {
     }
     
     return bytes;
+}
+
+// ECDH anahtar yönetimi fonksiyonları
+
+// Güvenli rastgele sayı üretimi
+int generate_secure_random(uint8_t* buffer, size_t length) {
+    if (buffer == NULL || length == 0) {
+        return 0;
+    }
+    
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        // Fallback to time-based random
+        srand((unsigned int)time(NULL));
+        for (size_t i = 0; i < length; i++) {
+            buffer[i] = (uint8_t)(rand() & 0xFF);
+        }
+        return 1;
+    }
+    
+    ssize_t bytes_read = read(fd, buffer, length);
+    close(fd);
+    
+    return (bytes_read == (ssize_t)length) ? 1 : 0;
+}
+
+// ECDH context'i başlat
+int ecdh_init_context(ecdh_context_t* ctx) {
+    if (ctx == NULL) {
+        return 0;
+    }
+    
+    memset(ctx, 0, sizeof(ecdh_context_t));
+    ctx->initialized = 0;
+    
+    return 1;
+}
+
+// ECDH anahtar çifti üret
+int ecdh_generate_keypair(ecdh_context_t* ctx) {
+    if (ctx == NULL) {
+        return 0;
+    }
+    
+    // Rastgele private key üret
+    if (!generate_secure_random(ctx->private_key, ECC_PRV_KEY_SIZE)) {
+        printf("Error: Rastgele private key üretilemedi\n");
+        return 0;
+    }
+    
+    // Public key üret
+    if (!ecdh_generate_keys(ctx->public_key, ctx->private_key)) {
+        printf("Error: ECDH anahtar çifti üretilemedi\n");
+        return 0;
+    }
+    
+    ctx->initialized = 1;
+    printf("ECDH anahtar çifti başarıyla üretildi\n");
+    
+    return 1;
+}
+
+// Shared secret hesapla
+int ecdh_compute_shared_secret(ecdh_context_t* ctx, const uint8_t* other_public_key) {
+    if (ctx == NULL || other_public_key == NULL || !ctx->initialized) {
+        return 0;
+    }
+    
+    // Shared secret hesapla
+    if (!ecdh_shared_secret(ctx->private_key, other_public_key, ctx->shared_secret)) {
+        printf("Error: Shared secret hesaplanamadı\n");
+        return 0;
+    }
+    
+    printf("Shared secret başarıyla hesaplandı\n");
+    
+    return 1;
+}
+
+// Shared secret'ten AES256 anahtarı türet
+int ecdh_derive_aes_key(ecdh_context_t* ctx) {
+    if (ctx == NULL || !ctx->initialized) {
+        return 0;
+    }
+    
+    // Basit key derivation: shared secret'in ilk 32 byte'ını AES256 anahtarı olarak kullan
+    // Gerçek uygulamada HKDF veya benzeri bir KDF kullanılmalı
+    if (ECC_PUB_KEY_SIZE >= CRYPTO_KEY_SIZE) {
+        memcpy(ctx->aes_key, ctx->shared_secret, CRYPTO_KEY_SIZE);
+    } else {
+        // Eğer shared secret 32 byte'tan küçükse, hash ile genişlet
+        memcpy(ctx->aes_key, ctx->shared_secret, ECC_PUB_KEY_SIZE);
+        // Kalan byte'ları 0 ile doldur (basit yaklaşım)
+        memset(ctx->aes_key + ECC_PUB_KEY_SIZE, 0, CRYPTO_KEY_SIZE - ECC_PUB_KEY_SIZE);
+    }
+    
+    printf("AES256 anahtarı shared secret'ten türetildi\n");
+    
+    return 1;
+}
+
+// ECDH context'i temizle
+void ecdh_cleanup_context(ecdh_context_t* ctx) {
+    if (ctx != NULL) {
+        // Hassas verileri güvenli bir şekilde temizle
+        memset(ctx->private_key, 0, sizeof(ctx->private_key));
+        memset(ctx->shared_secret, 0, sizeof(ctx->shared_secret));
+        memset(ctx->aes_key, 0, sizeof(ctx->aes_key));
+        ctx->initialized = 0;
+    }
 }

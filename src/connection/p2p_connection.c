@@ -345,6 +345,31 @@ int p2p_disconnect_from_peer(p2p_peer_t* peer) {
 void p2p_handle_peer_message(int socket, connection_manager_t* manager) {
     char buffer[CONFIG_BUFFER_SIZE];
     
+    // P2P peer için ECDH anahtar değişimi yap
+    printf("P2P: Yeni peer ile ECDH anahtar değişimi başlıyor...\n");
+    
+    // Yeni peer oluştur ve ECDH başlat
+    p2p_peer_t temp_peer;
+    memset(&temp_peer, 0, sizeof(p2p_peer_t));
+    temp_peer.socket_fd = socket;
+    snprintf(temp_peer.node_id, sizeof(temp_peer.node_id), "PEER_SOCKET_%d", socket);
+    
+    if (!p2p_init_ecdh_for_peer(&temp_peer)) {
+        printf("P2P: ECDH başlatılamadı\n");
+        close(socket);
+        return;
+    }
+    
+    // ECDH anahtar değişimi yap
+    if (!p2p_exchange_keys_with_peer(&temp_peer)) {
+        printf("P2P: Anahtar değişimi başarısız\n");
+        p2p_cleanup_ecdh_for_peer(&temp_peer);
+        close(socket);
+        return;
+    }
+    
+    printf("P2P: ECDH anahtar değişimi tamamlandı\n");
+    
     while (1) {
         memset(buffer, 0, CONFIG_BUFFER_SIZE);
         
@@ -374,6 +399,47 @@ void p2p_handle_peer_message(int socket, connection_manager_t* manager) {
                 send(socket, response, strlen(response), 0);
                 printf("P2P Tactical data işleme hatası\n");
             }
+        } else if (strncmp(buffer, "P2P_ENCRYPTED:", 14) == 0) {
+            // Şifreli tactical data mesajı
+            char* encrypted_part = buffer + 14;
+            printf("P2P Şifreli tactical data işleniyor...\n");
+            
+            // ENCRYPTED:filename:hexdata formatını parse et
+            if (strncmp(encrypted_part, "ENCRYPTED:", 10) == 0) {
+                char* data_start = encrypted_part + 10;
+                
+                // Filename ve hex data'yı ayır
+                char* first_colon = strchr(data_start, ':');
+                if (first_colon != NULL) {
+                    size_t filename_len = first_colon - data_start;
+                    char filename[256];
+                    strncpy(filename, data_start, filename_len);
+                    filename[filename_len] = '\0';
+                    
+                    char* hex_data = first_colon + 1;
+                    
+                    printf("P2P: Parsing - File: %s, Hex length: %zu\n", filename, strlen(hex_data));
+                    
+                    // Şifreli veriyi işle
+                    if (p2p_process_encrypted_data(hex_data, filename, &temp_peer) == 0) {
+                        const char* response = "P2P_ACK:Encrypted data processed successfully";
+                        send(socket, response, strlen(response), 0);
+                        printf("P2P Şifreli tactical data başarıyla işlendi\n");
+                    } else {
+                        const char* response = "P2P_NACK:Encrypted data processing failed";
+                        send(socket, response, strlen(response), 0);
+                        printf("P2P Şifreli tactical data işleme hatası\n");
+                    }
+                } else {
+                    printf("P2P: Geçersiz şifreli veri formatı - colon bulunamadı\n");
+                    const char* response = "P2P_NACK:Invalid encrypted data format";
+                    send(socket, response, strlen(response), 0);
+                }
+            } else {
+                printf("P2P: Geçersiz şifreli veri formatı - ENCRYPTED prefix yok\n");
+                const char* response = "P2P_NACK:Invalid encrypted data format";
+                send(socket, response, strlen(response), 0);
+            }
         } else {
             // Echo response for other messages
             char response[CONFIG_BUFFER_SIZE];
@@ -402,6 +468,9 @@ void p2p_handle_peer_message(int socket, connection_manager_t* manager) {
             manager->total_requests++;
         }
     }
+    
+    // ECDH temizliği
+    p2p_cleanup_ecdh_for_peer(&temp_peer);
     
     close(socket);
 }
@@ -524,11 +593,12 @@ int process_tactical_data(const char* data) {
         uint8_t* ciphertext = binary_data + 16;
         size_t ciphertext_len = binary_len - 16;
         
-        char* decrypted_json = decrypt_data(ciphertext, ciphertext_len, CONFIG_DEFAULT_KEY, iv);
+        char* decrypted_json = decrypt_data(ciphertext, ciphertext_len, NULL, iv);
         free(binary_data);
         
         if (!decrypted_json) {
-            printf("P2P Encrypted Error: Decryption failed\n");
+            printf("P2P Encrypted Error: Decryption failed - P2P şu anda ECDH desteklemiyor\n");
+            printf("P2P Encrypted Info: TCP bağlantısı kullanarak ECDH ile şifreli iletişim yapın\n");
             return -1;
         }
         
@@ -651,4 +721,148 @@ void* p2p_peer_thread_wrapper(void* arg) {
     
     free(params);
     return NULL;
+}
+
+// P2P ECDH Anahtar Yönetimi Fonksiyonları
+
+// Peer için ECDH başlat
+int p2p_init_ecdh_for_peer(p2p_peer_t* peer) {
+    if (peer == NULL) {
+        return 0;
+    }
+    
+    // ECDH context'i başlat
+    if (!ecdh_init_context(&peer->ecdh_ctx)) {
+        printf("P2P: ECDH context başlatılamadı: %s\n", peer->node_id);
+        return 0;
+    }
+    
+    // Anahtar çifti üret
+    if (!ecdh_generate_keypair(&peer->ecdh_ctx)) {
+        printf("P2P: ECDH anahtar çifti üretilemedi: %s\n", peer->node_id);
+        ecdh_cleanup_context(&peer->ecdh_ctx);
+        return 0;
+    }
+    
+    peer->ecdh_initialized = true;
+    printf("P2P: ECDH başlatıldı: %s\n", peer->node_id);
+    
+    return 1;
+}
+
+// Peer ile anahtar değişimi yap
+int p2p_exchange_keys_with_peer(p2p_peer_t* peer) {
+    if (peer == NULL || !peer->ecdh_initialized || peer->socket_fd < 0) {
+        return 0;
+    }
+    
+    printf("P2P: Peer ile anahtar değişimi başlıyor: %s\n", peer->node_id);
+    
+    // Önce kendi public key'imizi gönder
+    ssize_t sent = send(peer->socket_fd, peer->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
+    if (sent != ECC_PUB_KEY_SIZE) {
+        printf("P2P: Public key gönderilemedi: %s\n", peer->node_id);
+        return 0;
+    }
+    
+    // Peer'in public key'ini al
+    uint8_t peer_public_key[ECC_PUB_KEY_SIZE];
+    ssize_t received = recv(peer->socket_fd, peer_public_key, ECC_PUB_KEY_SIZE, 0);
+    if (received != ECC_PUB_KEY_SIZE) {
+        printf("P2P: Peer public key alınamadı: %s\n", peer->node_id);
+        return 0;
+    }
+    
+    // Shared secret hesapla
+    if (!ecdh_compute_shared_secret(&peer->ecdh_ctx, peer_public_key)) {
+        printf("P2P: Shared secret hesaplanamadı: %s\n", peer->node_id);
+        return 0;
+    }
+    
+    // AES anahtarını türet
+    if (!ecdh_derive_aes_key(&peer->ecdh_ctx)) {
+        printf("P2P: AES anahtarı türetilemedi: %s\n", peer->node_id);
+        return 0;
+    }
+    
+    printf("P2P: ✓ Anahtar değişimi tamamlandı: %s\n", peer->node_id);
+    
+    return 1;
+}
+
+// Peer için ECDH temizlik
+void p2p_cleanup_ecdh_for_peer(p2p_peer_t* peer) {
+    if (peer != NULL && peer->ecdh_initialized) {
+        ecdh_cleanup_context(&peer->ecdh_ctx);
+        peer->ecdh_initialized = false;
+        printf("P2P: ECDH temizlendi: %s\n", peer->node_id);
+    }
+}
+
+// P2P şifreli veri işle
+int p2p_process_encrypted_data(const char* encrypted_data, const char* filename, p2p_peer_t* peer) {
+    if (peer == NULL || !peer->ecdh_initialized) {
+        printf("P2P: ECDH session bulunamadı\n");
+        return -1;
+    }
+    
+    printf("P2P: Şifreli veri işleniyor: %s (Peer: %s)\n", filename, peer->node_id);
+    
+    // Hex string'i bytes'a çevir
+    size_t encrypted_length;
+    uint8_t* encrypted_bytes = hex_to_bytes(encrypted_data, &encrypted_length);
+    
+    if (encrypted_bytes == NULL) {
+        printf("P2P: Geçersiz hex format\n");
+        return -1;
+    }
+    
+    // IV'yi ayıkla (ilk 16 byte)
+    if (encrypted_length < CRYPTO_IV_SIZE) {
+        free(encrypted_bytes);
+        printf("P2P: Yetersiz veri boyutu (IV eksik)\n");
+        return -1;
+    }
+    
+    uint8_t iv[CRYPTO_IV_SIZE];
+    memcpy(iv, encrypted_bytes, CRYPTO_IV_SIZE);
+    
+    // Şifreli veriyi decrypt et
+    char* decrypted_json = decrypt_data(
+        encrypted_bytes + CRYPTO_IV_SIZE,
+        encrypted_length - CRYPTO_IV_SIZE,
+        peer->ecdh_ctx.aes_key, // ECDH session key
+        iv
+    );
+    
+    free(encrypted_bytes);
+    
+    if (decrypted_json == NULL) {
+        printf("P2P: Decryption başarısız\n");
+        return -1;
+    }
+    
+    printf("P2P: Veri başarıyla decrypt edildi\n");
+    
+    // JSON'u parse et (tactical data format)
+    tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename);
+    free(decrypted_json);
+    
+    if (tactical_data != NULL) {
+        // Database'e kaydet
+        char* response = db_save_tactical_data_and_get_response(tactical_data, filename);
+        if (response) {
+            printf("P2P: Database save response: %s\n", response);
+            free(response);
+        }
+        
+        free_tactical_data(tactical_data);
+        
+        printf("P2P: Şifreli veri başarıyla kaydedildi: %s\n", filename);
+        return 0;
+    } else {
+        printf("P2P: Geçersiz tactical data formatı\n");
+        if (tactical_data) free_tactical_data(tactical_data);
+        return -1;
+    }
 }

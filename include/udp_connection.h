@@ -2,6 +2,19 @@
 #define _UDP_CONNECTION_H_
 
 #include "connection_manager.h"
+#include "crypto_utils.h"
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+// UDP Client session yönetimi
+typedef struct udp_session {
+    char client_ip[INET_ADDRSTRLEN];
+    int client_port;
+    ecdh_context_t ecdh_ctx;
+    bool ecdh_initialized;
+    time_t last_activity;
+    struct udp_session* next;
+} udp_session_t;
 
 // UDP Server fonksiyonları
 int udp_server_init(connection_manager_t* manager);
@@ -28,6 +41,14 @@ void udp_log_packet(const char* client_ip, int client_port, size_t packet_size);
 // UDP Mesaj işleme
 int udp_parse_message(const char* message, const char* client_ip, int client_port, connection_manager_t* manager);
 int udp_process_json_data(const char* json_data, const char* filename, const char* client_ip, int client_port);
-int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port);
+int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port, const uint8_t* session_key);
+
+// UDP ECDH session yönetimi
+udp_session_t* udp_find_session(const char* client_ip, int client_port);
+udp_session_t* udp_create_session(const char* client_ip, int client_port);
+void udp_cleanup_session(udp_session_t* session);
+void udp_cleanup_old_sessions(void);
+int udp_handle_key_exchange(int socket, struct sockaddr_in* client_addr, const char* message);
+int udp_exchange_keys_with_client(udp_session_t* session, int socket, struct sockaddr_in* client_addr);
 
 #endif // _UDP_CONNECTION_H_

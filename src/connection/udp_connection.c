@@ -18,6 +18,13 @@
 #include "crypto_utils.h"
 #include "database.h"
 
+// Global UDP session listesi
+static udp_session_t* session_list = NULL;
+static pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Session timeout (5 dakika)
+#define UDP_SESSION_TIMEOUT 300
+
 // UDP Server başlatma
 int udp_server_init(connection_manager_t* manager) {
     printf("UDP Server modülü başlatılıyor...\n");
@@ -146,15 +153,40 @@ void* udp_server_thread(void* arg) {
         // İstatistikleri güncelle
         udp_update_stats(manager, true);
         
-        // UDP packet'i için connection sayısını artır
-        manager->total_connections++;
-        increment_udp_connection();
-        
         // Paketi işle
         buffer[bytes_received] = '\0';
         
+        // ECDH anahtar değişimi mesajlarını kontrol et
+        if (strncmp(buffer, "ECDH_", 5) == 0) {
+            printf("UDP: ECDH mesajı alındı: %s:%d\n", client_ip, client_port);
+            if (udp_handle_key_exchange(manager->server_fd, &client_addr, buffer) == 0) {
+                printf("UDP: ECDH mesajı başarıyla işlendi\n");
+            } else {
+                printf("UDP: ECDH mesajı işlenemedi\n");
+                const char* error_response = "UDP_ERROR: ECDH failed";
+                sendto(manager->server_fd, error_response, strlen(error_response), 0,
+                       (struct sockaddr*)&client_addr, client_len);
+            }
+            // ECDH mesajları için connection sayısını artırma
+            continue;
+        }
+        
+        // Eski session'ları temizle (periyodik olarak)
+        static time_t last_cleanup = 0;
+        time_t current_time = time(NULL);
+        if (current_time - last_cleanup > 60) { // Her dakika
+            udp_cleanup_old_sessions();
+            last_cleanup = current_time;
+        }
+        
         // JSON mesaj parsing (Tactical Data formatı)
         if (udp_parse_message(buffer, client_ip, client_port, manager) == 0) {
+            // Sadece başarılı parse edilen gerçek veri mesajları için connection sayısını artır
+            if (strncmp(buffer, "PARSE:", 6) == 0 || strncmp(buffer, "ENCRYPTED:", 10) == 0) {
+                manager->total_connections++;
+                increment_udp_connection();
+            }
+            
             // Başarılı parsing sonrası response gönder
             const char* response = "UDP_SUCCESS: Message processed";
             sendto(manager->server_fd, response, strlen(response), 0,
@@ -266,6 +298,12 @@ void udp_log_packet(const char* client_ip, int client_port, size_t packet_size) 
 int udp_parse_message(const char* message, const char* client_ip, int client_port, connection_manager_t* manager) {
     printf("UDP Mesaj parsing: %s (kaynak: %s:%d)\n", message, client_ip, client_port);
     
+    // PING mesajı - basit test mesajı
+    if (strcmp(message, "PING") == 0) {
+        printf("UDP: PING mesajı alındı - test bağlantısı\n");
+        return 0; // Başarılı olarak dön
+    }
+    
     // Protokol mesajini parse et (PARSE:filename:content veya ENCRYPTED:filename:content)
     char *message_copy = strdup(message);
     if (!message_copy) {
@@ -278,7 +316,7 @@ int udp_parse_message(const char* message, const char* client_ip, int client_por
     char *content = strtok(NULL, "\0"); // Geri kalan kısmı al
     
     if (!command || !filename || !content) {
-        printf("UDP Parse Error: Invalid protocol format\n");
+        printf("UDP Parse Error: Invalid protocol format (Expected: COMMAND:filename:content)\n");
         free(message_copy);
         return -1;
     }
@@ -292,7 +330,15 @@ int udp_parse_message(const char* message, const char* client_ip, int client_por
         result = udp_process_json_data(content, filename, client_ip, client_port);
     } else if (strcmp(command, "ENCRYPTED") == 0) {
         printf("UDP Encrypted JSON parse ediliyor...\n");
-        result = udp_process_encrypted_data(content, filename, client_ip, client_port);
+        
+        // Session bul
+        udp_session_t* session = udp_find_session(client_ip, client_port);
+        if (session == NULL || !session->ecdh_initialized) {
+            printf("UDP Encrypted Error: ECDH session bulunamadı. Önce anahtar değişimi yapın.\n");
+            result = -1;
+        } else {
+            result = udp_process_encrypted_data(content, filename, client_ip, client_port, session->ecdh_ctx.aes_key);
+        }
     } else {
         printf("UDP Parse Error: Unknown command: %s\n", command);
     }
@@ -330,8 +376,13 @@ int udp_process_json_data(const char* json_data, const char* filename, const cha
 }
 
 // UDP Encrypted data işleme
-int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port) {
+int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port, const uint8_t* session_key) {
     printf("UDP Encrypted Processing: %s from %s:%d\n", filename, client_ip, client_port);
+    
+    if (session_key == NULL) {
+        printf("UDP Encrypted Error: Session key NULL - anahtar değişimi yapılmamış\n");
+        return -1;
+    }
     
     // Hex data'yı decode et - standart crypto_utils fonksiyonunu kullan
     size_t binary_len;
@@ -352,7 +403,7 @@ int udp_process_encrypted_data(const char* encrypted_data, const char* filename,
     uint8_t* ciphertext = binary_data + 16;
     size_t ciphertext_len = binary_len - 16;
     
-    char* decrypted_json = decrypt_data(ciphertext, ciphertext_len, CONFIG_DEFAULT_KEY, iv);
+    char* decrypted_json = decrypt_data(ciphertext, ciphertext_len, session_key, iv);
     free(binary_data);
     
     if (!decrypted_json) {
@@ -385,4 +436,210 @@ int udp_process_encrypted_data(const char* encrypted_data, const char* filename,
         if (tactical_data) free_tactical_data(tactical_data);
         return -1;
     }
+}
+
+// Session bul
+udp_session_t* udp_find_session(const char* client_ip, int client_port) {
+    pthread_mutex_lock(&session_mutex);
+    
+    udp_session_t* current = session_list;
+    while (current != NULL) {
+        if (strcmp(current->client_ip, client_ip) == 0 && current->client_port == client_port) {
+            current->last_activity = time(NULL);
+            pthread_mutex_unlock(&session_mutex);
+            return current;
+        }
+        current = current->next;
+    }
+    
+    pthread_mutex_unlock(&session_mutex);
+    return NULL;
+}
+
+// Yeni session oluştur
+udp_session_t* udp_create_session(const char* client_ip, int client_port) {
+    udp_session_t* session = malloc(sizeof(udp_session_t));
+    if (session == NULL) {
+        return NULL;
+    }
+    
+    memset(session, 0, sizeof(udp_session_t));
+    strncpy(session->client_ip, client_ip, INET_ADDRSTRLEN - 1);
+    session->client_port = client_port;
+    session->last_activity = time(NULL);
+    session->ecdh_initialized = false;
+    session->next = NULL;
+    
+    // ECDH context'i başlat
+    if (!ecdh_init_context(&session->ecdh_ctx)) {
+        free(session);
+        return NULL;
+    }
+    
+    // Anahtar çifti üret
+    if (!ecdh_generate_keypair(&session->ecdh_ctx)) {
+        ecdh_cleanup_context(&session->ecdh_ctx);
+        free(session);
+        return NULL;
+    }
+    
+    session->ecdh_initialized = true;
+    
+    // Session listesine ekle
+    pthread_mutex_lock(&session_mutex);
+    session->next = session_list;
+    session_list = session;
+    pthread_mutex_unlock(&session_mutex);
+    
+    printf("UDP: Yeni session oluşturuldu: %s:%d\n", client_ip, client_port);
+    return session;
+}
+
+// Session temizle
+void udp_cleanup_session(udp_session_t* session) {
+    if (session == NULL) {
+        return;
+    }
+    
+    pthread_mutex_lock(&session_mutex);
+    
+    // Session'ı listeden çıkar
+    if (session_list == session) {
+        session_list = session->next;
+    } else {
+        udp_session_t* current = session_list;
+        while (current != NULL && current->next != session) {
+            current = current->next;
+        }
+        if (current != NULL) {
+            current->next = session->next;
+        }
+    }
+    
+    pthread_mutex_unlock(&session_mutex);
+    
+    // ECDH temizle
+    if (session->ecdh_initialized) {
+        ecdh_cleanup_context(&session->ecdh_ctx);
+    }
+    
+    printf("UDP: Session temizlendi: %s:%d\n", session->client_ip, session->client_port);
+    free(session);
+}
+
+// Eski session'ları temizle
+void udp_cleanup_old_sessions(void) {
+    time_t current_time = time(NULL);
+    
+    pthread_mutex_lock(&session_mutex);
+    
+    udp_session_t* current = session_list;
+    udp_session_t* prev = NULL;
+    
+    while (current != NULL) {
+        if (current_time - current->last_activity > UDP_SESSION_TIMEOUT) {
+            udp_session_t* to_remove = current;
+            
+            if (prev == NULL) {
+                session_list = current->next;
+            } else {
+                prev->next = current->next;
+            }
+            
+            current = current->next;
+            
+            pthread_mutex_unlock(&session_mutex);
+            udp_cleanup_session(to_remove);
+            pthread_mutex_lock(&session_mutex);
+        } else {
+            prev = current;
+            current = current->next;
+        }
+    }
+    
+    pthread_mutex_unlock(&session_mutex);
+}
+
+// UDP anahtar değişimi mesajı işle
+int udp_handle_key_exchange(int socket, struct sockaddr_in* client_addr, const char* message) {
+    char client_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr->sin_addr, client_ip, INET_ADDRSTRLEN);
+    int client_port = ntohs(client_addr->sin_port);
+    
+    if (strncmp(message, "ECDH_INIT", 9) == 0) {
+        printf("UDP: ECDH init isteği alındı: %s:%d\n", client_ip, client_port);
+        
+        // Mevcut session'ı bul veya yeni oluştur
+        udp_session_t* session = udp_find_session(client_ip, client_port);
+        if (session == NULL) {
+            session = udp_create_session(client_ip, client_port);
+            if (session == NULL) {
+                printf("UDP: Session oluşturulamadı\n");
+                return -1;
+            }
+        }
+        
+        // Public key'i gönder
+        char response[ECC_PUB_KEY_SIZE * 2 + 20]; // Hex encoded + prefix
+        strcpy(response, "ECDH_PUB:");
+        char* hex_key = bytes_to_hex(session->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE);
+        if (hex_key) {
+            strcat(response, hex_key);
+            free(hex_key);
+        }
+        
+        ssize_t sent = sendto(socket, response, strlen(response), 0,
+                             (struct sockaddr*)client_addr, sizeof(*client_addr));
+        if (sent < 0) {
+            printf("UDP: Public key gönderilemedi\n");
+            return -1;
+        }
+        
+        printf("UDP: Public key gönderildi: %s:%d\n", client_ip, client_port);
+        return 0;
+    }
+    else if (strncmp(message, "ECDH_PUB:", 9) == 0) {
+        printf("UDP: Client public key alındı: %s:%d\n", client_ip, client_port);
+        
+        udp_session_t* session = udp_find_session(client_ip, client_port);
+        if (session == NULL) {
+            printf("UDP: Session bulunamadı\n");
+            return -1;
+        }
+        
+        // Client'ın public key'ini decode et
+        size_t peer_key_len;
+        uint8_t* peer_public_key = hex_to_bytes(message + 9, &peer_key_len);
+        if (peer_public_key == NULL || peer_key_len != ECC_PUB_KEY_SIZE) {
+            printf("UDP: Geçersiz public key\n");
+            if (peer_public_key) free(peer_public_key);
+            return -1;
+        }
+        
+        // Shared secret hesapla
+        if (!ecdh_compute_shared_secret(&session->ecdh_ctx, peer_public_key)) {
+            printf("UDP: Shared secret hesaplanamadı\n");
+            free(peer_public_key);
+            return -1;
+        }
+        
+        // AES anahtarını türet
+        if (!ecdh_derive_aes_key(&session->ecdh_ctx)) {
+            printf("UDP: AES anahtarı türetilemedi\n");
+            free(peer_public_key);
+            return -1;
+        }
+        
+        free(peer_public_key);
+        
+        // Onay mesajı gönder
+        const char* ack = "ECDH_OK";
+        sendto(socket, ack, strlen(ack), 0,
+               (struct sockaddr*)client_addr, sizeof(*client_addr));
+        
+        printf("UDP: ✓ ECDH anahtar değişimi tamamlandı: %s:%d\n", client_ip, client_port);
+        return 0;
+    }
+    
+    return -1;
 }

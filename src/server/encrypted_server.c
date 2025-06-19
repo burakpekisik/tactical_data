@@ -17,13 +17,7 @@
 #include "thread_monitor.h"
 #include "connection_manager.h"
 #include "control_interface.h"
-
-// Function prototypes
-int parse_protocol_message(const char* message, char** command, char** filename, char** content);
-void* handle_client(void* arg);
-char* handle_encrypted_request(const char* filename, const char* encrypted_content);
-void* queue_processor(void* arg);
-void handle_signal(int sig);
+#include "encrypted_server.h"
 
 // Global variables for signal handling
 static volatile sig_atomic_t server_running = 1;
@@ -211,6 +205,39 @@ void* handle_client(void* arg) {
            current_thread, client_socket);
     fflush(stdout);
 
+    // ECDH için anahtar değişimi yap
+    connection_manager_t client_manager;
+    memset(&client_manager, 0, sizeof(connection_manager_t));
+    snprintf(client_manager.name, sizeof(client_manager.name), "Client-%d", client_socket);
+    
+    if (!init_ecdh_for_connection(&client_manager)) {
+        printf("ECDH başlatılamadı (Thread: %lu)\n", current_thread);
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return NULL;
+    }
+    
+    // Anahtar değişimi yap
+    if (!exchange_keys_with_peer(&client_manager, client_socket)) {
+        printf("Anahtar değişimi başarısız (Thread: %lu)\n", current_thread);
+        cleanup_ecdh_for_connection(&client_manager);
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return NULL;
+    }
+    
+    // AES256 oturum anahtarını al
+    const uint8_t* session_key = get_session_key(&client_manager);
+    if (session_key == NULL) {
+        printf("Oturum anahtarı alınamadı (Thread: %lu)\n", current_thread);
+        cleanup_ecdh_for_connection(&client_manager);
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return NULL;
+    }
+    
+    printf("✓ ECDH anahtar değişimi tamamlandı (Thread: %lu)\n", current_thread);
+
     char buffer[CONFIG_BUFFER_SIZE];
     int request_count = 0;
     
@@ -294,7 +321,7 @@ void* handle_client(void* arg) {
         } else if (strcmp(command, "ENCRYPTED") == 0) {
             printf("Sifreli JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
-            parsed_result = handle_encrypted_request(filename, content);
+            parsed_result = handle_encrypted_request(filename, content, session_key);
         } else {
             parsed_result = malloc(256);
             snprintf(parsed_result, 256, "HATA: Bilinmeyen komut: %s", command);
@@ -318,6 +345,9 @@ void* handle_client(void* arg) {
     printf("Client bağlantısı kapatıldı (Thread: %lu, Toplam istek: %d)\n", 
            current_thread, request_count);
     
+    // ECDH temizliği
+    cleanup_ecdh_for_connection(&client_manager);
+    
     // Thread bilgilerini temizle
     remove_thread_info(current_thread);
     
@@ -329,7 +359,13 @@ void* handle_client(void* arg) {
 }
 
 // Sifreli istek ile bas et
-char* handle_encrypted_request(const char* filename, const char* encrypted_content) {
+char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key) {
+    if (session_key == NULL) {
+        char *error_msg = malloc(256);
+        strcpy(error_msg, "HATA: Session key NULL");
+        return error_msg;
+    }
+    
     // Hex string'i bytes'a cevir
     size_t encrypted_length;
     uint8_t* encrypted_bytes = hex_to_bytes(encrypted_content, &encrypted_length);
@@ -355,7 +391,7 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
     char* decrypted_json = decrypt_data(
         encrypted_bytes + CRYPTO_IV_SIZE,
         encrypted_length - CRYPTO_IV_SIZE,
-        NULL, // Default key kullan
+        session_key, // ECDH ile üretilen session key
         iv
     );
     

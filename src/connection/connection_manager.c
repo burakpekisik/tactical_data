@@ -3,11 +3,13 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/socket.h>
 #include "connection_manager.h"
 #include "tcp_connection.h"
 #include "udp_connection.h"
 #include "p2p_connection.h"
 #include "config.h"
+#include "crypto_utils.h"
 
 // Global connection managers
 static connection_manager_t tcp_manager;
@@ -233,4 +235,89 @@ int process_connection_command(const char* command) {
     }
     
     return -1;
+}
+
+// ECDH anahtar yönetimi fonksiyonları
+
+// Bağlantı için ECDH başlat
+int init_ecdh_for_connection(connection_manager_t* manager) {
+    if (manager == NULL) {
+        return 0;
+    }
+    
+    // ECDH context'i başlat
+    if (!ecdh_init_context(&manager->ecdh_ctx)) {
+        printf("ECDH context başlatılamadı\n");
+        return 0;
+    }
+    
+    // Anahtar çifti üret
+    if (!ecdh_generate_keypair(&manager->ecdh_ctx)) {
+        printf("ECDH anahtar çifti üretilemedi\n");
+        return 0;
+    }
+    
+    manager->ecdh_initialized = true;
+    printf("ECDH %s için başlatıldı\n", manager->name);
+    
+    return 1;
+}
+
+// Peer ile anahtar değişimi yap
+int exchange_keys_with_peer(connection_manager_t* manager, int socket) {
+    if (manager == NULL || socket < 0 || !manager->ecdh_initialized) {
+        return 0;
+    }
+    
+    printf("Peer ile anahtar değişimi başlıyor...\n");
+    
+    // Önce kendi public key'imizi gönder
+    ssize_t sent = send(socket, manager->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
+    if (sent != ECC_PUB_KEY_SIZE) {
+        printf("Public key gönderilemedi\n");
+        return 0;
+    }
+    
+    // Peer'in public key'ini al
+    uint8_t peer_public_key[ECC_PUB_KEY_SIZE];
+    ssize_t received = recv(socket, peer_public_key, ECC_PUB_KEY_SIZE, 0);
+    if (received != ECC_PUB_KEY_SIZE) {
+        printf("Peer public key alınamadı\n");
+        return 0;
+    }
+    
+    // Shared secret hesapla
+    if (!ecdh_compute_shared_secret(&manager->ecdh_ctx, peer_public_key)) {
+        printf("Shared secret hesaplanamadı\n");
+        return 0;
+    }
+    
+    // AES anahtarını türet
+    if (!ecdh_derive_aes_key(&manager->ecdh_ctx)) {
+        printf("AES anahtarı türetilemedi\n");
+        return 0;
+    }
+    
+    printf("✓ Anahtar değişimi başarıyla tamamlandı\n");
+    printf("✓ AES256 oturum anahtarı hazır\n");
+    
+    return 1;
+}
+
+// Oturum anahtarını al
+const uint8_t* get_session_key(connection_manager_t* manager) {
+    if (manager == NULL || !manager->ecdh_initialized) {
+        return NULL;
+    }
+    
+    return manager->ecdh_ctx.aes_key;
+}
+
+// ECDH için temizlik yap
+void cleanup_ecdh_for_connection(connection_manager_t* manager) {
+    if (manager != NULL && manager->ecdh_initialized) {
+        ecdh_cleanup_context(&manager->ecdh_ctx);
+        manager->ecdh_initialized = false;
+        printf("ECDH %s için temizlendi\n", manager->name);
+    }
 }

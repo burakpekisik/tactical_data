@@ -58,7 +58,6 @@ send_tactical_data/
 │   │   ├── delete.c, open.c         
 │   │   └── db_test_utils.c          # Database utilities
 │   ├── 📂 common/                   # Shared utilities
-│   │   ├── config.c                 # Configuration management
 │   │   ├── json_utils.c             # JSON parsing (tactical data)
 │   │   └── crypto_utils.c           # Encryption/decryption
 │   └── 📂 crypto/                   # Cryptography

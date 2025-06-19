@@ -13,11 +13,11 @@ LIBS = -lcjson -lsqlite3 -lcrypto -lssl -lpthread
 # Source files
 SERVER_SOURCES = $(SRC_DIR)/server/server.c
 JSON_SERVER_SOURCES = $(SRC_DIR)/server/json_server.c $(SRC_DIR)/common/json_utils.c
-ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/common/config.c $(SRC_DIR)/thread/thread_monitor.c $(SRC_DIR)/connection/connection_manager.c $(SRC_DIR)/connection/tcp_connection.c $(SRC_DIR)/connection/udp_connection.c $(SRC_DIR)/connection/p2p_connection.c $(SRC_DIR)/control/control_interface.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/db_test_utils.c
+ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/thread/thread_monitor.c $(SRC_DIR)/connection/connection_manager.c $(SRC_DIR)/connection/tcp_connection.c $(SRC_DIR)/connection/udp_connection.c $(SRC_DIR)/connection/p2p_connection.c $(SRC_DIR)/control/control_interface.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/db_test_utils.c
 
 CLIENT_SOURCES = $(SRC_DIR)/client/client.c
 JSON_CLIENT_SOURCES = $(SRC_DIR)/client/json_client.c $(SRC_DIR)/common/json_utils.c
-ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/common/config.c $(SRC_DIR)/crypto/aes.c
+ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c
 
 PARSER_SOURCES = $(SRC_DIR)/common/json_parser.c
 
@@ -25,10 +25,10 @@ PARSER_SOURCES = $(SRC_DIR)/common/json_parser.c
 DATABASE_SOURCES = $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/open.c
 
 # Targets
-all: directories encrypted-server encrypted-client db-tools
+all: directories encrypted-server encrypted-client db-tools ecdh-test
 
 directories:
-	mkdir -p $(BIN_DIR) $(BUILD_DIR)
+	mkdir -p $(BIN_DIR) $(BUILD_DIR) $(SRC_DIR)/test
 
 encrypted-server:
 	$(CC) $(CFLAGS) -o $(BUILD_DIR)/encrypted_server $(ENCRYPTED_SERVER_SOURCES) $(LIBS)
@@ -45,6 +45,10 @@ db-test-operations:
 
 db-tools: db-test-standalone db-test-operations
 
+# ECDH test tool
+ecdh-test:
+	$(CC) $(CFLAGS) -o $(BUILD_DIR)/ecdh_test $(SRC_DIR)/test/ecdh_test.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(LIBS)
+
 # Run targets
 run-encrypted-server:
 	./$(BUILD_DIR)/encrypted_server
@@ -59,7 +63,11 @@ run-db-test-standalone:
 run-db-test-operations:
 	./$(BUILD_DIR)/db_test_operations
 
+# Run ECDH test
+run-ecdh-test:
+	./$(BUILD_DIR)/ecdh_test
+
 clean:
 	rm -rf $(BIN_DIR)/* $(BUILD_DIR)/* *.db
 
-.PHONY: all directories clean run-server run-client run-json-server run-json-client run-encrypted-server run-encrypted-client run-json-parser db-tools db-test-standalone db-test-operations run-db-test-standalone run-db-test-operations
+.PHONY: all directories clean run-server run-client run-json-server run-json-client run-encrypted-server run-encrypted-client run-json-parser db-tools db-test-standalone db-test-operations run-db-test-standalone run-db-test-operations ecdh-test run-ecdh-test

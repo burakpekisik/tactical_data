@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include "crypto_utils.h"
 
 // Bağlantı türleri
 typedef enum {
@@ -44,6 +45,10 @@ struct connection_manager {
     int (*start_func)(connection_manager_t*);
     int (*stop_func)(connection_manager_t*);
     void (*client_handler)(int socket, connection_type_t type);
+    
+    // ECDH anahtar yönetimi
+    ecdh_context_t ecdh_ctx;
+    bool ecdh_initialized;
 };
 
 // Function prototypes
@@ -69,5 +74,11 @@ int switch_connection_type(connection_type_t from_type, connection_type_t to_typ
 // Kontrol arayüzü
 void show_connection_menu(void);
 int process_connection_command(const char* command);
+
+// ECDH anahtar yönetimi
+int init_ecdh_for_connection(connection_manager_t* manager);
+int exchange_keys_with_peer(connection_manager_t* manager, int socket);
+const uint8_t* get_session_key(connection_manager_t* manager);
+void cleanup_ecdh_for_connection(connection_manager_t* manager);
 
 #endif // _CONNECTION_MANAGER_H_

@@ -3,6 +3,7 @@
 
 #include <time.h>
 #include "connection_manager.h"
+#include "crypto_utils.h"
 
 // P2P Node durumları
 typedef enum {
@@ -20,6 +21,8 @@ typedef struct {
     time_t last_seen;
     bool is_connected;
     int socket_fd;
+    ecdh_context_t ecdh_ctx;
+    bool ecdh_initialized;
 } p2p_peer_t;
 
 // P2P Node fonksiyonları
@@ -57,6 +60,12 @@ void p2p_list_peers(void);
 void* p2p_peer_thread_wrapper(void* arg);
 int process_tactical_data(const char* data);
 int process_p2p_tactical_data(const char* p2p_data);
+
+// P2P ECDH anahtar yönetimi
+int p2p_init_ecdh_for_peer(p2p_peer_t* peer);
+int p2p_exchange_keys_with_peer(p2p_peer_t* peer);
+void p2p_cleanup_ecdh_for_peer(p2p_peer_t* peer);
+int p2p_process_encrypted_data(const char* encrypted_data, const char* filename, p2p_peer_t* peer);
 
 
 #endif // _P2P_CONNECTION_H_
