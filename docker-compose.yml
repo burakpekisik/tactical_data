@@ -6,7 +6,10 @@ services:
       dockerfile: Dockerfile.server
     container_name: tactical-data-server
     ports:
-      - "8080:8080"
+      - "8080:8080"      # TCP Server
+      - "8081:8081/udp"  # UDP Server
+      - "8082:8082"      # P2P Node (future)
+      - "9090:9090"      # Control Interface
     networks:
       - tactical-network
     volumes:
@@ -17,7 +20,7 @@ services:
     environment:
       - TERM=xterm
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      test: ["CMD", "sh", "-c", "echo 'healthcheck' | nc localhost 9090 > /dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

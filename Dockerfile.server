@@ -29,15 +29,15 @@ RUN mkdir -p /app/data
 # Database dosyası için volume
 VOLUME ["/app/data"]
 
-# Port'u expose et
-EXPOSE 8080
+# Port'ları expose et
+EXPOSE 8080 8081/udp 8082 9090
 
 # Unbuffered output için
 ENV TERM=xterm
 
-# Process tabanlı healthcheck - port'a bağlanmaz
+# Process ve control port tabanlı healthcheck - healthcheck komutu gönder
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD pgrep -f encrypted_server > /dev/null || exit 1
+    CMD pgrep -f encrypted_server > /dev/null && echo "healthcheck" | nc -w 1 localhost 9090 | grep -q "HEALTHY" || exit 1
 
 # Server'ı başlat
 CMD ["stdbuf", "-o0", "-e0", "./build/encrypted_server"]

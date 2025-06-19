@@ -66,11 +66,26 @@ void remove_thread_info(pthread_t thread_id) {
     pthread_mutex_unlock(&thread_mutex);
 }
 
-// Health check sayacını artır
+// UDP packet için connection sayısını artır
+void increment_udp_connection(void) {
+    pthread_mutex_lock(&thread_mutex);
+    total_connections++;
+    pthread_mutex_unlock(&thread_mutex);
+}
+
+// Health check sayısını artır
 void increment_healthcheck_count(void) {
     pthread_mutex_lock(&thread_mutex);
     healthcheck_count++;
     pthread_mutex_unlock(&thread_mutex);
+}
+
+// Health check sayısını al
+int get_healthcheck_count(void) {
+    pthread_mutex_lock(&thread_mutex);
+    int count = healthcheck_count;
+    pthread_mutex_unlock(&thread_mutex);
+    return count;
 }
 
 // Toplam bağlantı sayacını artır
@@ -88,6 +103,14 @@ int get_active_thread_count(void) {
     return count;
 }
 
+// Toplam bağlantı sayısını al
+int get_total_connections(void) {
+    pthread_mutex_lock(&thread_mutex);
+    int count = total_connections;
+    pthread_mutex_unlock(&thread_mutex);
+    return count;
+}
+
 // Thread istatistiklerini logla
 void log_thread_stats(void) {
     pthread_mutex_lock(&thread_mutex);
@@ -101,7 +124,7 @@ void log_thread_stats(void) {
     printf("Queue boyutu: %d/%d\n", get_queue_size(), CONFIG_MAX_QUEUE_SIZE);
     printf("Toplam baglanti: %d\n", total_connections);
     printf("Health check sayisi: %d\n", healthcheck_count);
-    printf("Gercek client baglanti: %d\n", total_connections - healthcheck_count);
+    printf("Aktif TCP client: %d\n", thread_count); // Gerçek client = aktif thread sayısı
     
     if (thread_count > 0) {
         printf("Aktif thread'ler:\n");

@@ -1,224 +1,320 @@
-# TCP Server-Client + JSON File Transfer System
+# Tactical Data Server - Modular Network Communication System
 
-Bu proje, C dilinde yazılmış TCP server-client mesajlaşma sistemi ve JSON dosya transfer & parse sistemi içerir.
+🚀 **Modern, çok protokollü, threaded tactical data server/client sistemi**
 
-## 📁 Dosyalar
+Bu proje, C dilinde yazılmış gelişmiş bir network communication sistemi olup tactical data transfer, encryption, multi-protocol support ve real-time monitoring özellikleri içerir.
 
-### Temel TCP Sistem:
-- `server.c` - Basit TCP server
-- `client.c` - Basit TCP client
-- `json.c` - Standalone JSON parser
+## ✨ Özellikler
 
-### JSON File Transfer Sistemi:
-- `json_server.c` - JSON dosya parse sunucusu
-- `json_client.c` - JSON dosya gönderme istemcisi
-- `data.json` - Örnek JSON dosyası
+### 🌐 Multi-Protocol Support
+- **TCP Server** (Port 8080) - Reliable connections, persistent threads
+- **UDP Server** (Port 8081) - Fast datagram communication  
+- **P2P Node** (Port 8082) - Peer-to-peer messaging (future)
+- **Control Interface** (Port 9090) - Management & monitoring
 
-### Yardımcı:
-- `Makefile` - Derleme ve çalıştırma komutları
+### 🔐 Security & Encryption
+- **AES Encryption** - Tactical data encryption/decryption
+- **Hex Encoding** - Safe data transmission
+- **Key Management** - Configurable encryption keys
 
-## 🚀 Kurulum ve Çalıştırma
+### 📊 Database Integration
+- **SQLite Database** - Persistent tactical data storage
+- **CRUD Operations** - Full database manipulation
+- **JSON to Database** - Automatic tactical data parsing & storage
 
-### Yöntem 1: Docker ile Çalıştırma (Önerilen)
+### 🧵 Advanced Threading
+- **Multi-threaded Server** - Concurrent client handling
+- **Thread Monitoring** - Real-time thread statistics
+- **Connection Queue** - Client queueing system
+- **Resource Monitoring** - Memory & CPU usage tracking
 
-#### Gereksinimler
-- Docker
-- Docker Compose
+### 🔧 Management & Monitoring
+- **Real-time Statistics** - Connections, threads, health checks
+- **Control Interface** - Server management via TCP commands
+- **Health Checks** - Docker health monitoring
+- **Logging System** - Comprehensive activity logging
 
-#### Hızlı Başlangıç
-```bash
-# 1. Image'ları derle
-./docker.sh build
+## 📁 Proje Yapısı
 
-# 2. Server'ı başlat
-./docker.sh server
-
-# 3. Başka bir terminalde client'ı başlat
-./docker.sh client
+```
+send_tactical_data/
+├── 📂 src/                          # Source code
+│   ├── 📂 server/                   # Main server
+│   │   └── encrypted_server.c       # Multi-protocol server
+│   ├── 📂 client/                   # Client application  
+│   │   └── encrypted_client.c       # TCP/UDP fallback client
+│   ├── 📂 connection/               # Protocol implementations
+│   │   ├── connection_manager.c     # Protocol coordinator
+│   │   ├── tcp_connection.c         # TCP server logic
+│   │   ├── udp_connection.c         # UDP server logic
+│   │   └── p2p_connection.c         # P2P node logic
+│   ├── 📂 control/                  # Management interface
+│   │   └── control_interface.c      # Server control & monitoring
+│   ├── 📂 thread/                   # Threading system
+│   │   └── thread_monitor.c         # Thread & resource monitoring
+│   ├── 📂 database/                 # Database operations
+│   │   ├── create.c, insert.c       # CRUD operations
+│   │   ├── select.c, update.c       
+│   │   ├── delete.c, open.c         
+│   │   └── db_test_utils.c          # Database utilities
+│   ├── 📂 common/                   # Shared utilities
+│   │   ├── config.c                 # Configuration management
+│   │   ├── json_utils.c             # JSON parsing (tactical data)
+│   │   └── crypto_utils.c           # Encryption/decryption
+│   └── 📂 crypto/                   # Cryptography
+│       └── aes.c                    # AES implementation
+├── 📂 include/                      # Header files
+├── 📂 data/                         # Data files
+│   ├── data.json                    # Sample tactical data
+│   └── tactical_data.db             # SQLite database
+├── 📂 build/                        # Compiled binaries
+├── 🐳 Docker files                  # Container setup
+├── 🔧 Makefile                      # Build system
+└── 📚 README.md                     # This file
 ```
 
-#### Docker Komutları
+## 🚀 Hızlı Başlangıç
+
+### 🐳 Docker ile Çalıştırma (Önerilen)
+
 ```bash
-./docker.sh build     # Image'ları derle
-./docker.sh server    # Server'ı başlat
-./docker.sh client    # Client'ı interactive modda başlat
-./docker.sh both      # Server ve client'ı birlikte başlat
-./docker.sh stop      # Tüm container'ları durdur
-./docker.sh clean     # Container'ları ve image'ları temizle
-./docker.sh logs      # Server loglarını göster
-./docker.sh status    # Container durumlarını göster
+# 1. Projeyi klonla
+git clone https://github.com/burakpekisik/tactical_data
+cd tactical_data
+
 ```
 
-### Yöntem 2: Manuel Derleme
+### 🛠️ Docker Yardımcı Script'leri
+
+```bash
+./docker.sh build          # Image'ları derle
+./docker.sh server         # Server'ı başlat
+./docker.sh client         # Client'ı başlat  
+./docker.sh both           # Server + Client
+./docker.sh stop           # Container'ları durdur
+./docker.sh clean          # Temizlik
+./docker.sh logs           # Server logları
+./docker.sh status         # Container durumu
+```
+
+### 🖥️ Manuel Kurulum
 
 #### Gereksinimler
 ```bash
 sudo apt update
-sudo apt install libcjson-dev gcc make
+sudo apt install gcc make libcjson-dev libsqlite3-dev libssl-dev
 ```
 
-#### Derleme
+#### Derleme ve Çalıştırma  
 ```bash
-# Tüm programları derle
-make
+# Tüm bileşenleri derle
+make clean && make
 
-# Veya sadece encrypted sistemi:
-make encrypted-server encrypted-client
+# Server'ı başlat
+./build/encrypted_server veya ./docker.sh server
+
+# Client'ı başlat (başka terminal)
+./build/encrypted_client veya ./docker.sh client
 ```
 
-## � Docker Kullanımı
+## 🎮 Kullanım
 
-### Docker Compose ile Çalıştırma
+### 📡 Server Management
+
+Server çalışırken control interface üzerinden yönetilebilir:
+
 ```bash
-# Server'ı arka planda başlat
-docker-compose up -d encrypted-server
+# Control interface'e bağlan (Port 9090)
+nc localhost 9090 veya ./docker-control.sh cmd
 
-# Client'ı interactive modda başlat
-docker-compose run --rm encrypted-client
-
-# Her ikisini birden başlat
-docker-compose up
+# Kullanılabilir komutlar:
+list         # Server durumu
+start_tcp    # TCP server başlat
+stop_tcp     # TCP server durdur  
+start_udp    # UDP server başlat
+stop_udp     # UDP server durdur
+stats        # İstatistikler
+healthcheck  # Health check
+help         # Yardım
+quit         # Çıkış
 ```
 
-### Manuel Docker Komutları
+### 📤 Client Kullanımı
+
+Client otomatik protokol seçimi yapar:
+1. **TCP'ye bağlanmaya çalışır** (Port 8080)
+2. **Başarısız olursa UDP'ye geçer** (Port 8081)
+
 ```bash
-# Server image'ını derle ve çalıştır
-docker build -f Dockerfile.server -t tactical-server .
-docker run -p 8080:8080 tactical-server
-
-# Client image'ını derle ve çalıştır
-docker build -f Dockerfile.client -t tactical-client .
-docker run -it --network host tactical-client
+# Menu seçenekleri:
+1. Normal JSON dosyasi gonder     # Düz JSON gönder
+2. Sifreli JSON dosyasi gonder    # Encrypted JSON gönder  
+3. Cikis                          # Çıkış
 ```
 
-### Docker Network
-Container'lar `tactical-network` bridge network'ü üzerinde haberleşir. Client otomatik olarak server'a bağlanır.
+### 🗃️ Tactical Data Format
 
-## �📡 JSON File Transfer Sistemi
-
-### Protocol Format
+```json
+{
+  "unit_id": "BİRİM-01",
+  "status": "Tehlike", 
+  "latitude": 39.920800,
+  "longitude": 32.854100,
+  "description": "Tactical unit description...",
+  "timestamp": 1718572220
+}
 ```
-FILENAME:CONTENT
-Örnek: data.json:{"name":"Burak","age":30}
+
+## 🔧 Configuration
+
+### 📋 Port Konfigürasyonu
+- **TCP Server**: 8080
+- **UDP Server**: 8081  
+- **P2P Node**: 8082
+- **Control Interface**: 9090
+
+### ⚙️ Advanced Settings (`include/config.h`)
+```c
+#define CONFIG_PORT 8080              // TCP port
+#define CONFIG_UDP_PORT 8081          // UDP port
+#define CONFIG_P2P_PORT 8082          // P2P port
+#define CONFIG_CONTROL_PORT 9090      // Control port
+#define CONFIG_BUFFER_SIZE 8192       // Buffer size
+#define CONFIG_MAX_CLIENTS 10         // Max concurrent clients
+#define CONFIG_CRYPTO_KEY_SIZE 16     // Encryption key size
 ```
 
-### Server Başlatma
+## 📊 Monitoring & Statistics
+
+### 🔍 Real-time Monitoring
+Server sürekli olarak şu bilgileri sağlar:
+- **Active Threads**: Aktif client thread'leri
+- **Connection Stats**: TCP/UDP/P2P bağlantı durumları  
+- **Database Operations**: CRUD işlem sayıları
+- **Health Checks**: Docker health check durumu
+- **Memory Usage**: Bellek kullanımı
+- **CPU Time**: İşlemci zamanı
+
+### 📈 Statistics Output
+```
+=== THREAD & QUEUE ISTATISTIKLERI ===
+Server uptime: 180 saniye (3 dakika)
+Aktif thread sayisi: 2/10
+Queue boyutu: 0/20
+Toplam baglanti: 15
+Health check sayisi: 6
+Gercek client baglanti: 2
+Aktif thread'ler:
+- client_172.18.0.3_56356 (Socket: 7, Sure: 45 s)
+- client_172.18.0.3_56357 (Socket: 8, Sure: 12 s)
+Bellek kullanimi: 11324 KB
+CPU zamanı: 0.045231 saniye
+====================================
+```
+
+## 🔐 Security
+
+### 🛡️ Encryption
+- **AES-128 Encryption**: Tactical data için güvenli şifreleme
+- **Random IV**: Her şifreleme için unique IV
+- **Hex Encoding**: Binary data'nın güvenli transferi
+
+### 🔑 Key Management
+Default key configuration'da tanımlı, production'da değiştirilmeli.
+
+## 🐳 Docker Integration
+
+### 📦 Multi-Container Setup
+- **tactical-data-server**: Main server container
+- **tactical-data-client**: Interactive client container
+- **tactical-network**: Bridge network
+- **Volume Mapping**: Database persistence
+
+### 🔍 Health Checks
+Docker health check control interface üzerinden gerçekleşir:
 ```bash
-# Terminal 1'de JSON server'ı başlat
-make run-json-server
+# Health check komutu
+echo 'healthcheck' | nc localhost 9090
 ```
 
-### Client Kullanımı
+## 🧪 Testing
+
+### 🗄️ Database Tests
 ```bash
-# Terminal 2'de JSON client'ı başlat
-make run-json-client
-
-# Dosya adını gir (örnek: data.json)
-# Server parse edip sonucu döndürür
+./build/db_test_standalone    # Standalone database test
+./build/db_test_operations    # CRUD operations test
 ```
 
-## 🔧 Özellikler
-
-### JSON File Transfer:
-- ✅ Dosya ismi + içerik protokolü
-- ✅ Modüler yapı (ayrı fonksiyonlar)
-- ✅ Comprehensive JSON parsing
-- ✅ Error handling
-- ✅ Memory management
-- ✅ Multiple client support
-- ✅ Real-time parsing results
-- ✅ Timestamp logging
-
-### Desteklenen JSON Tipleri:
-- String, Number (Integer/Double)
-- Boolean, Array, Object, null
-- Nested structures
-
-## 📊 Örnek Kullanım
-
-**JSON Server Çıktısı:**
-```
-JSON Server - Dosya parse sunucusu
-==================================
-Server baslatildi
-Port 8080'de JSON parse istekleri bekleniyor...
-
-Yeni client baglandi: 127.0.0.1:45958
-[10:22:53] Mesaj alindi (162 byte)
-Dosya: data.json
-JSON parse ediliyor...
-Parse sonucu gonderildi
-```
-
-**JSON Client Çıktısı:**
-```
-JSON Client - Dosya gonderme istemcisi
-=====================================
-Server'a basariyla baglandi
-
-Dosya adi: data.json
-Dosya okundu: data.json (152 byte)
-Server'a gonderiliyor...
-Basariyla gonderildi (162 byte)
-
-Server yaniti:
-=============
-JSON Parse Sonucu
-================
-Dosya: data.json
-Zaman: 10:22:53
-Parse Edildi:
--------------
-name: "Burak" (String)
-age: 30 (Integer)
-isEmployed: true (Boolean)
-skills: Array (4 oge)
-  [0]: "C"
-  [1]: "C++"
-  [2]: "Python"
-  [3]: "JavaScript"
-=============
-```
-
-## 🛠️ Geliştirme Komutları
-
-### Docker Komutları (Önerilen)
+### 🌐 Network Tests  
 ```bash
-./docker.sh build          # Image'ları derle
-./docker.sh server         # Server'ı başlat
-./docker.sh client         # Client'ı başlat
-./docker.sh both           # Server ve client'ı birlikte başlat
-./docker.sh stop           # Container'ları durdur
-./docker.sh clean          # Temizlik
-./docker.sh logs           # Server logları
-./docker.sh status         # Durum kontrolü
+# Control interface test
+./docker-control.sh cmd list
+./docker-control.sh cmd stats
+
+# Manual protocol test
+nc localhost 8080   # TCP test
+nc -u localhost 8081 # UDP test
 ```
 
-### Makefile Komutları (Manuel)
+## 🎯 Use Cases
+
+### 🚁 Tactical Operations
+- **Unit Tracking**: Birim konumları ve durumları
+- **Status Updates**: Real-time durum güncellemeleri  
+- **Encrypted Communication**: Güvenli veri transferi
+- **Multi-Protocol**: Farklı network koşullarında çalışma
+
+### 🏗️ System Integration
+- **Microservices**: Diğer sistemlerle entegrasyon
+- **Database Integration**: Tactical data persistence
+- **Monitoring**: Real-time sistem monitoring
+- **Scalability**: Multi-threaded architecture
+
+## 🛠️ Development
+
+### 🔨 Build System
 ```bash
-make                        # Tüm programları derle
-make encrypted-server       # Encrypted server'ı derle
-make encrypted-client       # Encrypted client'ı derle
-make clean                  # Temizlik
-make run-encrypted-server   # Encrypted server'ı çalıştır
-make run-encrypted-client   # Encrypted client'ı çalıştır
+make clean              # Temizlik
+make all               # Tüm bileşenleri derle
+make encrypted-server  # Sadece server
+make encrypted-client  # Sadece client
+make tests            # Test programs
 ```
 
-## 🔧 Teknik Detaylar
+### 🐛 Debugging
+```bash
+# Server'ı debug modda çalıştır
+gdb ./build/encrypted_server
 
-- **Protocol:** Custom "FILENAME:CONTENT" format
-- **Port:** 8080
-- **Buffer Size:** 4KB
-- **JSON Library:** cJSON
-- **Memory:** Dynamic allocation
-- **Architecture:** Modular functions
-- **Error Handling:** Comprehensive validation
+# Thread monitoring
+ps -eLf | grep encrypted_server
+```
 
-## 🎯 İş Akışı
+### 📚 Code Organization
+- **Modular Design**: Her protokol ayrı dosyada
+- **Header Organization**: Temiz interface definitions
+- **Error Handling**: Comprehensive error management
+- **Memory Management**: Proper allocation/deallocation
 
-1. Client dosya adını girer
-2. Client dosyayı okur ve "FILENAME:CONTENT" formatında gönderir
-3. Server protocol mesajını parse eder
-4. Server JSON içeriğini parse eder
-5. Server formatlanmış sonucu döndürür
-6. Client sonucu gösterir
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/amazing-feature`)  
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🙏 Acknowledgments
+
+- **cJSON Library**: JSON parsing capabilities
+- **SQLite**: Database functionality  
+- **OpenSSL**: Cryptographic functions
+- **Docker**: Containerization support
+
+---
+
+**🚀 Modern tactical data communication made simple and secure!**

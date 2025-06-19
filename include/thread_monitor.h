@@ -30,9 +30,13 @@ void add_thread_info(pthread_t thread_id, int client_socket, const char* client_
 void remove_thread_info(pthread_t thread_id);
 void* thread_monitor(void* arg);
 int get_active_thread_count(void);
+int get_total_connections(void);
 void increment_healthcheck_count(void);
+int get_healthcheck_count(void);
+void increment_udp_connection(void);
 void increment_total_connections(void);
 void init_thread_monitoring(void);
+void log_thread_stats(void);
 
 // Queue fonksiyonları
 void add_to_queue(int client_socket, struct sockaddr_in client_addr);

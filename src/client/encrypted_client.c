@@ -3,62 +3,52 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include "crypto_utils.h"
 #include "config.h"
 
+// Connection types
+typedef enum {
+    CONN_TCP = 0,
+    CONN_UDP = 1,
+    CONN_P2P = 2
+} connection_type_t;
+
+typedef struct {
+    int socket;
+    connection_type_t type;
+    int port;
+    struct sockaddr_in server_addr;
+} client_connection_t;
+
 // Function prototypes
 char* read_file_content(const char* filename, size_t* file_size);
 char* create_normal_protocol_message(const char* filename, const char* content);
 char* create_encrypted_protocol_message(const char* filename, const char* content);
-int send_json_file(int socket, const char* filename, int encrypt);
-void handle_server_response(int socket);
+int send_json_file(client_connection_t* conn, const char* filename, int encrypt);
+void handle_server_response(client_connection_t* conn);
 void show_menu(void);
+client_connection_t* connect_to_server(const char* server_host);
+void close_connection(client_connection_t* conn);
+int send_tcp_message(client_connection_t* conn, const char* message);
+int send_udp_message(client_connection_t* conn, const char* message);
+int send_p2p_message(client_connection_t* conn, const char* message);
+int receive_tcp_response(client_connection_t* conn, char* buffer, size_t buffer_size);
+int receive_udp_response(client_connection_t* conn, char* buffer, size_t buffer_size);
+int receive_p2p_response(client_connection_t* conn, char* buffer, size_t buffer_size);
 
 int main() {
-    int sock = 0;
-    struct sockaddr_in serv_addr;
     char filename[CONFIG_MAX_FILENAME];
     int choice;
     
     printf("Encrypted JSON Client - Sifreli dosya gonderme istemcisi\n");
     printf("=======================================================\n");
     
-    // Socket olustur
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        printf("Socket olusturma hatasi\n");
-        return -1;
-    }
-    
-    // Server adres konfigurasyonu
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(CONFIG_PORT);
-    
-    // Server IP adresini environment variable'dan al (Docker için)
-    const char* server_host = getenv("SERVER_HOST");
-    if (server_host == NULL) {
-        server_host = "127.0.0.1"; // Default localhost
-    }
-    
-    printf("Server'a baglaniliyor: %s:%d\n", server_host, CONFIG_PORT);
-    
-    // Hostname veya IP adresini çözümle
-    struct hostent *host_entry;
-    if (inet_pton(AF_INET, server_host, &serv_addr.sin_addr) <= 0) {
-        // IP adresi değilse hostname olarak çözümle
-        host_entry = gethostbyname(server_host);
-        if (host_entry == NULL) {
-            printf("Host cozumlenemedi: %s\n", server_host);
-            return -1;
-        }
-        serv_addr.sin_addr = *((struct in_addr*)host_entry->h_addr_list[0]);
-    }
-    
     // Server'a baglan
-    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        printf("Baglanti hatasi\n");
-        printf("Server'in calistiginden emin olun (localhost:%d)\n", CONFIG_PORT);
+    client_connection_t* conn = connect_to_server(getenv("SERVER_HOST"));
+    if (conn == NULL) {
         return -1;
     }
     
@@ -82,8 +72,8 @@ int main() {
                 if (fgets(filename, CONFIG_MAX_FILENAME, stdin) != NULL) {
                     filename[strcspn(filename, "\n")] = 0; // Newline kaldir
                     if (strlen(filename) > 0) {
-                        if (send_json_file(sock, filename, 0) == 0) {
-                            handle_server_response(sock);
+                        if (send_json_file(conn, filename, 0) == 0) {
+                            handle_server_response(conn);
                         }
                     }
                 }
@@ -94,8 +84,8 @@ int main() {
                 if (fgets(filename, CONFIG_MAX_FILENAME, stdin) != NULL) {
                     filename[strcspn(filename, "\n")] = 0;
                     if (strlen(filename) > 0) {
-                        if (send_json_file(sock, filename, 1) == 0) {
-                            handle_server_response(sock);
+                        if (send_json_file(conn, filename, 1) == 0) {
+                            handle_server_response(conn);
                         }
                     }
                 }
@@ -103,7 +93,7 @@ int main() {
                 
             case 3: // Cikis
                 printf("Baglanti kapatiliyor...\n");
-                close(sock);
+                close_connection(conn);
                 return 0;
                 
             default:
@@ -114,7 +104,7 @@ int main() {
         printf("\n");
     }
     
-    close(sock);
+    close_connection(conn);
     return 0;
 }
 
@@ -229,7 +219,7 @@ char* create_encrypted_protocol_message(const char* filename, const char* conten
 }
 
 // JSON dosyasini server'a gonder
-int send_json_file(int socket, const char* filename, int encrypt) {
+int send_json_file(client_connection_t* conn, const char* filename, int encrypt) {
     size_t file_size;
     char *content = read_file_content(filename, &file_size);
     
@@ -256,15 +246,26 @@ int send_json_file(int socket, const char* filename, int encrypt) {
     printf("Server'a gonderiliyor...\n");
     
     // Mesaji gonder
-    ssize_t sent_bytes = send(socket, protocol_message, strlen(protocol_message), 0);
-    if (sent_bytes < 0) {
+    int result;
+    if (conn->type == CONN_TCP) {
+        result = send_tcp_message(conn, protocol_message);
+    } else if (conn->type == CONN_UDP) {
+        result = send_udp_message(conn, protocol_message);
+    } else if (conn->type == CONN_P2P) {
+        result = send_p2p_message(conn, protocol_message);
+    } else {
+        printf("Bilinmeyen baglanti tipi\n");
+        result = -1;
+    }
+    
+    if (result < 0) {
         printf("Gonderim hatasi\n");
         free(content);
         free(protocol_message);
         return -1;
     }
     
-    printf("Basariyla gonderildi (%zd byte)\n", sent_bytes);
+    printf("Basariyla gonderildi\n");
     
     free(content);
     free(protocol_message);
@@ -272,10 +273,21 @@ int send_json_file(int socket, const char* filename, int encrypt) {
 }
 
 // Server yanitini isle
-void handle_server_response(int socket) {
+void handle_server_response(client_connection_t* conn) {
     char buffer[CONFIG_BUFFER_SIZE] = {0};
     
-    ssize_t bytes_received = read(socket, buffer, CONFIG_BUFFER_SIZE - 1);
+    ssize_t bytes_received;
+    if (conn->type == CONN_TCP) {
+        bytes_received = receive_tcp_response(conn, buffer, CONFIG_BUFFER_SIZE - 1);
+    } else if (conn->type == CONN_UDP) {
+        bytes_received = receive_udp_response(conn, buffer, CONFIG_BUFFER_SIZE - 1);
+    } else if (conn->type == CONN_P2P) {
+        bytes_received = receive_p2p_response(conn, buffer, CONFIG_BUFFER_SIZE - 1);
+    } else {
+        printf("Bilinmeyen baglanti tipi yanit alinamadi\n");
+        return;
+    }
+    
     if (bytes_received > 0) {
         buffer[bytes_received] = '\0';
         printf("\nServer yaniti:\n");
@@ -287,4 +299,228 @@ void handle_server_response(int socket) {
     } else {
         printf("Yanitlama hatasi\n");
     }
+}
+
+// Server connection with fallback (TCP -> UDP)
+client_connection_t* connect_to_server(const char* server_host) {
+    client_connection_t* conn = malloc(sizeof(client_connection_t));
+    if (conn == NULL) {
+        printf("Bellek tahsis hatasi\n");
+        return NULL;
+    }
+    
+    if (server_host == NULL) {
+        server_host = "127.0.0.1";
+    }
+    
+    printf("Server'a baglaniliyor: %s\n", server_host);
+    
+    // 1. TCP baglantisi dene (Port: 8080)
+    printf("TCP baglantisi deneniyor (Port: %d)...\n", CONFIG_PORT);
+    conn->socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (conn->socket >= 0) {
+        conn->server_addr.sin_family = AF_INET;
+        conn->server_addr.sin_port = htons(CONFIG_PORT);
+        conn->port = CONFIG_PORT;
+        conn->type = CONN_TCP;
+        
+        // IP adresini çözümle
+        if (inet_pton(AF_INET, server_host, &conn->server_addr.sin_addr) <= 0) {
+            struct hostent *host_entry = gethostbyname(server_host);
+            if (host_entry != NULL) {
+                conn->server_addr.sin_addr = *((struct in_addr*)host_entry->h_addr_list[0]);
+            } else {
+                printf("Host cozumlenemedi: %s\n", server_host);
+                close(conn->socket);
+                goto try_udp;
+            }
+        }
+        
+        // TCP baglantisi dene
+        if (connect(conn->socket, (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) == 0) {
+            printf("✓ TCP baglantisi basarili (Port: %d)\n", CONFIG_PORT);
+            return conn;
+        } else {
+            printf("✗ TCP baglantisi basarisiz (Port: %d)\n", CONFIG_PORT);
+            close(conn->socket);
+        }
+    }
+    
+try_udp:
+    // 2. UDP baglantisi dene (Port: 8081)
+    printf("UDP baglantisi deneniyor (Port: %d)...\n", CONFIG_UDP_PORT);
+    conn->socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (conn->socket >= 0) {
+        conn->server_addr.sin_family = AF_INET;
+        conn->server_addr.sin_port = htons(CONFIG_UDP_PORT);
+        conn->port = CONFIG_UDP_PORT;
+        conn->type = CONN_UDP;
+        
+        // IP adresini çözümle (UDP için)
+        if (inet_pton(AF_INET, server_host, &conn->server_addr.sin_addr) <= 0) {
+            struct hostent *host_entry = gethostbyname(server_host);
+            if (host_entry != NULL) {
+                conn->server_addr.sin_addr = *((struct in_addr*)host_entry->h_addr_list[0]);
+            } else {
+                printf("Host cozumlenemedi: %s\n", server_host);
+                close(conn->socket);
+                goto try_p2p;
+            }
+        }
+        
+        // UDP için test ping gönder
+        const char* test_msg = "PING";
+        if (sendto(conn->socket, test_msg, strlen(test_msg), 0,
+                   (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) > 0) {
+            // Kısa timeout ile response bekle
+            struct timeval timeout;
+            timeout.tv_sec = 1;
+            timeout.tv_usec = 0;
+            setsockopt(conn->socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+            
+            char test_buffer[64];
+            if (recvfrom(conn->socket, test_buffer, sizeof(test_buffer) - 1, 0, NULL, 0) > 0) {
+                printf("✓ UDP baglantisi basarili (Port: %d)\n", CONFIG_UDP_PORT);
+                return conn;
+            }
+        }
+        
+        printf("✗ UDP baglantisi basarisiz (Port: %d)\n", CONFIG_UDP_PORT);
+        close(conn->socket);
+    }
+
+try_p2p:
+    // 3. P2P baglantisi dene (Port: 8082)
+    printf("P2P baglantisi deneniyor (Port: %d)...\n", CONFIG_P2P_PORT);
+    conn->socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (conn->socket >= 0) {
+        conn->server_addr.sin_family = AF_INET;
+        conn->server_addr.sin_port = htons(CONFIG_P2P_PORT);  
+        conn->port = CONFIG_P2P_PORT;
+        conn->type = CONN_P2P;
+        
+        // IP adresini çözümle
+        if (inet_pton(AF_INET, server_host, &conn->server_addr.sin_addr) <= 0) {
+            struct hostent *host_entry = gethostbyname(server_host);
+            if (host_entry != NULL) {
+                conn->server_addr.sin_addr = *((struct in_addr*)host_entry->h_addr_list[0]);
+            } else {
+                printf("Host cozumlenemedi: %s\n", server_host);
+                close(conn->socket);
+                free(conn);
+                return NULL;
+            }
+        }
+        
+        // P2P TCP baglantisi dene
+        if (connect(conn->socket, (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) == 0) {
+            printf("✓ P2P baglantisi basarili (Port: %d)\n", CONFIG_P2P_PORT);
+            return conn;
+        } else {
+            printf("✗ P2P baglantisi basarisiz (Port: %d)\n", CONFIG_P2P_PORT);
+            close(conn->socket);
+        }
+    }
+    
+    printf("✗ Hicbir protokol ile baglanti kurulamadi!\n");
+    free(conn);
+    return NULL;
+}
+
+// Baglantiyi kapat
+void close_connection(client_connection_t* conn) {
+    if (conn != NULL) {
+        if (conn->socket >= 0) {
+            close(conn->socket);
+        }
+        free(conn);
+    }
+}
+
+// TCP mesaj gonder
+int send_tcp_message(client_connection_t* conn, const char* message) {
+    ssize_t bytes_sent = send(conn->socket, message, strlen(message), 0);
+    if (bytes_sent < 0) {
+        perror("TCP send hatasi");
+        return -1;
+    }
+    printf("TCP mesaj gonderildi (%zd bytes)\n", bytes_sent);
+    return 0;
+}
+
+// UDP mesaj gonder
+int send_udp_message(client_connection_t* conn, const char* message) {
+    ssize_t bytes_sent = sendto(conn->socket, message, strlen(message), 0,
+                               (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr));
+    if (bytes_sent < 0) {
+        perror("UDP send hatasi");
+        return -1;
+    }
+    printf("UDP mesaj gonderildi (%zd bytes)\n", bytes_sent);
+    return 0;
+}
+
+// P2P mesaj gonder
+int send_p2p_message(client_connection_t* conn, const char* message) {
+    // P2P protokolu: P2P_DATA:NODE_ID:MESSAGE
+    char p2p_message[CONFIG_BUFFER_SIZE];
+    snprintf(p2p_message, sizeof(p2p_message), "P2P_DATA:CLIENT_%d:%s", 
+             getpid(), message);
+    
+    ssize_t bytes_sent = send(conn->socket, p2p_message, strlen(p2p_message), 0);
+    if (bytes_sent < 0) {
+        perror("P2P send hatasi");
+        return -1;
+    }
+    printf("P2P mesaj gonderildi (%zd bytes)\n", bytes_sent);
+    return 0;
+}
+
+// TCP yanit al
+int receive_tcp_response(client_connection_t* conn, char* buffer, size_t buffer_size) {
+    ssize_t bytes_received = recv(conn->socket, buffer, buffer_size - 1, 0);
+    if (bytes_received < 0) {
+        perror("TCP receive hatasi");
+        return -1;
+    } else if (bytes_received == 0) {
+        printf("TCP baglanti kapatildi\n");
+        return -1;
+    }
+    
+    buffer[bytes_received] = '\0';
+    printf("TCP yanit alindi (%zd bytes)\n", bytes_received);
+    return bytes_received;
+}
+
+// UDP yanit al
+int receive_udp_response(client_connection_t* conn, char* buffer, size_t buffer_size) {
+    struct sockaddr_in from_addr;
+    socklen_t from_len = sizeof(from_addr);
+    
+    ssize_t bytes_received = recvfrom(conn->socket, buffer, buffer_size - 1, 0,
+                                     (struct sockaddr*)&from_addr, &from_len);
+    if (bytes_received < 0) {
+        perror("UDP receive hatasi");
+        return -1;
+    }
+    
+    buffer[bytes_received] = '\0';
+    printf("UDP yanit alindi (%zd bytes)\n", bytes_received);
+    return bytes_received;
+}
+
+// P2P yanit al
+int receive_p2p_response(client_connection_t* conn, char* buffer, size_t buffer_size) {
+    ssize_t bytes_received = recv(conn->socket, buffer, buffer_size - 1, 0);
+    if (bytes_received < 0) {
+        perror("P2P receive hatasi");
+        return -1;
+    } else if (bytes_received == 0) {
+        printf("P2P baglanti kapatildi\n");
+        return -1;
+    }
+    
+    buffer[bytes_received] = '\0';
+    printf("P2P yanit alindi (%zd bytes)\n", bytes_received);
+    return bytes_received;
 }

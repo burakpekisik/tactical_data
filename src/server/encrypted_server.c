@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -14,19 +15,50 @@
 #include "database.h"
 #include "config.h"
 #include "thread_monitor.h"
+#include "connection_manager.h"
+#include "control_interface.h"
 
 // Function prototypes
 int parse_protocol_message(const char* message, char** command, char** filename, char** content);
 void* handle_client(void* arg);
 char* handle_encrypted_request(const char* filename, const char* encrypted_content);
 void* queue_processor(void* arg);
+void handle_signal(int sig);
+
+// Global variables for signal handling
+static volatile sig_atomic_t server_running = 1;
+
+// Signal handler for graceful shutdown
+void handle_signal(int sig) {
+    printf("\n🛑 Signal %d alındı, server kapatılıyor...\n", sig);
+    server_running = 0;
+    
+    // TCP server'ı durdur
+    stop_tcp_server();
+    
+    // Database'i kapat
+    db_close();
+    
+    printf("✓ Server temiz bir şekilde kapatıldı\n");
+    exit(0);
+}
 
 int main() {
-    int server_fd, new_socket;
-    struct sockaddr_in address;
-    int opt = 1;
-    int addrlen = sizeof(address);
-
+    printf("Encrypted JSON Server - Sifreli dosya parse sunucusu\n");
+    printf("===================================================\n");
+    
+    // Connection Manager'ı başlat
+    if (init_connection_manager() != 0) {
+        fprintf(stderr, "Connection Manager başlatılamadı!\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Control interface'i başlat
+    if (start_control_interface() != 0) {
+        fprintf(stderr, "Control interface başlatılamadı!\n");
+        exit(EXIT_FAILURE);
+    }
+    
     // Thread monitoring sistemini başlat
     init_thread_monitoring();
 
@@ -39,8 +71,6 @@ int main() {
     pthread_create(&queue_thread, NULL, queue_processor, NULL);
     pthread_detach(queue_thread);
     
-    printf("Encrypted JSON Server - Sifreli dosya parse sunucusu\n");
-    printf("===================================================\n");
     printf("Thread monitoring sistemi aktif\n");
     printf("Queue processing sistemi aktif\n");
     fflush(stdout);
@@ -85,108 +115,89 @@ int main() {
     
     fflush(stdout);
     
-    // Socket olustur
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        perror("Socket olusturma hatasi");
+    // TCP Server'ı başlat
+    printf("TCP Server başlatılıyor...\n");
+    if (start_tcp_server(CONFIG_PORT) != 0) {
+        fprintf(stderr, "TCP Server başlatılamadı!\n");
         db_close();
         exit(EXIT_FAILURE);
     }
     
-    // Socket secenekleri
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
-        perror("setsockopt hatasi");
-        db_close();
-        exit(EXIT_FAILURE);
-    }
     
-    // Adres konfigurasyonu
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(CONFIG_PORT);
-    
-    // Socket'i porta bagla
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("Bind hatasi");
-        db_close();
-        exit(EXIT_FAILURE);
-    }
-    
-    // Dinlemeye basla
-    if (listen(server_fd, CONFIG_MAX_CLIENTS) < 0) {
-        perror("Listen hatasi");
-        db_close();
-        exit(EXIT_FAILURE);
-    }
-    
-    printf("Server baslatildi\n");
-    printf("Port %d'de sifreli JSON parse istekleri bekleniyor...\n", CONFIG_PORT);
+    printf("Server başlatıldı\n");
     printf("Desteklenen komutlar:\n");
     printf("  PARSE:filename:{json_data}      - Normal JSON parse\n");
     printf("  ENCRYPTED:filename:{hex_data}   - Sifreli JSON parse\n");
-    printf("Cikis icin Ctrl+C'ye basin\n\n");
+    printf("  CONTROL:command                 - Server control\n");
+    printf("Control komutları: start_tcp, stop_tcp, list, stats\n");
+    printf("Çıkış için Ctrl+C'ye basın\n\n");
     fflush(stdout);
     
-    while (1) {
-        printf("Yeni baglanti bekleniyor...\n");
-        fflush(stdout);
+    // Docker modunu kontrol et (stdin kullanılabilir mi?)
+    bool is_interactive = isatty(STDIN_FILENO);
+    
+    if (is_interactive) {
+        // Interactive mode - local çalıştırma
+        printf("\n=== SERVER CONTROL INTERFACE ===\n");
+        printf("Commands: stop_tcp, start_tcp, list, stats, help, quit\n");
         
-        if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
-            perror("Accept hatasi");
-            continue;
-        }
-
-        char client_ip[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &address.sin_addr, client_ip, INET_ADDRSTRLEN);
-        int client_port = ntohs(address.sin_port);
-        
-        // Health check detection - Docker daemon IP'si veya localhost kontrolü
-        if (strcmp(client_ip, "172.17.0.1") == 0 || strcmp(client_ip, "127.0.0.1") == 0) {
-            printf("🔍 HEALTHCHECK: Docker health check bağlantısı tespit edildi: %s:%d\n", 
-                   client_ip, client_port);
-            increment_healthcheck_count();
-            increment_total_connections();
+        char command[256];
+        while (1) {
+            printf("server> ");
             fflush(stdout);
-            close(new_socket);
-            continue;
-        }
-        
-        printf("✅ CLIENT: Gerçek client bağlantısı: %s:%d (socket_fd: %d)\n", 
-               client_ip, client_port, new_socket);
-        increment_total_connections();
-
-        // Thread kapasitesi kontrolü
-        if (get_active_thread_count() >= CONFIG_MAX_CLIENTS) {
-            printf("⚠️  Server dolu! Client queue'ya ekleniyor: %s:%d\n", client_ip, client_port);
             
-            // Client'ı queue'ya ekle
-            add_to_queue(new_socket, address);
-            continue;
+            if (fgets(command, sizeof(command), stdin) != NULL) {
+                command[strcspn(command, "\n")] = 0;
+                
+                if (strlen(command) == 0) continue;
+                
+                if (strcmp(command, "quit") == 0 || strcmp(command, "exit") == 0) {
+                    printf("Server kapatılıyor...\n");
+                    break;
+                } else if (strcmp(command, "help") == 0) {
+                    show_connection_menu();
+                } else if (strcmp(command, "stats") == 0) {
+                    list_active_connections();
+                    log_thread_stats();
+                } else {
+                    if (process_connection_command(command) != 0) {
+                        printf("Bilinmeyen komut: %s\n", command);
+                        printf("'help' yazın veya 'quit' ile çıkın\n");
+                    }
+                }
+            } else {
+                break;
+            }
         }
-        
-        pthread_t thread_id;
-        int *client_socket_ptr = malloc(sizeof(int));
-        *client_socket_ptr = new_socket;
-
-        if (pthread_create(&thread_id, NULL, handle_client, client_socket_ptr) != 0) {
-            perror("Thread olusturma hatasi");
-            free(client_socket_ptr);
-            close(new_socket);
-            continue;
-        }
-
-        add_thread_info(thread_id, new_socket, client_ip, client_port);
-
-        
-        pthread_detach(thread_id);
-        printf("Client thread olusturuldu (Thread ID: %lu, Aktif: %d)\n", 
-               thread_id, get_active_thread_count());
+    } else {
+        // Non-interactive mode - Docker çalıştırma
+        printf("\n=== DOCKER MODE - Server running in background ===\n");
+        printf("Server TCP port %d'de çalışıyor\n", CONFIG_PORT);
+        printf("UDP server için 'start_udp' komutu ile başlatabilirsiniz\n");
+        printf("Container'ı durdurmak için: docker-compose down\n");
         fflush(stdout);
+        
+        // Signal handler kurulumu
+        signal(SIGTERM, handle_signal);
+        signal(SIGINT, handle_signal);
+        
+        // Sonsuz döngü - sadece signal ile çıkılır
+        while (server_running) {
+            sleep(10);
+            
+            // Her 10 saniyede bir stats yazdır
+            printf("=== SERVER STATUS ===\n");
+            list_active_connections();
+            log_thread_stats();
+            printf("Server aktif, bağlantı bekleniyor... (PID: %d)\n", getpid());
+            fflush(stdout);
+        }
     }
     
-    close(server_fd);
+    printf("Sunucu kapatılıyor...\n");
+    stop_tcp_server();
     db_close();
-    printf("Server kapatildi ve database baglantisi sonlandirildi\n");
-    fflush(stdout);
+    printf("Server kapatıldı\n");
     return 0;
 }
 
@@ -225,7 +236,7 @@ void* handle_client(void* arg) {
         
         // Health check detection - Docker healthcheck'i tespit et
         if (bytes_received == 0 || (bytes_received > 0 && buffer[0] == '\0')) {
-            printf("🔍 HEALTHCHECK: Docker health check tespit edildi (Thread: %lu)\n", current_thread);
+            printf("HEALTHCHECK: Docker health check tespit edildi (Thread: %lu)\n", current_thread);
             fflush(stdout);
             close(client_socket);
             remove_thread_info(current_thread);
@@ -234,7 +245,7 @@ void* handle_client(void* arg) {
         
         // Boş veya çok kısa mesajları health check olarak değerlendir
         if (bytes_received < 5) {
-            printf("🔍 HEALTHCHECK: Kısa mesaj - muhtemelen health check (Thread: %lu, Boyut: %zd)\n", 
+            printf("HEALTHCHECK: Kısa mesaj - muhtemelen health check (Thread: %lu, Boyut: %zd)\n", 
                    current_thread, bytes_received);
             fflush(stdout);
             close(client_socket);
