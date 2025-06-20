@@ -1,3 +1,12 @@
+/**
+ * @file tcp_connection.c
+ * @brief TCP server/client bağlantı yönetimi
+ * @ingroup tcp_networking
+ * 
+ * TCP tabanlı güvenilir tactical data iletişimi sağlar.
+ * Multi-client server ve client connection management.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,11 +25,16 @@
 #include "json_utils.h"
 #include "database.h"
 
-// External function declarations
+/// @brief External client handler function
 void* handle_client(void* arg);
+/// @brief External protocol parser function  
 extern int parse_protocol_message(const char* message, char** command, char** filename, char** content);
 
-// TCP Server başlatma
+/**
+ * @brief TCP server'ı initialize eder
+ * @param manager Connection manager
+ * @return 0 başarı
+ */
 int tcp_server_init(connection_manager_t* manager) {
     printf("TCP Server modülü başlatılıyor...\n");
     
@@ -38,7 +52,11 @@ int tcp_server_init(connection_manager_t* manager) {
     return 0;
 }
 
-// TCP Server başlat
+/**
+ * @brief TCP server'ı başlatır ve client connections kabul eder
+ * @param manager Connection manager
+ * @return 0 başarı, -1 hata
+ */
 int tcp_server_start(connection_manager_t* manager) {
     int server_fd;
     struct sockaddr_in address;
@@ -100,7 +118,11 @@ int tcp_server_start(connection_manager_t* manager) {
     return 0;
 }
 
-// TCP Server durdur
+/**
+ * @brief TCP server'ı durdurur ve tüm connections kapatır
+ * @param manager Connection manager
+ * @return 0 başarı
+ */
 int tcp_server_stop(connection_manager_t* manager) {
     if (manager->status != CONN_STATUS_RUNNING) {
         printf("TCP Server zaten durdurulmuş\n");
@@ -131,7 +153,11 @@ int tcp_server_stop(connection_manager_t* manager) {
     return 0;
 }
 
-// TCP Server ana thread
+/**
+ * @brief TCP server ana thread - incoming connections kabul eder
+ * @param arg Connection manager pointer
+ * @return NULL
+ */
 void* tcp_server_thread(void* arg) {
     connection_manager_t* manager = (connection_manager_t*)arg;
     struct sockaddr_in client_addr;
@@ -183,7 +209,12 @@ void* tcp_server_thread(void* arg) {
     return NULL;
 }
 
-// TCP Client bağlantısı
+/**
+ * @brief TCP server'a client bağlantısı kurar
+ * @param hostname Server IP adresi
+ * @param port Server port numarası
+ * @return Socket descriptor veya -1 hata
+ */
 int tcp_client_connect(const char* hostname, int port) {
     int client_socket;
     struct sockaddr_in server_addr;
@@ -215,7 +246,13 @@ int tcp_client_connect(const char* hostname, int port) {
     return client_socket;
 }
 
-// TCP Client veri gönderme
+/**
+ * @brief TCP connection üzerinden veri gönderir
+ * @param socket Socket descriptor
+ * @param data Gönderilecek veri
+ * @param length Veri boyutu
+ * @return Gönderilen byte sayısı veya -1 hata
+ */
 int tcp_client_send(int socket, const char* data, size_t length) {
     ssize_t bytes_sent = send(socket, data, length, 0);
     if (bytes_sent < 0) {
@@ -227,7 +264,13 @@ int tcp_client_send(int socket, const char* data, size_t length) {
     return bytes_sent;
 }
 
-// TCP Client veri alma
+/**
+ * @brief TCP connection'dan veri alır
+ * @param socket Socket descriptor
+ * @param buffer Veri buffer'ı
+ * @param buffer_size Buffer boyutu
+ * @return Alınan byte sayısı veya -1 hata
+ */
 int tcp_client_receive(int socket, char* buffer, size_t buffer_size) {
     ssize_t bytes_received = recv(socket, buffer, buffer_size - 1, 0);
     if (bytes_received < 0) {
@@ -240,7 +283,10 @@ int tcp_client_receive(int socket, char* buffer, size_t buffer_size) {
     return bytes_received;
 }
 
-// TCP Client bağlantısını kapat
+/**
+ * @brief TCP client bağlantısını kapatır
+ * @param socket Socket descriptor
+ */
 void tcp_client_disconnect(int socket) {
     if (socket >= 0) {
         close(socket);
@@ -248,7 +294,11 @@ void tcp_client_disconnect(int socket) {
     }
 }
 
-// TCP İstatistiklerini güncelle
+/**
+ * @brief TCP server connection istatistiklerini günceller
+ * @param manager Connection manager
+ * @param connection_added true: bağlantı eklendi, false: kaldırıldı
+ */
 void tcp_update_stats(connection_manager_t* manager, bool connection_added) {
     if (connection_added) {
         manager->client_count++;
@@ -264,7 +314,12 @@ void tcp_update_stats(connection_manager_t* manager, bool connection_added) {
     }
 }
 
-// TCP Bağlantıyı logla
+/**
+ * @brief TCP client connection aktivitelerini loglar
+ * @param client_ip Client IP adresi
+ * @param client_port Client port numarası
+ * @param connected true: bağlandı, false: ayrıldı
+ */
 void tcp_log_connection(const char* client_ip, int client_port, bool connected) {
     time_t now = time(NULL);
     char* time_str = ctime(&now);

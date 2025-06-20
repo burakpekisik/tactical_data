@@ -1,4 +1,9 @@
 .vscode
+html
+latex
+man
+xml
+
 # Prerequisites
 *.d
 

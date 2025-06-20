@@ -1,3 +1,12 @@
+/**
+ * @file udp_connection.c
+ * @brief UDP connectionless veri iletişimi ve ECDH session yönetimi
+ * @ingroup udp_networking
+ * 
+ * UDP tabanlı tactical data iletişimi ve peer session management.
+ * ECDH key exchange ve encrypted data processing desteği.
+ */
+
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,14 +27,19 @@
 #include "crypto_utils.h"
 #include "database.h"
 
-// Global UDP session listesi
+/// @brief Global UDP session listesi (linked list)
 static udp_session_t* session_list = NULL;
+/// @brief Session listesi için thread safety mutex
 static pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// Session timeout (5 dakika)
+/// @brief Session timeout süresi (5 dakika)
 #define UDP_SESSION_TIMEOUT 300
 
-// UDP Server başlatma
+/**
+ * @brief UDP server'ı initialize eder
+ * @param manager Connection manager
+ * @return 0 başarı
+ */
 int udp_server_init(connection_manager_t* manager) {
     printf("UDP Server modülü başlatılıyor...\n");
     
@@ -43,7 +57,11 @@ int udp_server_init(connection_manager_t* manager) {
     return 0;
 }
 
-// UDP Server başlat
+/**
+ * @brief UDP server'ı başlatır ve datagram'ları dinlemeye başlar
+ * @param manager Connection manager
+ * @return 0 başarı, -1 hata
+ */
 int udp_server_start(connection_manager_t* manager) {
     int server_fd;
     struct sockaddr_in address;
@@ -97,7 +115,11 @@ int udp_server_start(connection_manager_t* manager) {
     return 0;
 }
 
-// UDP Server durdur
+/**
+ * @brief UDP server'ı durdurur ve socket'ı kapatır
+ * @param manager Connection manager
+ * @return 0 başarı
+ */
 int udp_server_stop(connection_manager_t* manager) {
     if (manager->status != CONN_STATUS_RUNNING) {
         printf("UDP Server zaten durdurulmuş\n");
@@ -120,7 +142,11 @@ int udp_server_stop(connection_manager_t* manager) {
     return 0;
 }
 
-// UDP Server ana thread
+/**
+ * @brief UDP server ana thread - datagram'ları alır ve işler
+ * @param arg Connection manager pointer
+ * @return NULL
+ */
 void* udp_server_thread(void* arg) {
     connection_manager_t* manager = (connection_manager_t*)arg;
     char buffer[CONFIG_BUFFER_SIZE];
@@ -203,7 +229,10 @@ void* udp_server_thread(void* arg) {
     return NULL;
 }
 
-// UDP Client başlatma
+/**
+ * @brief UDP client socket oluşturur
+ * @return Socket descriptor veya -1 hata
+ */
 int udp_client_init(void) {
     int client_socket = socket(AF_INET, SOCK_DGRAM, 0);
     if (client_socket < 0) {
@@ -215,7 +244,15 @@ int udp_client_init(void) {
     return client_socket;
 }
 
-// UDP Client veri gönderme
+/**
+ * @brief UDP datagram gönderir
+ * @param socket UDP socket descriptor
+ * @param hostname Hedef IP adresi
+ * @param port Hedef port numarası
+ * @param data Gönderilecek veri
+ * @param length Veri boyutu
+ * @return Gönderilen byte sayısı veya -1 hata
+ */
 int udp_client_send(int socket, const char* hostname, int port, const char* data, size_t length) {
     struct sockaddr_in server_addr;
     
@@ -241,7 +278,15 @@ int udp_client_send(int socket, const char* hostname, int port, const char* data
     return bytes_sent;
 }
 
-// UDP Client veri alma
+/**
+ * @brief UDP datagram alır ve gönderen bilgilerini döndürür
+ * @param socket UDP socket descriptor
+ * @param buffer Veri buffer'ı
+ * @param buffer_size Buffer boyutu
+ * @param sender_ip Gönderen IP adresi (output)
+ * @param sender_port Gönderen port numarası (output)
+ * @return Alınan byte sayısı veya -1 hata
+ */
 int udp_client_receive(int socket, char* buffer, size_t buffer_size, char* sender_ip, int* sender_port) {
     struct sockaddr_in sender_addr;
     socklen_t sender_len = sizeof(sender_addr);
@@ -268,7 +313,10 @@ int udp_client_receive(int socket, char* buffer, size_t buffer_size, char* sende
     return bytes_received;
 }
 
-// UDP Client kapatma
+/**
+ * @brief UDP client socket'ı kapatır
+ * @param socket Socket descriptor
+ */
 void udp_client_close(int socket) {
     if (socket >= 0) {
         close(socket);
@@ -276,7 +324,11 @@ void udp_client_close(int socket) {
     }
 }
 
-// UDP İstatistiklerini güncelle
+/**
+ * @brief UDP server packet istatistiklerini günceller
+ * @param manager Connection manager
+ * @param packet_received true: packet alındı
+ */
 void udp_update_stats(connection_manager_t* manager, bool packet_received) {
     if (packet_received) {
         manager->total_requests++;
@@ -284,7 +336,12 @@ void udp_update_stats(connection_manager_t* manager, bool packet_received) {
     }
 }
 
-// UDP Paket logla
+/**
+ * @brief UDP packet aktivitelerini loglar
+ * @param client_ip Client IP adresi
+ * @param client_port Client port numarası
+ * @param packet_size Packet boyutu
+ */
 void udp_log_packet(const char* client_ip, int client_port, size_t packet_size) {
     time_t now = time(NULL);
     char* time_str = ctime(&now);
@@ -294,7 +351,14 @@ void udp_log_packet(const char* client_ip, int client_port, size_t packet_size) 
            time_str, client_ip, client_port, packet_size);
 }
 
-// UDP Mesaj parsing
+/**
+ * @brief UDP protocol mesajlarını parse eder (PARSE/ENCRYPTED commands)
+ * @param message Gelen mesaj
+ * @param client_ip Client IP adresi
+ * @param client_port Client port numarası
+ * @param manager Connection manager
+ * @return 0 başarı, -1 hata
+ */
 int udp_parse_message(const char* message, const char* client_ip, int client_port, connection_manager_t* manager) {
     printf("UDP Mesaj parsing: %s (kaynak: %s:%d)\n", message, client_ip, client_port);
     
@@ -348,7 +412,14 @@ int udp_parse_message(const char* message, const char* client_ip, int client_por
     return result;
 }
 
-// UDP JSON data işleme - TCP'deki gibi gerçek processing
+/**
+ * @brief UDP JSON tactical data'yı işler ve database'e kaydeder
+ * @param json_data JSON string
+ * @param filename Dosya referansı
+ * @param client_ip Client IP adresi
+ * @param client_port Client port numarası
+ * @return 0 başarı, -1 hata
+ */
 int udp_process_json_data(const char* json_data, const char* filename, const char* client_ip, int client_port) {
     printf("UDP JSON Processing: %s from %s:%d\n", filename, client_ip, client_port);
     
@@ -375,7 +446,15 @@ int udp_process_json_data(const char* json_data, const char* filename, const cha
     }
 }
 
-// UDP Encrypted data işleme
+/**
+ * @brief ECDH session key ile şifrelenmiş UDP data'yı işler
+ * @param encrypted_data Hex-encoded şifreli veri
+ * @param filename Dosya referansı
+ * @param client_ip Client IP adresi
+ * @param client_port Client port numarası
+ * @param session_key ECDH session anahtarı
+ * @return 0 başarı, -1 hata
+ */
 int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port, const uint8_t* session_key) {
     printf("UDP Encrypted Processing: %s from %s:%d\n", filename, client_ip, client_port);
     
@@ -438,7 +517,12 @@ int udp_process_encrypted_data(const char* encrypted_data, const char* filename,
     }
 }
 
-// Session bul
+/**
+ * @brief Client IP:port için UDP session bulur
+ * @param client_ip Client IP adresi
+ * @param client_port Client port numarası
+ * @return Session pointer veya NULL
+ */
 udp_session_t* udp_find_session(const char* client_ip, int client_port) {
     pthread_mutex_lock(&session_mutex);
     
@@ -456,7 +540,12 @@ udp_session_t* udp_find_session(const char* client_ip, int client_port) {
     return NULL;
 }
 
-// Yeni session oluştur
+/**
+ * @brief Yeni UDP session oluşturur ve ECDH initialize eder
+ * @param client_ip Client IP adresi
+ * @param client_port Client port numarası
+ * @return Session pointer veya NULL hata durumunda
+ */
 udp_session_t* udp_create_session(const char* client_ip, int client_port) {
     udp_session_t* session = malloc(sizeof(udp_session_t));
     if (session == NULL) {
@@ -495,7 +584,10 @@ udp_session_t* udp_create_session(const char* client_ip, int client_port) {
     return session;
 }
 
-// Session temizle
+/**
+ * @brief UDP session'ı temizler ve listeden çıkarır
+ * @param session Temizlenecek session
+ */
 void udp_cleanup_session(udp_session_t* session) {
     if (session == NULL) {
         return;
@@ -527,7 +619,9 @@ void udp_cleanup_session(udp_session_t* session) {
     free(session);
 }
 
-// Eski session'ları temizle
+/**
+ * @brief Timeout olan eski UDP session'larını temizler
+ */
 void udp_cleanup_old_sessions(void) {
     time_t current_time = time(NULL);
     
@@ -560,7 +654,13 @@ void udp_cleanup_old_sessions(void) {
     pthread_mutex_unlock(&session_mutex);
 }
 
-// UDP anahtar değişimi mesajı işle
+/**
+ * @brief UDP ECDH key exchange mesajlarını işler
+ * @param socket UDP socket descriptor
+ * @param client_addr Client address bilgileri
+ * @param message ECDH mesajı (ECDH_INIT/ECDH_PUB)
+ * @return 0 başarı, -1 hata
+ */
 int udp_handle_key_exchange(int socket, struct sockaddr_in* client_addr, const char* message) {
     char client_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &client_addr->sin_addr, client_ip, INET_ADDRSTRLEN);

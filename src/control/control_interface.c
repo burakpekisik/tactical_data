@@ -1,3 +1,12 @@
+/**
+ * @file control_interface.c
+ * @brief Sunucu kontrol arayüzü implementasyonu
+ * @ingroup control_interface
+ * 
+ * TCP tabanlı sunucu yönetim komutları ve durum kontrolü.
+ * Sunucuları başlatma/durdurma ve sistem istatistiklerini görüntüleme.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +25,11 @@
 volatile int control_running = 0;
 pthread_t control_thread_id;
 
+/**
+ * @brief Kontrol arayüzünü başlatır
+ * @return 0 başarı, -1 hata
+ * @ingroup control_interface
+ */
 int start_control_interface(void) {
     if (control_running) {
         printf("Control interface already running\n");
@@ -35,6 +49,10 @@ int start_control_interface(void) {
     return 0;
 }
 
+/**
+ * @brief Kontrol arayüzünü durdurur
+ * @ingroup control_interface
+ */
 void stop_control_interface(void) {
     if (!control_running) return;
     
@@ -44,6 +62,12 @@ void stop_control_interface(void) {
     printf("✓ Control interface stopped\n");
 }
 
+/**
+ * @brief Kontrol arayüzü thread fonksiyonu
+ * @param arg Thread parametresi (kullanılmıyor)
+ * @return NULL
+ * @ingroup control_interface
+ */
 void* control_interface_thread(void* arg) {
     (void)arg;
     
@@ -111,6 +135,12 @@ void* control_interface_thread(void* arg) {
     return NULL;
 }
 
+/**
+ * @brief Kontrol komutlarını işler ve yanıt verir
+ * @param command Gelen komut string'i
+ * @param response_socket Yanıt göndermek için socket
+ * @ingroup control_interface
+ */
 void handle_control_command(const char* command, int response_socket) {
     char response[1024];
     

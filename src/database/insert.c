@@ -1,3 +1,16 @@
+/**
+ * @file insert.c
+ * @brief Veritabanı veri ekleme işlemleri
+ * @details Bu dosya SQLite3 veritabanına unit ve report verilerinin eklenmesi,
+ *          JSON'dan gelen tactical data'nın işlenmesi ve otomatik unit oluşturma
+ *          işlemlerini içerir. Tactical Data Transfer System'in veri kaydetme
+ *          katmanını oluşturur.
+ * @author Tactical Data Transfer System
+ * @date 2025
+ * @version 1.0
+ * @ingroup database
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sqlite3.h>
@@ -5,8 +18,30 @@
 #include "../../include/database.h"
 #include "../../include/json_utils.h"
 
+/**
+ * @brief External global veritabanı bağlantısı
+ * @details create.c'de tanımlanan global veritabanı bağlantısına referans
+ * @see g_db in create.c
+ */
 extern sqlite3 *g_db;
 
+/**
+ * @brief UNITS tablosuna yeni unit kaydı ekler
+ * @details Unit bilgilerini UNITS tablosuna INSERT eder. Auto-increment ID döner.
+ *          UNIQUE constraint violation durumunda hata verir.
+ * 
+ * @param unit Eklenecek unit verisi (unit_t struct pointer)
+ * @return int İşlem sonucu
+ * @retval >0 Başarılı ekleme, yeni record'un ID'si
+ * @retval -1 Ekleme hatası (SQL error, database not initialized)
+ * 
+ * @note UNIT_ID alanı UNIQUE constraint'e sahiptir
+ * @warning unit pointer NULL olmamalıdır
+ * @warning String alanlarında SQL injection koruması yok
+ * 
+ * @todo Prepared statement kullanarak SQL injection koruması ekle
+ * @see unit_t, db_init()
+ */
 int db_insert_unit(const unit_t *unit) {
     char *zErrMsg = 0;
     char sql[1024];
@@ -35,6 +70,23 @@ int db_insert_unit(const unit_t *unit) {
     }
 }
 
+/**
+ * @brief REPORTS tablosuna yeni rapor kaydı ekler
+ * @details Report bilgilerini REPORTS tablosuna INSERT eder. Foreign key
+ *          constraint ile UNITS tablosuna bağlıdır.
+ * 
+ * @param report Eklenecek rapor verisi (report_t struct pointer)
+ * @return int İşlem sonucu
+ * @retval >0 Başarılı ekleme, yeni record'un ID'si
+ * @retval -1 Ekleme hatası (SQL error, foreign key violation, database not initialized)
+ * 
+ * @note UNIT_ID foreign key constraint ile UNITS.ID'ye bağlıdır
+ * @note Koordinatlar 6 decimal precision ile saklanır
+ * @warning report pointer NULL olmamalıdır
+ * @warning unit_id mevcut bir UNITS record'una işaret etmelidir
+ * 
+ * @see report_t, db_insert_unit()
+ */
 int db_insert_report(const report_t *report) {
     char *zErrMsg = 0;
     char sql[1024];
@@ -63,7 +115,28 @@ int db_insert_report(const report_t *report) {
     }
 }
 
-// JSON'dan gelen tactical data'yı database'e kaydet
+/**
+ * @brief JSON'dan gelen tactical data'yı veritabanına kaydeder
+ * @details Tactical data struct'ını alır, unit kontrolü yapar ve rapor olarak kaydeder.
+ *          Unit mevcut değilse otomatik olarak oluşturur.
+ * 
+ * İşlem Sırası:
+ * 1. Unit ID kontrolü ve otomatik unit oluşturma
+ * 2. Report struct hazırlama
+ * 3. Database'e report kaydetme
+ * 4. Başarı/hata logging
+ * 
+ * @param tactical_data JSON'dan parse edilen tactical data
+ * @return int İşlem sonucu
+ * @retval >0 Başarılı kaydetme, report ID'si
+ * @retval -1 Kaydetme hatası (NULL data, unit creation failure, insert failure)
+ * 
+ * @note Unit bulunamazsa otomatik olarak oluşturulur
+ * @note Tüm tactical data alanları report'a kopyalanır
+ * @warning tactical_data pointer NULL olmamalıdır
+ * 
+ * @see tactical_data_t, db_find_or_create_unit_by_id(), db_insert_report()
+ */
 int db_insert_tactical_data_from_json(const tactical_data_t *tactical_data) {
     if (!tactical_data) {
         fprintf(stderr, "Tactical data is NULL\n");
@@ -102,7 +175,29 @@ int db_insert_tactical_data_from_json(const tactical_data_t *tactical_data) {
     return report_id;
 }
 
-// Unit ID'sini bul veya yeni unit oluştur
+/**
+ * @brief Unit ID'ye göre arama yapar, bulunamazsa yeni unit oluşturur
+ * @details Verilen UNIT_ID string'i ile database'de arama yapar. Bulunursa
+ *          ID'sini döner, bulunamazsa otomatik unit oluşturur.
+ * 
+ * Arama ve Oluşturma Süreci:
+ * 1. UNIT_ID ile UNITS tablosunda arama (prepared statement)
+ * 2. Bulunursa: Mevcut unit'in ID'sini döndür
+ * 3. Bulunamazsa: Varsayılan değerlerle yeni unit oluştur
+ * 4. Auto-created unit bilgilerini logla
+ * 
+ * @param unit_id Aranacak/oluşturulacak unit identifier string'i
+ * @return int Unit'in database ID'si
+ * @retval >0 Başarılı bulma/oluşturma, unit'in database ID'si
+ * @retval -1 Hata (NULL/empty unit_id, SQL error, insert failure)
+ * 
+ * @note Yeni unit "Auto-created Unit {unit_id}" adıyla oluşturulur
+ * @note Varsayılan unit_type: "Tactical", location: "Field", active: 1
+ * @note Prepared statement ile SQL injection koruması sağlar
+ * @warning unit_id NULL veya empty string olmamalıdır
+ * 
+ * @see db_insert_unit(), db_insert_tactical_data_from_json()
+ */
 int db_find_or_create_unit_by_id(const char* unit_id) {
     if (!unit_id || strlen(unit_id) == 0) {
         fprintf(stderr, "Invalid unit_id\n");
@@ -153,7 +248,29 @@ int db_find_or_create_unit_by_id(const char* unit_id) {
     return new_id;
 }
 
-// Tactical data'yı kaydet ve response döndür
+/**
+ * @brief Tactical data'yı kaydeder ve formatlanmış response döndürür
+ * @details Tactical data'yı database'e kaydeder ve client'a gönderilecek
+ *          detaylı response mesajı oluşturur. İşlem sonucu ve detayları içerir.
+ * 
+ * Response İçeriği:
+ * - Dosya adı ve işlem zamanı
+ * - Tactical data detayları (unit, konum, durum)
+ * - Database kaydetme sonucu
+ * - Başarı/hata durumu
+ * - Report ID (başarılı ise)
+ * 
+ * @param tactical_data Kaydedilecek tactical data
+ * @param filename İşlenen dosya adı (response'da gösterilir)
+ * @return char* Formatlanmış response string'i (NULL: bellek hatası)
+ * 
+ * @note Dönen string free() ile serbest bırakılmalıdır
+ * @note Response boyutu 2048 byte ile sınırlıdır
+ * @note Description 50 karakter sonrası kesilir ("..." eklenir)
+ * @warning tactical_data NULL olmamalıdır
+ * 
+ * @see db_insert_tactical_data_from_json(), get_current_time()
+ */
 char* db_save_tactical_data_and_get_response(const tactical_data_t *tactical_data, const char* filename) {
     size_t response_size = 2048;
     char *response = malloc(response_size);

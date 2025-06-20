@@ -1,3 +1,12 @@
+/**
+ * @file p2p_connection.c
+ * @brief Peer-to-peer network bağlantı yönetimi ve ECDH güvenli iletişim
+ * @ingroup p2p_networking
+ * 
+ * P2P node management, mesh network, tactical data distribution.
+ * ECDH key exchange ve encrypted peer communication desteği.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,17 +25,26 @@
 #include "database.h"
 #include "json_utils.h"
 
+/// @brief Aktif peer bilgilerini tutan global array
 static p2p_peer_t peers[CONFIG_MAX_CLIENTS];
+/// @brief Mevcut connected peer sayısı
 static int peer_count = 0;
+/// @brief P2P işlemlerini korumak için mutex
 static pthread_mutex_t p2p_mutex = PTHREAD_MUTEX_INITIALIZER;
+/// @brief Local P2P node'unun benzersiz kimliği
 static char local_node_id[128];
 
+/// @brief Peer handler thread parametreleri
 typedef struct {
-    int socket;
-    connection_manager_t* manager;
+    int socket;                    ///< Peer socket file descriptor
+    connection_manager_t* manager; ///< Connection manager context
 } peer_handler_params_t;
 
-// P2P Node başlatma
+/**
+ * @brief P2P node'unu initialize eder ve peer management hazırlar
+ * @param manager P2P node connection manager
+ * @return 0 başarı
+ */
 int p2p_node_init(connection_manager_t* manager) {
     printf("P2P Node modülü başlatılıyor...\n");
     
@@ -55,7 +73,11 @@ int p2p_node_init(connection_manager_t* manager) {
     return 0;
 }
 
-// P2P Node başlat
+/**
+ * @brief P2P node'unu başlatır ve peer connections kabul eder
+ * @param manager P2P node connection manager
+ * @return 0 başarı, -1 hata
+ */
 int p2p_node_start(connection_manager_t* manager) {
     int server_fd;
     struct sockaddr_in address;
@@ -118,7 +140,11 @@ int p2p_node_start(connection_manager_t* manager) {
     return 0;
 }
 
-// P2P Node durdur
+/**
+ * @brief P2P node'unu durdurur ve tüm peer bağlantılarını kapatır
+ * @param manager P2P node connection manager
+ * @return 0 başarı
+ */
 int p2p_node_stop(connection_manager_t* manager) {
     if (manager->status != CONN_STATUS_RUNNING) {
         printf("P2P Node zaten durdurulmuş\n");
@@ -152,7 +178,11 @@ int p2p_node_stop(connection_manager_t* manager) {
     return 0;
 }
 
-// P2P Node ana thread
+/**
+ * @brief P2P node ana thread - incoming peer connections kabul eder
+ * @param arg Connection manager pointer
+ * @return NULL
+ */
 void* p2p_node_thread(void* arg) {
     connection_manager_t* manager = (connection_manager_t*)arg;
     struct sockaddr_in peer_addr;
@@ -222,7 +252,12 @@ void* p2p_node_thread(void* arg) {
     return NULL;
 }
 
-// Peer'i listeye ekle
+/**
+ * @brief P2P network'e manuel peer ekler
+ * @param ip Peer IP adresi
+ * @param port Peer port numarası
+ * @return 0 başarı, -1 hata
+ */
 int p2p_add_peer(const char* ip, int port) {
     pthread_mutex_lock(&p2p_mutex);
     
@@ -258,7 +293,11 @@ int p2p_add_peer(const char* ip, int port) {
     return 0;
 }
 
-// Peer'i listeden kaldır
+/**
+ * @brief Peer'i P2P network'ten kaldırır
+ * @param node_id Kaldırılacak peer'in node ID'si
+ * @return 0 başarı, -1 bulunamadı
+ */
 int p2p_remove_peer(const char* node_id) {
     pthread_mutex_lock(&p2p_mutex);
     
@@ -288,7 +327,11 @@ int p2p_remove_peer(const char* node_id) {
     return -1;
 }
 
-// Peer'e bağlan
+/**
+ * @brief Peer'e TCP bağlantısı kurar
+ * @param peer Bağlanılacak peer
+ * @return 0 başarı, -1 hata
+ */
 int p2p_connect_to_peer(p2p_peer_t* peer) {
     if (peer->is_connected) {
         printf("P2P Peer zaten bağlı: %s:%d\n", peer->ip, peer->port);
@@ -322,7 +365,11 @@ int p2p_connect_to_peer(p2p_peer_t* peer) {
     return 0;
 }
 
-// Peer bağlantısını kes
+/**
+ * @brief Peer bağlantısını kapatır
+ * @param peer Bağlantısı kesilecek peer
+ * @return 0 başarı
+ */
 int p2p_disconnect_from_peer(p2p_peer_t* peer) {
     if (!peer->is_connected) {
         return 0;
@@ -341,7 +388,11 @@ int p2p_disconnect_from_peer(p2p_peer_t* peer) {
     return 0;
 }
 
-// Peer mesajını işle
+/**
+ * @brief Peer mesajlarını işler ve ECDH protokolünü yönetir
+ * @param socket Peer socket descriptor
+ * @param manager Connection manager
+ */
 void p2p_handle_peer_message(int socket, connection_manager_t* manager) {
     char buffer[CONFIG_BUFFER_SIZE];
     
@@ -475,7 +526,11 @@ void p2p_handle_peer_message(int socket, connection_manager_t* manager) {
     close(socket);
 }
 
-// Broadcast mesajı gönder
+/**
+ * @brief Tüm bağlı peer'lere mesaj broadcast eder
+ * @param message Broadcast edilecek mesaj
+ * @return Mesajın gönderildiği peer sayısı
+ */
 int p2p_broadcast_message(const char* message) {
     int sent_count = 0;
     
@@ -497,14 +552,21 @@ int p2p_broadcast_message(const char* message) {
     return sent_count;
 }
 
-// İstatistikleri güncelle
+/**
+ * @brief P2P node istatistiklerini günceller
+ * @param manager Connection manager
+ */
 void p2p_update_stats(connection_manager_t* manager) {
     manager->client_count = peer_count;
     printf("P2P Stats: Connected peers=%d, Total requests=%d\n", 
            manager->client_count, manager->total_requests);
 }
 
-// Peer aktivitesini logla
+/**
+ * @brief Peer aktivitelerini timestamp ile loglar
+ * @param node_id Peer node ID'si
+ * @param activity Aktivite türü
+ */
 void p2p_log_peer_activity(const char* node_id, const char* activity) {
     time_t now = time(NULL);
     char* time_str = ctime(&now);
@@ -513,7 +575,11 @@ void p2p_log_peer_activity(const char* node_id, const char* activity) {
     printf("[%s] P2P %s: %s\n", time_str, activity, node_id);
 }
 
-// Peer sayısını al
+/**
+ * @brief Mevcut peer sayısını döndürür
+ * @return Bağlı peer sayısı
+ * @ingroup p2p_networking
+ */
 int p2p_get_peer_count(void) {
     pthread_mutex_lock(&p2p_mutex);
     int count = peer_count;
@@ -521,7 +587,10 @@ int p2p_get_peer_count(void) {
     return count;
 }
 
-// Peer listesini göster
+/**
+ * @brief Tüm peer listesini ekrana yazdırır
+ * @ingroup p2p_networking
+ */
 void p2p_list_peers(void) {
     pthread_mutex_lock(&p2p_mutex);
     
@@ -543,7 +612,12 @@ void p2p_list_peers(void) {
     pthread_mutex_unlock(&p2p_mutex);
 }
 
-// P2P Tactical data processing - UDP ile aynı logic
+/**
+ * @brief P2P tactical data işler (şifreli/normal)
+ * @param data İşlenecek JSON data
+ * @return 0 başarı, -1 hata
+ * @ingroup p2p_networking
+ */
 int process_tactical_data(const char* data) {
     if (data == NULL || strlen(data) == 0) {
         printf("P2P Boş data alındı\n");
@@ -634,7 +708,12 @@ int process_tactical_data(const char* data) {
     }
 }
 
-// P2P Protocol format processing: CLIENT_ID:TYPE:FILENAME:DATA
+/**
+ * @brief P2P protokol formatında data işler
+ * @param p2p_data CLIENT_ID:TYPE:FILENAME:DATA formatında veri
+ * @return 0 başarı, -1 hata
+ * @ingroup p2p_networking
+ */
 int process_p2p_tactical_data(const char* p2p_data) {
     if (p2p_data == NULL || strlen(p2p_data) == 0) {
         printf("P2P Boş protocol data alındı\n");
@@ -692,6 +771,12 @@ int process_p2p_tactical_data(const char* p2p_data) {
     return result;
 }
 
+/**
+ * @brief Peer'e keepalive mesajı gönderir
+ * @param peer Keepalive gönderilecek peer
+ * @return 0 başarı, -1 hata
+ * @ingroup p2p_networking
+ */
 int p2p_send_keepalive(p2p_peer_t* peer) {
     if (peer && peer->is_connected) {
         const char* keepalive_msg = "P2P_KEEPALIVE";
@@ -702,6 +787,10 @@ int p2p_send_keepalive(p2p_peer_t* peer) {
     return -1;
 }
 
+/**
+ * @brief Tüm peer bağlantılarının durumunu kontrol eder
+ * @ingroup p2p_networking
+ */
 void p2p_maintain_connections(void) {
     // Basit keepalive implementasyonu
     pthread_mutex_lock(&p2p_mutex);
@@ -713,7 +802,12 @@ void p2p_maintain_connections(void) {
     pthread_mutex_unlock(&p2p_mutex);
 }
 
-// P2P peer thread wrapper fonksiyunu
+/**
+ * @brief Peer handler thread wrapper fonksiyonu
+ * @param arg peer_handler_params_t yapısı
+ * @return NULL
+ * @ingroup p2p_networking
+ */
 void* p2p_peer_thread_wrapper(void* arg) {
     peer_handler_params_t* params = (peer_handler_params_t*)arg;
     
@@ -723,9 +817,12 @@ void* p2p_peer_thread_wrapper(void* arg) {
     return NULL;
 }
 
-// P2P ECDH Anahtar Yönetimi Fonksiyonları
-
-// Peer için ECDH başlat
+/**
+ * @brief Peer için ECDH anahtar değişimi başlatır
+ * @param peer ECDH başlatılacak peer
+ * @return 1 başarı, 0 hata
+ * @ingroup p2p_networking
+ */
 int p2p_init_ecdh_for_peer(p2p_peer_t* peer) {
     if (peer == NULL) {
         return 0;
@@ -750,7 +847,12 @@ int p2p_init_ecdh_for_peer(p2p_peer_t* peer) {
     return 1;
 }
 
-// Peer ile anahtar değişimi yap
+/**
+ * @brief Peer ile ECDH anahtar değişimi yapar
+ * @param peer Anahtar değişimi yapılacak peer
+ * @return 1 başarı, 0 hata
+ * @ingroup p2p_networking
+ */
 int p2p_exchange_keys_with_peer(p2p_peer_t* peer) {
     if (peer == NULL || !peer->ecdh_initialized || peer->socket_fd < 0) {
         return 0;
@@ -790,7 +892,11 @@ int p2p_exchange_keys_with_peer(p2p_peer_t* peer) {
     return 1;
 }
 
-// Peer için ECDH temizlik
+/**
+ * @brief Peer için ECDH context'ini temizler
+ * @param peer Temizlenecek peer
+ * @ingroup p2p_networking
+ */
 void p2p_cleanup_ecdh_for_peer(p2p_peer_t* peer) {
     if (peer != NULL && peer->ecdh_initialized) {
         ecdh_cleanup_context(&peer->ecdh_ctx);
@@ -799,7 +905,14 @@ void p2p_cleanup_ecdh_for_peer(p2p_peer_t* peer) {
     }
 }
 
-// P2P şifreli veri işle
+/**
+ * @brief ECDH ile şifrelenmiş P2P veriyi işler
+ * @param encrypted_data Hex formatında şifreli veri
+ * @param filename Dosya adı
+ * @param peer ECDH session'ı olan peer
+ * @return 0 başarı, -1 hata
+ * @ingroup p2p_networking
+ */
 int p2p_process_encrypted_data(const char* encrypted_data, const char* filename, p2p_peer_t* peer) {
     if (peer == NULL || !peer->ecdh_initialized) {
         printf("P2P: ECDH session bulunamadı\n");

@@ -1,11 +1,45 @@
+/**
+ * @file create.c
+ * @brief Veritabanı oluşturma ve başlatma işlemleri
+ * @details Bu dosya SQLite3 veritabanının başlatılması, tablo oluşturulması
+ *          ve veritabanı bağlantısı yönetimi için gerekli fonksiyonları içerir.
+ *          Tactical Data Transfer System için UNITS ve REPORTS tablolarını oluşturur.
+ * @author Tactical Data Transfer System
+ * @date 2025
+ * @version 1.0
+ * @ingroup database
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sqlite3.h>
 #include "../../include/database.h"
 
-// Global database connection
+/**
+ * @brief Global veritabanı bağlantısı
+ * @details Uygulama boyunca kullanılan SQLite3 veritabanı bağlantı pointer'ı.
+ *          NULL değeri bağlantının kapalı olduğunu gösterir.
+ * @note Thread-safe değil, tek thread kullanımı için tasarlanmış
+ * @warning Global değişken, dikkatli kullanılmalı
+ */
 sqlite3 *g_db = NULL;
 
+/**
+ * @brief Veritabanını başlatır ve bağlantı açar
+ * @details Belirtilen path'de SQLite3 veritabanını açar veya oluşturur.
+ *          Dosya mevcut değilse otomatik olarak oluşturulur.
+ * 
+ * @param db_path Veritabanı dosya yolu (örn: "tactical_data.db")
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı veritabanı açılışı
+ * @retval -1 Veritabanı açma hatası
+ * 
+ * @note Global g_db pointer'ı bu fonksiyonla set edilir
+ * @warning db_path NULL olmamalıdır
+ * @warning Mevcut açık bağlantı varsa kapatılmaz
+ * 
+ * @see db_close(), db_create_tables()
+ */
 int db_init(const char *db_path) {
     int rc = sqlite3_open(db_path, &g_db);
     
@@ -18,6 +52,42 @@ int db_init(const char *db_path) {
     }
 }
 
+/**
+ * @brief Veritabanı tablolarını oluşturur
+ * @details Tactical data transfer sistemi için gerekli UNITS ve REPORTS
+ *          tablolarını oluşturur. Foreign key kısıtlamalarını etkinleştirir.
+ * 
+ * Oluşturulan Tablolar:
+ * 
+ * **UNITS Tablosu:**
+ * - ID: Primary key (auto-increment)
+ * - UNIT_ID: Benzersiz unit identifier (TEXT, UNIQUE)
+ * - UNIT_NAME: Unit adı (TEXT, NOT NULL)
+ * - UNIT_TYPE: Unit tipi (TEXT, NOT NULL)
+ * - LOCATION: Konum bilgisi (TEXT, opsiyonel)
+ * - ACTIVE: Aktiflik durumu (INTEGER, default 1)
+ * - CREATED_AT: Oluşturulma zamanı (DATETIME, auto)
+ * 
+ * **REPORTS Tablosu:**
+ * - ID: Primary key (auto-increment)
+ * - UNIT_ID: Unit referansı (FOREIGN KEY -> UNITS.ID)
+ * - STATUS: Rapor durumu (TEXT, NOT NULL)
+ * - LATITUDE: Enlem koordinatı (REAL, NOT NULL)
+ * - LONGITUDE: Boylam koordinatı (REAL, NOT NULL)
+ * - DESCRIPTION: Açıklama (TEXT, opsiyonel)
+ * - TIMESTAMP: Unix timestamp (INTEGER, NOT NULL)
+ * - CREATED_AT: Oluşturulma zamanı (DATETIME, auto)
+ * 
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı tablo oluşturma
+ * @retval -1 Tablo oluşturma hatası veya veritabanı başlatılmamış
+ * 
+ * @note IF NOT EXISTS kullanır, mevcut tablolar etkilenmez
+ * @note Foreign key constraints CASCADE DELETE ile yapılandırılır
+ * @warning db_init() fonksiyonu önceden çağrılmalıdır
+ * 
+ * @see db_init(), db_close()
+ */
 int db_create_tables(void) {
     char *zErrMsg = 0;
     int rc;
@@ -85,6 +155,21 @@ int db_create_tables(void) {
     return 0;
 }
 
+/**
+ * @brief Veritabanı bağlantısını güvenli şekilde kapatır
+ * @details Açık olan SQLite3 veritabanı bağlantısını kapatır ve
+ *          global pointer'ı NULL olarak resetler.
+ * 
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı bağlantı kapatma
+ * @retval -1 Kapatılacak bağlantı yok (zaten kapalı)
+ * 
+ * @note Global g_db pointer'ı NULL olarak resetlenir
+ * @note SQLite3 resources otomatik olarak temizlenir
+ * @note Thread-safe değil, dikkatli kullanım gerekli
+ * 
+ * @see db_init()
+ */
 int db_close(void) {
     if (g_db) {
         sqlite3_close(g_db);

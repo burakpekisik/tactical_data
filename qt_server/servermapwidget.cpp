@@ -1,8 +1,22 @@
+/**
+ * @file servermapwidget.cpp
+ * @brief Server tarafı harita widget implementasyonu
+ * @ingroup qt_server
+ * 
+ * QML harita bileşeni ile C++ arasında veri köprüsü sağlar.
+ * Taktik verilerin server haritasında görselleştirilmesi.
+ */
+
 #include "servermapwidget.h"
 #include <QUrl>
 #include <QQmlContext>
 #include <QQuickItem>
 
+/**
+ * @brief ServerMapWidget constructor
+ * @param parent Üst widget
+ * @ingroup qt_server
+ */
 ServerMapWidget::ServerMapWidget(QWidget *parent)
     : QWidget(parent)
     , qmlWidget(nullptr)
@@ -10,6 +24,10 @@ ServerMapWidget::ServerMapWidget(QWidget *parent)
     setupQmlWidget();
 }
 
+/**
+ * @brief QML harita widget'ını kurar ve bağlar
+ * @ingroup qt_server
+ */
 void ServerMapWidget::setupQmlWidget()
 {
     QVBoxLayout *layout = new QVBoxLayout(this);
@@ -26,6 +44,14 @@ void ServerMapWidget::setupQmlWidget()
     context->setContextProperty("serverMapWidget", this);
 }
 
+/**
+ * @brief Server haritasına yeni marker ekler
+ * @param latitude Enlem koordinatı
+ * @param longitude Boylam koordinatı
+ * @param dataType Veri türü
+ * @param message Marker mesajı
+ * @ingroup qt_server
+ */
 void ServerMapWidget::addMarker(double latitude, double longitude, const QString &dataType, const QString &message)
 {
     // QML'e marker ekleme sinyali gönder
@@ -43,6 +69,10 @@ void ServerMapWidget::addMarker(double latitude, double longitude, const QString
     }
 }
 
+/**
+ * @brief Haritadaki tüm marker'ları temizler
+ * @ingroup qt_server
+ */
 void ServerMapWidget::clearMarkers()
 {
     // QML metodunu çağır - QQuickItem'ı QObject*'e static cast et

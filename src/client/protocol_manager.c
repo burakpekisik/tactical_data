@@ -1,3 +1,15 @@
+/**
+ * @file protocol_manager.c
+ * @brief Protokol yönetimi ve mesaj formatları implementasyonu
+ * @details Bu dosya, TCP/UDP/P2P protokolleri için mesaj formatları, şifreleme/şifresizleme,
+ *          ve protokol-spesifik gönderim/alma işlemlerinin implementasyonunu içerir.
+ *          Her protokol için optimized mesaj formatları ve yanıt mekanizmaları sağlar.
+ * @author Tactical Data Transfer System
+ * @date 2025
+ * @version 1.0
+ * @ingroup protocol
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +25,26 @@
 #include "fallback_manager.h"
 #include "protocol_manager.h"
 
-// Normal protokol mesajini olustur: "PARSE:FILENAME:CONTENT"
+/**
+ * @brief Normal (şifresiz) protokol mesajı oluşturur
+ * @details "PARSE:FILENAME:CONTENT" formatında standart protokol mesajı oluşturur.
+ *          Bu format sunucu tarafında JSON parse işlemi için kullanılır.
+ * 
+ * Mesaj Formatı: "PARSE:dosya_adi:json_icerik"
+ * 
+ * @param filename Gönderilecek dosyanın adı
+ * @param content JSON dosya içeriği
+ * @return char* Formatlanmış protokol mesajı (NULL: hata)
+ * 
+ * @note Dönen pointer free() ile serbest bırakılmalıdır
+ * @warning filename ve content NULL olmamalıdır
+ * 
+ * @example
+ * @code
+ * char* msg = create_normal_protocol_message("data.json", "{\"test\":\"value\"}");
+ * // Sonuç: "PARSE:data.json:{\"test\":\"value\"}"
+ * @endcode
+ */
 char* create_normal_protocol_message(const char* filename, const char* content) {
     size_t total_size = strlen("PARSE:") + strlen(filename) + strlen(content) + 2;
     char *message = malloc(total_size);
@@ -27,7 +58,36 @@ char* create_normal_protocol_message(const char* filename, const char* content) 
     return message;
 }
 
-// Sifreli protokol mesajini olustur: "ENCRYPTED:FILENAME:HEX_DATA"
+/**
+ * @brief Şifreli protokol mesajı oluşturur
+ * @details JSON içeriğini AES256 ile şifreleyerek "ENCRYPTED:FILENAME:HEX_DATA" formatında
+ *          protokol mesajı oluşturur. Random IV kullanır ve IV+şifreli_veri kombinasyonunu
+ *          hex string olarak encode eder.
+ * 
+ * Şifreleme Süreci:
+ * 1. Random IV (16 byte) oluşturma
+ * 2. JSON içeriğini AES256-CBC ile şifreleme
+ * 3. IV + şifreli_veri birleştirme
+ * 4. Binary veriyi hex string'e çevirme
+ * 5. "ENCRYPTED:dosya:hex_data" formatında mesaj oluşturma
+ * 
+ * @param filename Gönderilecek dosyanın adı
+ * @param content Şifrelenecek JSON içeriği
+ * @param session_key 32 byte AES256 oturum anahtarı (ECDH'den türetilmiş)
+ * @return char* Şifreli protokol mesajı (NULL: hata)
+ * 
+ * @note Dönen pointer free() ile serbest bırakılmalıdır
+ * @warning session_key NULL olmamalı ve 32 byte uzunluğunda olmalıdır
+ * @warning Her çağrıda farklı IV kullanılır (replay attack koruması)
+ * 
+ * @example
+ * @code
+ * uint8_t key[32] = {0}; // ECDH'den alınan anahtar
+ * char* encrypted_msg = create_encrypted_protocol_message("data.json", 
+ *                                                         "{\"secret\":\"data\"}", key);
+ * // Sonuç: "ENCRYPTED:data.json:1a2b3c4d..."
+ * @endcode
+ */
 char* create_encrypted_protocol_message(const char* filename, const char* content, const uint8_t* session_key) {
     if (session_key == NULL) {
         printf("Session key NULL - şifreleme yapılamaz\n");
@@ -90,7 +150,21 @@ char* create_encrypted_protocol_message(const char* filename, const char* conten
     return message;
 }
 
-// Baglantiyi kapat
+/**
+ * @brief Client bağlantısını güvenli şekilde kapatır
+ * @details Bağlantı kapatma işlemini gerçekleştirir:
+ *          1. ECDH context'i temizler (eğer başlatılmışsa)
+ *          2. Socket'i kapatır
+ *          3. Bellek alanını serbest bırakır
+ * 
+ * @param conn Kapatılacak client bağlantısı (NULL olabilir)
+ * 
+ * @note NULL pointer kontrolü yapar, güvenli çağrı
+ * @note ECDH context'i otomatik olarak temizlenir
+ * @warning Bu fonksiyon çağrıldıktan sonra conn pointer geçersiz olur
+ * 
+ * @see ecdh_cleanup_context() ECDH temizleme detayları için
+ */
 void close_connection(client_connection_t* conn) {
     if (conn != NULL) {
         if (conn->ecdh_initialized) {
@@ -103,7 +177,28 @@ void close_connection(client_connection_t* conn) {
     }
 }
 
-// TCP mesaj gonder
+/**
+ * @brief TCP protokolü ile mesaj gönderir ve yanıt alır
+ * @details TCP stream socket üzerinden mesaj gönderir, sunucudan yanıt bekler
+ *          ve yanıtı formatlanmış şekilde ekrana yazdırır. Blocking I/O kullanır.
+ * 
+ * TCP Gönderim Süreci:
+ * 1. send() ile mesajı gönder
+ * 2. receive_tcp_response() ile yanıt bekle
+ * 3. Yanıtı ekrana yazdır
+ * 4. Başarı/hata durumu döndür
+ * 
+ * @param conn TCP bağlantısı (conn->type == CONN_TCP olmalı)
+ * @param message Gönderilecek protokol mesajı
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı gönderim ve yanıt alımı
+ * @retval -1 Gönderim hatası, bağlantı kesildi veya yanıt alınamadı
+ * 
+ * @note TCP reliable protocol olduğu için mesaj kaybı olmaz
+ * @warning Büyük mesajlar için partial send durumu kontrol edilmeli
+ * 
+ * @see receive_tcp_response() TCP yanıt alma detayları
+ */
 int send_tcp_message(client_connection_t* conn, const char* message) {
     ssize_t bytes_sent = send(conn->socket, message, strlen(message), 0);
     if (bytes_sent < 0) {
@@ -133,7 +228,29 @@ int send_tcp_message(client_connection_t* conn, const char* message) {
     }
 }
 
-// UDP mesaj gonder
+/**
+ * @brief UDP protokolü ile mesaj gönderir ve yanıt alır
+ * @details UDP datagram socket üzerinden mesaj gönderir, sunucudan yanıt bekler
+ *          ve yanıtı formatlanmış şekilde ekrana yazdırır. Connectionless protokol.
+ * 
+ * UDP Gönderim Süreci:
+ * 1. sendto() ile mesajı belirli adrese gönder
+ * 2. receive_udp_response() ile yanıt bekle (timeout ile)
+ * 3. Yanıtı ekrana yazdır
+ * 4. Başarı/hata durumu döndür
+ * 
+ * @param conn UDP bağlantısı (conn->type == CONN_UDP olmalı)
+ * @param message Gönderilecek protokol mesajı
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı gönderim ve yanıt alımı
+ * @retval -1 Gönderim hatası, timeout veya yanıt alınamadı
+ * 
+ * @note UDP unreliable protocol - packet loss olabilir
+ * @warning Büyük mesajlar fragmente olabilir
+ * @note Timeout mekanizması ile yanıt beklenir
+ * 
+ * @see receive_udp_response() UDP yanıt alma detayları
+ */
 int send_udp_message(client_connection_t* conn, const char* message) {
     ssize_t bytes_sent = sendto(conn->socket, message, strlen(message), 0,
                                (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr));
@@ -164,7 +281,34 @@ int send_udp_message(client_connection_t* conn, const char* message) {
     }
 }
 
-// P2P mesaj gonder
+/**
+ * @brief P2P protokolü ile mesaj gönderir ve yanıt alır
+ * @details P2P TCP bağlantısı üzerinden özel formatlanmış mesaj gönderir.
+ *          Mesajı P2P formatına uyarlayarak sunucuya gönderir ve yanıt bekler.
+ * 
+ * P2P Mesaj Formatları:
+ * - Normal veri: "P2P_DATA:CLIENT_pid:orijinal_mesaj"
+ * - Şifreli veri: "P2P_ENCRYPTED:orijinal_mesaj"
+ * - Zaten formatlanmış: P2P_ prefix'i varsa direkt gönder
+ * 
+ * P2P Gönderim Süreci:
+ * 1. Mesajı P2P formatına uyarla
+ * 2. send() ile formatlanmış mesajı gönder
+ * 3. receive_p2p_response() ile yanıt bekle
+ * 4. Yanıtı ekrana yazdır
+ * 
+ * @param conn P2P bağlantısı (conn->type == CONN_P2P olmalı)
+ * @param message Gönderilecek protokol mesajı
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı gönderim ve yanıt alımı
+ * @retval -1 Gönderim hatası, bağlantı kesildi veya yanıt alınamadı
+ * 
+ * @note P2P için özel mesaj formatları kullanılır
+ * @note Client PID ile mesaj tanımlaması yapılır
+ * @warning P2P mesajları CONFIG_BUFFER_SIZE sınırına tabidir
+ * 
+ * @see receive_p2p_response() P2P yanıt alma detayları
+ */
 int send_p2p_message(client_connection_t* conn, const char* message) {
     char p2p_message[CONFIG_BUFFER_SIZE];
     
@@ -213,7 +357,28 @@ int send_p2p_message(client_connection_t* conn, const char* message) {
     }
 }
 
-// TCP yanit al
+/**
+ * @brief TCP bağlantısından yanıt alır
+ * @details TCP stream socket'den blocking mode'da yanıt okur.
+ *          Buffer overflow koruması sağlar ve null termination ekler.
+ * 
+ * TCP Alma Süreci:
+ * 1. recv() ile veri bekle (blocking)
+ * 2. Alınan veri boyutunu kontrol et
+ * 3. Buffer'ı null-terminate et
+ * 4. Alınan byte sayısını döndür
+ * 
+ * @param conn TCP bağlantısı
+ * @param buffer Yanıtın yazılacağı buffer
+ * @param buffer_size Buffer boyutu (null terminator için 1 byte ayrılır)
+ * @return int Alınan byte sayısı
+ * @retval >0 Başarılı yanıt alımı, alınan byte sayısı
+ * @retval -1 Alma hatası veya bağlantı kesildi
+ * 
+ * @note TCP stream protocol - veri sıralı gelir
+ * @warning Buffer overflow koruması için buffer_size-1 kullanılır
+ * @note recv() blocking çağrı - timeout ayarlanabilir
+ */
 int receive_tcp_response(client_connection_t* conn, char* buffer, size_t buffer_size) {
     ssize_t bytes_received = recv(conn->socket, buffer, buffer_size - 1, 0);
     if (bytes_received < 0) {
@@ -229,7 +394,29 @@ int receive_tcp_response(client_connection_t* conn, char* buffer, size_t buffer_
     return bytes_received;
 }
 
-// UDP yanit al
+/**
+ * @brief UDP bağlantısından yanıt alır
+ * @details UDP datagram socket'den yanıt okur ve gönderen adres bilgisini alır.
+ *          Connectionless protokol olduğu için from_addr kontrolü yapar.
+ * 
+ * UDP Alma Süreci:
+ * 1. recvfrom() ile datagram bekle
+ * 2. Gönderen adres bilgisini al
+ * 3. Alınan veri boyutunu kontrol et
+ * 4. Buffer'ı null-terminate et
+ * 5. Alınan byte sayısını döndür
+ * 
+ * @param conn UDP bağlantısı
+ * @param buffer Yanıtın yazılacağı buffer
+ * @param buffer_size Buffer boyutu (null terminator için 1 byte ayrılır)
+ * @return int Alınan byte sayısı
+ * @retval >0 Başarılı yanıt alımı, alınan byte sayısı
+ * @retval -1 Alma hatası, timeout veya bağlantı problemi
+ * 
+ * @note UDP datagram protocol - packet loss olabilir
+ * @note Gönderen adres bilgisi from_addr'de saklanır
+ * @warning Timeout ayarları socket'de yapılmalıdır
+ */
 int receive_udp_response(client_connection_t* conn, char* buffer, size_t buffer_size) {
     struct sockaddr_in from_addr;
     socklen_t from_len = sizeof(from_addr);
@@ -246,7 +433,29 @@ int receive_udp_response(client_connection_t* conn, char* buffer, size_t buffer_
     return bytes_received;
 }
 
-// P2P yanit al
+/**
+ * @brief P2P bağlantısından yanıt alır
+ * @details P2P TCP stream socket'den yanıt okur. TCP benzeri blocking mode
+ *          kullanır ancak P2P protokolüne özel format beklentileri olabilir.
+ * 
+ * P2P Alma Süreci:
+ * 1. recv() ile veri bekle (blocking)
+ * 2. Alınan veri boyutunu kontrol et
+ * 3. P2P format kontrolü (opsiyonel)
+ * 4. Buffer'ı null-terminate et
+ * 5. Alınan byte sayısını döندür
+ * 
+ * @param conn P2P bağlantısı
+ * @param buffer Yanıtın yazılacağı buffer
+ * @param buffer_size Buffer boyutu (null terminator için 1 byte ayrılır)
+ * @return int Alınan byte sayısı
+ * @retval >0 Başarılı yanıt alımı, alınan byte sayısı
+ * @retval -1 Alma hatası veya bağlantı kesildi
+ * 
+ * @note P2P TCP tabanlı - reliable data transfer
+ * @note Server'dan P2P formatında yanıt beklenir
+ * @warning P2P özel format kontrolü eklenebilir
+ */
 int receive_p2p_response(client_connection_t* conn, char* buffer, size_t buffer_size) {
     ssize_t bytes_received = recv(conn->socket, buffer, buffer_size - 1, 0);
     if (bytes_received < 0) {

@@ -1,9 +1,99 @@
+/**
+ * @file json_utils.c
+ * @brief JSON işleme ve taktik veri dönüştürme yardımcı fonksiyonları
+ * @ingroup json_processing
+ * @author Taktik Veri Sistemi
+ * @date 2025
+ * 
+ * Bu dosya JSON parsing, taktik veri dönüştürme ve formatlanmış çıktı
+ * üretme fonksiyonlarını içerir. cJSON kütüphanesi kullanarak güvenli
+ * ve verimli JSON işleme sağlar.
+ * 
+ * Ana özellikler:
+ * - Genel JSON parsing ve string formatına dönüştürme
+ * - Taktik veri (tactical_data_t) struct'ına JSON parsing
+ * - Recursive JSON object traversal
+ * - Hata toleranslı parsing (default değerler)
+ * - Memory management ve güvenli string operations
+ * - Zaman damgası işleme ve formatlaması
+ * - Detaylı debug çıktıları
+ * 
+ * Desteklenen JSON formatı (tactical data):
+ * @code
+ * {
+ *   "unit_id": "BIRIM-01",
+ *   "status": "AKTIF",
+ *   "latitude": 39.925018,
+ *   "longitude": 32.866287,
+ *   "description": "Taktik durum raporu",
+ *   "timestamp": 1640995200
+ * }
+ * @endcode
+ * 
+ * @note Tüm fonksiyonlar güvenli bellek yönetimi ve hata kontrolü içerir.
+ *       NULL pointer'lar ve geçersiz JSON formatları handle edilir.
+ * 
+ * @warning cJSON kütüphanesi gereklidir. Bellek sızıntılarını önlemek için
+ *          döndürülen string'ler caller tarafından free() edilmelidir.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include "json_utils.h"
 
+/**
+ * @brief JSON içeriğini parse edip formatlanmış string'e dönüştürür
+ * @ingroup json_processing
+ * 
+ * Bu fonksiyon genel amaçlı JSON parsing yapar ve human-readable
+ * format string'i üretir. Tüm JSON tiplerini destekler ve recursive
+ * object traversal yapar.
+ * 
+ * İşlem adımları:
+ * 1. Bellek tahsisi yapar (4KB buffer)
+ * 2. Header bilgileri ekler (dosya adı, zaman)
+ * 3. JSON'u cJSON ile parse eder
+ * 4. Recursive traversal ile tüm elementleri işler
+ * 5. Formatlanmış sonucu döndürür
+ * 
+ * Desteklenen JSON tipleri:
+ * - String, Number, Boolean, Null
+ * - Array (indexed elements)
+ * - Object (nested objects)
+ * 
+ * @param json_content Parse edilecek JSON string'i
+ * @param filename İşlenen dosya adı (raporlama için)
+ * 
+ * @return Başarıda formatlanmış string (malloc'lu)
+ * @return Hata durumunda hata mesajı (malloc'lu)
+ * 
+ * @note Döndürülen string caller tarafından free() edilmelidir.
+ *       Buffer boyutu 4KB ile sınırlıdır.
+ * 
+ * @warning Geçersiz JSON format durumunda hata mesajı döner,
+ *          program crash etmez.
+ * 
+ * @see print_json_recursive()
+ * @see get_current_time()
+ * 
+ * Örnek çıktı:
+ * @code
+ * JSON Parse Sonucu
+ * ================
+ * Dosya: test.json
+ * Zaman: 14:30:25
+ * Parse Edildi:
+ * -------------
+ * unit_id: "BIRIM-01" (String)
+ * status: "AKTIF" (String)
+ * latitude: 39.93 (Double)
+ * coordinates: Array (2 oge)
+ *   [0]: 39.925018
+ *   [1]: 32.866287
+ * @endcode
+ */
 // JSON'u parse edip formatli string'e cevir
 char* parse_json_to_string(const char* json_content, const char* filename) {
     size_t result_size = 4096;
@@ -45,6 +135,52 @@ char* parse_json_to_string(const char* json_content, const char* filename) {
     return result;
 }
 
+/**
+ * @brief JSON objesini recursive olarak traverse eder ve formatlanmış string üretir
+ * @ingroup json_processing
+ * 
+ * Bu fonksiyon JSON objesinin tüm elementlerini recursive olarak dolaşır
+ * ve indent'li, tip bilgisi içeren formatlanmış çıktı üretir.
+ * 
+ * İşlenen JSON tipleri:
+ * - **String**: Çift tırnak içinde, "(String)" etiketi
+ * - **Number**: Integer/Double ayrımı, tip etiketi
+ * - **Boolean**: true/false değeri, "(Boolean)" etiketi
+ * - **Array**: Boyut bilgisi ve indexed elementler
+ * - **Object**: Nested object recursive işleme
+ * - **Null**: "null" değeri
+ * 
+ * Özel array işlemi:
+ * - Array boyutunu gösterir
+ * - Her elementi index ile listeler
+ * - Nested array'leri destekler
+ * 
+ * @param json Traverse edilecek cJSON objesi
+ * @param result Sonucun ekleneceği string buffer
+ * @param depth Mevcut indent seviyesi (recursive çağrılarda)
+ * @param max_size Buffer'ın maksimum boyutu
+ * 
+ * @note Fonksiyon recursive çalışır, deep nesting'i destekler.
+ *       Buffer overflow koruması vardır.
+ * 
+ * @warning max_size sınırını aşan çıktı kesilir.
+ *          Stack overflow riski için çok derin nesting'den kaçının.
+ * 
+ * @see add_indent()
+ * @see parse_json_to_string()
+ * 
+ * Çıktı formatı:
+ * @code
+ * unit_id: "BIRIM-01" (String)
+ * status: "AKTIF" (String)
+ * coordinates: Array (2 oge)
+ *   [0]: 39.925018
+ *   [1]: 32.866287
+ * metadata: Object
+ *   priority: 1 (Integer)
+ *   urgent: true (Boolean)
+ * @endcode
+ */
 // JSON'u recursive olarak formatli string'e cevir
 void print_json_recursive(cJSON *json, char* result, int depth, size_t max_size) {
     cJSON *current_element = NULL;
@@ -103,6 +239,24 @@ void print_json_recursive(cJSON *json, char* result, int depth, size_t max_size)
     }
 }
 
+/**
+ * @brief JSON output'u için girinti (indent) karakterleri ekler
+ * @ingroup json_processing
+ * 
+ * Recursive JSON parsing sırasında nested structure'ları görsel olarak
+ * ayırt etmek için depth'e göre girinti ekler.
+ * 
+ * @param result Girinti eklenecek string buffer
+ * @param depth Girinti seviyesi (her seviye = 2 space)
+ * @param max_size Buffer'ın maksimum boyutu
+ * 
+ * @note Her depth seviyesi için 2 space eklenir.
+ *       Buffer overflow koruması vardır.
+ * 
+ * @warning Çok derin nesting (depth > 30) buffer overflow'a neden olabilir.
+ * 
+ * @see print_json_recursive()
+ */
 // Girinti ekle
 void add_indent(char* result, int depth, size_t max_size) {
     char indent[64] = "";
@@ -112,6 +266,23 @@ void add_indent(char* result, int depth, size_t max_size) {
     strncat(result, indent, max_size - strlen(result) - 1);
 }
 
+/**
+ * @brief Mevcut sistem zamanını HH:MM:SS formatında getirir
+ * @ingroup json_processing
+ * 
+ * Zaman damgası ve log mesajları için kullanılan utility fonksiyon.
+ * Locale time zone'unu kullanır.
+ * 
+ * @return Mevcut zaman string'i "HH:MM:SS" formatında (malloc'lu)
+ * 
+ * @note Döndürülen string caller tarafından free() edilmelidir.
+ *       32 byte buffer kullanır.
+ * 
+ * @see parse_json_to_string()
+ * @see tactical_data_to_string()
+ * 
+ * Örnek dönen değer: "14:30:25"
+ */
 // Mevcut zamayi al
 char* get_current_time(void) {
     time_t rawtime;
@@ -127,6 +298,79 @@ char* get_current_time(void) {
     return time_str;
 }
 
+/**
+ * @brief JSON'u tactical_data_t struct'ına parse eder - ana taktik veri işleme fonksiyonu
+ * @ingroup json_processing
+ * 
+ * Bu fonksiyon taktik veri JSON formatını tactical_data_t struct'ına
+ * dönüştürür. Production sistem için kritik fonksiyondur.
+ * 
+ * Parse edilen alanlar:
+ * - **unit_id**: Askeri birim kimliği (string, zorunlu)
+ * - **status**: Birim durumu (string, zorunlu)
+ * - **latitude**: Enlem koordinatı (double, zorunlu)
+ * - **longitude**: Boylam koordinatı (double, zorunlu)  
+ * - **description**: Detay açıklama (string, opsiyonel)
+ * - **timestamp**: Zaman damgası (long, opsiyonel)
+ * 
+ * Hata toleransı:
+ * - Eksik alanlar için default değerler atanır
+ * - Geçersiz tipler için güvenli fallback'ler
+ * - Parse hatalarında uyarı mesajları
+ * - Timestamp eksikse mevcut zaman kullanılır
+ * 
+ * İşlem adımları:
+ * 1. Memory allocation ve struct initialization
+ * 2. JSON parse ve geçerlilik kontrolü
+ * 3. Her alanı güvenli şekilde extract etme
+ * 4. Type checking ve conversion
+ * 5. Buffer overflow koruması
+ * 6. Validation ve debug çıktısı
+ * 
+ * @param json_content Parse edilecek JSON string'i
+ * @param filename İşlenen dosya adı (debug için)
+ * 
+ * @return Başarıda tactical_data_t pointer (malloc'lu)
+ * @return Parse hatası durumunda NULL
+ * 
+ * @note Döndürülen struct caller tarafından free_tactical_data() ile temizlenmelidir.
+ *       is_valid flag'i parse başarısını gösterir.
+ * 
+ * @warning NULL return değeri kontrol edilmelidir.
+ *          Buffer boyutları (unit_id, status, description) sınırlıdır.
+ * 
+ * Default değerler:
+ * - unit_id: "UNKNOWN"
+ * - status: "UNKNOWN"  
+ * - latitude/longitude: 0.0
+ * - description: "Açıklama yok"
+ * - timestamp: current time
+ * 
+ * @see free_tactical_data()
+ * @see tactical_data_to_string()
+ * 
+ * Örnek JSON formatı:
+ * @code
+ * {
+ *   "unit_id": "BIRIM-01",
+ *   "status": "OPERASYONEL", 
+ *   "latitude": 39.925018,
+ *   "longitude": 32.866287,
+ *   "description": "Rutin devriye görevi",
+ *   "timestamp": 1640995200
+ * }
+ * @endcode
+ * 
+ * Debug çıktısı:
+ * @code
+ * JSON başarıyla tactical_data_t'ye parse edildi:
+ *   - Unit ID: BIRIM-01
+ *   - Status: OPERASYONEL
+ *   - Konum: 39.925018, 32.866287
+ *   - Açıklama: Rutin devriye görevi
+ *   - Timestamp: 1640995200
+ * @endcode
+ */
 // JSON'u tactical_data_t struct'ına parse et
 tactical_data_t* parse_json_to_tactical_data(const char* json_content, const char* filename) {
     tactical_data_t* data = malloc(sizeof(tactical_data_t));
@@ -221,6 +465,68 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
     return data;
 }
 
+/**
+ * @brief Tactical data struct'ını detaylı formatlanmış rapora dönüştürür
+ * @ingroup json_processing
+ * 
+ * Bu fonksiyon tactical_data_t struct'ından professional taktik veri
+ * raporu üretir. Client'a gönderilecek response formatında çıktı sağlar.
+ * 
+ * Rapor bölümleri:
+ * - **Header**: Dosya adı ve parse zamanı
+ * - **Tactical Data Details**: Tüm veri alanları
+ * - **Durum Analizi**: Veri geçerliliği ve doğruluk kontrolleri
+ * - **Koordinat Bilgileri**: Enlem/boylam formatları
+ * - **Zaman Bilgileri**: Unix timestamp ve human-readable format
+ * 
+ * Analiz edilen kriterler:
+ * - Veri geçerliliği (is_valid flag)
+ * - Koordinat doğruluğu (sıfır kontrolü)
+ * - Açıklama uzunluğu
+ * - Timestamp formatlaması
+ * 
+ * @param data Formatlanacak tactical_data_t struct'ı
+ * @param filename Raporda gösterilecek dosya adı
+ * 
+ * @return Başarıda detaylı rapor string'i (malloc'lu)
+ * @return Geçersiz data durumunda hata mesajı (malloc'lu)
+ * 
+ * @note Döndürülen string caller tarafından free() edilmelidir.
+ *       2KB buffer boyutu limiti vardır.
+ * 
+ * @warning data NULL veya is_valid=false ise hata mesajı döner.
+ *          Bellek tahsisi başarısızlığında hata mesajı döner.
+ * 
+ * @see parse_json_to_tactical_data()
+ * @see get_current_time()
+ * @see free_tactical_data()
+ * 
+ * Örnek rapor çıktısı:
+ * @code
+ * Tactical Data Parse Sonucu
+ * ==========================
+ * Dosya: mission_data.json
+ * Parse Zamanı: 14:30:25
+ * 
+ * TACTICAL DATA DETAYLARI:
+ * ------------------------
+ * Birim ID       : BIRIM-01
+ * Durum          : OPERASYONEL
+ * Enlem          : 39.925018°
+ * Boylam         : 32.866287°
+ * Konum          : 39.925018°N, 32.866287°E
+ * Açıklama       : Rutin devriye görevi devam ediyor
+ * Zaman Damgası  : 1640995200 (2021-12-31 12:00:00)
+ * 
+ * DURUM ANALİZİ:
+ * -------------
+ * Veri Geçerliliği: GEÇERLI
+ * Koordinat Doğruluğu: DOĞRU
+ * Açıklama Uzunluğu: 28 karakter
+ * 
+ * ==========================
+ * @endcode
+ */
 // Tactical data'yı formatted string'e çevir
 char* tactical_data_to_string(const tactical_data_t* data, const char* filename) {
     if (data == NULL || !data->is_valid) {
@@ -288,6 +594,32 @@ char* tactical_data_to_string(const tactical_data_t* data, const char* filename)
     return result;
 }
 
+/**
+ * @brief Tactical data struct'ının belleğini güvenli şekilde temizler
+ * @ingroup json_processing
+ * 
+ * parse_json_to_tactical_data() fonksiyonu ile oluşturulan
+ * tactical_data_t struct'ının belleğini serbest bırakır.
+ * 
+ * @param data Temizlenecek tactical_data_t pointer'ı
+ * 
+ * @note NULL pointer kontrolü yapar, güvenli çağrım sağlar.
+ *       Memory leak'leri önlemek için mutlaka çağrılmalıdır.
+ * 
+ * @warning Bu fonksiyondan sonra data pointer'ı geçersiz hale gelir.
+ * 
+ * @see parse_json_to_tactical_data()
+ * 
+ * Kullanım örneği:
+ * @code
+ * tactical_data_t* data = parse_json_to_tactical_data(json, "file.json");
+ * if (data != NULL) {
+ *     // data kullanımı
+ *     free_tactical_data(data);
+ *     data = NULL; // Güvenlik için
+ * }
+ * @endcode
+ */
 // Tactical data memory'sini temizle
 void free_tactical_data(tactical_data_t* data) {
     if (data != NULL) {

@@ -1,3 +1,12 @@
+/**
+ * @file serverwindow.cpp
+ * @brief Server yönetim penceresi implementasyonu
+ * @ingroup qt_server
+ * 
+ * TCP/UDP/P2P sunucu kontrolleri, istemci yönetimi ve harita gösterimi.
+ * Taktik veri sunucusu için grafik arayüz sağlar.
+ */
+
 #include "serverwindow.h"
 #include "servermapwidget.h"
 #include <QApplication>
@@ -7,6 +16,11 @@
 #include <QScrollBar>
 #include <random>
 
+/**
+ * @brief ServerWindow constructor
+ * @param parent Üst widget
+ * @ingroup qt_server
+ */
 ServerWindow::ServerWindow(QWidget *parent)
     : QMainWindow(parent)
     , centralWidget(nullptr)
@@ -35,6 +49,10 @@ ServerWindow::ServerWindow(QWidget *parent)
     addNotification("Sunucu yönetim paneli başlatıldı");
 }
 
+/**
+ * @brief ServerWindow destructor - kaynakları temizler
+ * @ingroup qt_server
+ */
 ServerWindow::~ServerWindow()
 {
     if (tcpServer) {
@@ -47,6 +65,10 @@ ServerWindow::~ServerWindow()
     }
 }
 
+/**
+ * @brief Ana kullanıcı arayüzünü kurar
+ * @ingroup qt_server
+ */
 void ServerWindow::setupUI()
 {
     centralWidget = new QWidget(this);
@@ -69,6 +91,10 @@ void ServerWindow::setupUI()
     mainLayout->setContentsMargins(5, 5, 5, 5);
 }
 
+/**
+ * @brief Harita panelini kurar ve yapılandırır
+ * @ingroup qt_server
+ */
 void ServerWindow::setupMapPanel()
 {
     mapPanel = new QWidget();
@@ -88,6 +114,10 @@ void ServerWindow::setupMapPanel()
     mapLayout->setContentsMargins(5, 5, 5, 5);
 }
 
+/**
+ * @brief Kontrol panelini kurar ve yapılandırır
+ * @ingroup qt_server
+ */
 void ServerWindow::setupControlPanel()
 {
     controlPanel = new QWidget();
@@ -106,6 +136,10 @@ void ServerWindow::setupControlPanel()
     controlLayout->setContentsMargins(5, 5, 5, 5);
 }
 
+/**
+ * @brief Sunucu kontrol panelini kurar
+ * @ingroup qt_server
+ */
 void ServerWindow::setupServerPanel()
 {
     serverGroup = new QGroupBox("Sunucu Kontrolleri");
@@ -211,6 +245,10 @@ void ServerWindow::setupServerPanel()
     serverLayout->addWidget(clientCountLabel);
 }
 
+/**
+ * @brief İstemci listesi panelini kurar
+ * @ingroup qt_server
+ */
 void ServerWindow::setupClientListPanel()
 {
     infoGroup = new QGroupBox("İstemci Bilgileri");
@@ -260,6 +298,10 @@ void ServerWindow::setupClientListPanel()
     infoLayout->addWidget(infoStackedWidget);
 }
 
+/**
+ * @brief Bildirim panelini kurar
+ * @ingroup qt_server
+ */
 void ServerWindow::setupNotificationPanel()
 {
     notificationGroup = new QGroupBox("Son Bildirimler");
@@ -281,6 +323,11 @@ void ServerWindow::setupNotificationPanel()
     notificationLayout->addWidget(clearNotificationsButton);
 }
 
+/**
+ * @brief TCP sunucu durumunu değiştirir
+ * @param enabled Sunucu aktif durumu
+ * @ingroup qt_server
+ */
 void ServerWindow::onTcpServerToggle(bool enabled)
 {
     if (enabled) {
@@ -312,6 +359,11 @@ void ServerWindow::onTcpServerToggle(bool enabled)
     updateServerStatus();
 }
 
+/**
+ * @brief UDP sunucu durumunu değiştirir
+ * @param enabled Sunucu aktif durumu
+ * @ingroup qt_server
+ */
 void ServerWindow::onUdpServerToggle(bool enabled)
 {
     if (enabled) {
@@ -343,6 +395,11 @@ void ServerWindow::onUdpServerToggle(bool enabled)
     updateServerStatus();
 }
 
+/**
+ * @brief P2P sunucu durumunu değiştirir
+ * @param enabled Sunucu aktif durumu
+ * @ingroup qt_server
+ */
 void ServerWindow::onP2pServerToggle(bool enabled)
 {
     // P2P sunucusu için simüle edilmiş durum
@@ -362,6 +419,10 @@ void ServerWindow::onP2pServerToggle(bool enabled)
     updateServerStatus();
 }
 
+/**
+ * @brief Sunucu durumunu periyodik olarak günceller
+ * @ingroup qt_server
+ */
 void ServerWindow::onServerStatusUpdate()
 {
     // Bağlı istemci sayısını güncelle (simüle edilmiş)
@@ -402,6 +463,10 @@ void ServerWindow::onServerStatusUpdate()
     clientCountLabel->setText(QString("Bağlı İstemciler: %1").arg(connectedClients));
 }
 
+/**
+ * @brief Sunucu durumu göstergesini günceller
+ * @ingroup qt_server
+ */
 void ServerWindow::updateServerStatus()
 {
     QString status = "Sunucu Durumu: ";
@@ -425,6 +490,11 @@ void ServerWindow::updateServerStatus()
     serverStatusLabel->setText(status);
 }
 
+/**
+ * @brief Bildirim paneline yeni mesaj ekler
+ * @param message Eklenecek bildirim mesajı
+ * @ingroup qt_server
+ */
 void ServerWindow::addNotification(const QString &message)
 {
     QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
@@ -432,6 +502,14 @@ void ServerWindow::addNotification(const QString &message)
     notificationTextEdit->verticalScrollBar()->setValue(notificationTextEdit->verticalScrollBar()->maximum());
 }
 
+/**
+ * @brief İstemciden gelen veriyi işler
+ * @param latitude Enlem koordinatı
+ * @param longitude Boylam koordinatı
+ * @param dataType Veri türü
+ * @param message Veri mesajı
+ * @ingroup qt_server
+ */
 void ServerWindow::onClientDataReceived(double latitude, double longitude, const QString &dataType, const QString &message)
 {
     // İstemciden gelen veri işlemi
@@ -441,16 +519,33 @@ void ServerWindow::onClientDataReceived(double latitude, double longitude, const
     // mapWidget->addMarker(latitude, longitude, dataType, message);
 }
 
+/**
+ * @brief Sunucu türü değiştiğinde paneli günceller
+ * @param index Seçilen sunucu türü indexi
+ * @ingroup qt_server
+ */
 void ServerWindow::onServerTypeChanged(int index)
 {
     serverStackedWidget->setCurrentIndex(index);
 }
 
+/**
+ * @brief Bilgi görünümü değiştiğinde paneli günceller
+ * @param index Seçilen görünüm indexi
+ * @ingroup qt_server
+ */
 void ServerWindow::onInfoViewChanged(int index)
 {
     infoStackedWidget->setCurrentIndex(index);
 }
 
+/**
+ * @brief İstemci listesine yeni istemci ekler
+ * @param clientId İstemci kimliği
+ * @param address IP adresi
+ * @param connectionType Bağlantı türü
+ * @ingroup qt_server
+ */
 void ServerWindow::addClientToList(const QString &clientId, const QString &address, const QString &connectionType)
 {
     int row = clientListTable->rowCount();
@@ -468,6 +563,11 @@ void ServerWindow::addClientToList(const QString &clientId, const QString &addre
     addNotification(QString("Yeni istemci bağlandı: %1 (%2)").arg(clientId, address));
 }
 
+/**
+ * @brief İstemciyi listeden kaldırır
+ * @param clientId Kaldırılacak istemci kimliği
+ * @ingroup qt_server
+ */
 void ServerWindow::removeClientFromList(const QString &clientId)
 {
     for (int row = 0; row < clientListTable->rowCount(); ++row) {
@@ -480,6 +580,11 @@ void ServerWindow::removeClientFromList(const QString &clientId)
     }
 }
 
+/**
+ * @brief Kuyruk tablosuna yeni mesaj ekler
+ * @param message Kuyruk mesajı
+ * @ingroup qt_server
+ */
 void ServerWindow::addToQueue(const QString &message)
 {
     int row = queueTable->rowCount();

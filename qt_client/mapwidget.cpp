@@ -1,9 +1,23 @@
+/**
+ * @file mapwidget.cpp
+ * @brief Client tarafı harita widget implementasyonu
+ * @ingroup qt_client
+ * 
+ * QML harita bileşeni ile C++ arasında köprü sağlar.
+ * Kullanıcı etkileşimi ve harita görselleştirmesi.
+ */
+
 #include "mapwidget.h"
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QDebug>
 
+/**
+ * @brief MapWidget constructor
+ * @param parent Üst widget
+ * @ingroup qt_client
+ */
 MapWidget::MapWidget(QWidget *parent)
     : QWidget(parent)
     , qmlWidget(nullptr)
@@ -12,6 +26,10 @@ MapWidget::MapWidget(QWidget *parent)
     setupQmlMap();
 }
 
+/**
+ * @brief QML harita widget'ını kurar ve bağlar
+ * @ingroup qt_client
+ */
 void MapWidget::setupQmlMap()
 {
     layout = new QVBoxLayout(this);
@@ -40,6 +58,12 @@ void MapWidget::setupQmlMap()
     }
 }
 
+/**
+ * @brief QML haritadan gelen tıklama olayını işler
+ * @param latitude Enlem koordinatı
+ * @param longitude Boylam koordinatı
+ * @ingroup qt_client
+ */
 void MapWidget::onQmlPointClicked(double latitude, double longitude)
 {
     qDebug() << "Harita tıklandı:" << latitude << longitude;

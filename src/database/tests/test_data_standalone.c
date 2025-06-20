@@ -1,8 +1,66 @@
+/**
+ * @file test_data_standalone.c
+ * @brief Bağımsız veritabanı test verisi oluşturucu - minimal test senaryoları için
+ * @ingroup database_tests
+ * @author Taktik Veri Sistemi
+ * @date 2025
+ * 
+ * Bu dosya minimal test verisi oluşturan bağımsız bir test aracı sağlar.
+ * Ana uygulama altyapısına ihtiyaç duymadan bağımsız olarak çalıştırılabilir.
+ * 
+ * 
+ * Kullanım:
+ * @code
+ * ./test_data_standalone [veritabani_yolu]
+ * @endcode
+ * 
+ * @note Bu araç birim testleri ve CI/CD pipeline'ları için tasarlanmıştır.
+ *       Temel işlevsellik doğrulaması için minimal test verisi yeterlidir.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include "database.h"
 
+/**
+ * @brief Bağımsız test için minimal test verisini veritabanına ekler
+ * @ingroup database_tests
+ * 
+ * Bu fonksiyon şu temel test verisini oluşturur ve ekler:
+ * - 2 test askeri birimi (TEST-01, TEST-02)
+ * - 2 karşılık gelen zaman damgalı taktik rapor
+ * 
+ * Fonksiyon şu işlemleri gerçekleştirir:
+ * 1. Temel bilgilerle test birim yapıları oluşturur
+ * 2. Birimleri veritabanına ekler ve ID'lerini yakalar
+ * 3. Eklenen birimlerle bağlantılı test raporları oluşturur
+ * 4. Raporları mevcut zaman damgası varyasyonlarıyla ekler
+ * 5. Doğrulama için detaylı konsol çıktısı sağlar
+ * 
+ * @return Başarıda 0 (en az bir birim ve rapor eklendi)
+ * @return Başarısızlıkta -1 (hiçbir veri başarıyla eklenmedi)
+ * 
+ * @note Bu fonksiyon şunlar için uygun basit test verisi üretir:
+ *       - Veritabanı işlemlerinin birim testleri
+ *       - CI/CD pipeline doğrulaması
+ *       - Hızlı geliştirme testleri
+ * 
+ * @warning Fonksiyon veritabanının zaten başlatıldığını ve tabloların mevcut olduğunu varsayar
+ * 
+ * @see db_insert_unit()
+ * @see db_insert_report()
+ * 
+ * Örnek çıktı:
+ * @code
+ * === Standalone Test Veri Ekleme ===
+ *   ✓ TEST-01 eklendi (ID: 1)
+ *   ✓ TEST-02 eklendi (ID: 2)
+ *   ✓ Test rapor eklendi: Test-Durum-1 (ID: 1)
+ *   ✓ Test rapor eklendi: Test-Durum-2 (ID: 2)
+ * Test veri ekleme tamamlandı: 2 birim, 2 rapor
+ * @endcode
+ */
 // Test data ekleme fonksiyonu (standalone test için)
 int insert_test_data_standalone(void) {
     printf("=== Standalone Test Veri Ekleme ===\n");
@@ -55,6 +113,50 @@ int insert_test_data_standalone(void) {
     return (units_inserted > 0 && reports_inserted > 0) ? 0 : -1;
 }
 
+/**
+ * @brief Bağımsız veritabanı test verisi oluşturucu ana fonksiyonu
+ * @ingroup database_tests
+ * 
+ * Bu bağımsız test verisi oluşturucu için giriş noktasıdır. Tam bir
+ * veritabanı kurulumu ve test verisi ekleme döngüsü gerçekleştirir:
+ * 
+ * 1. Veritabanı bağlantısını başlatır
+ * 2. Gerekli tabloları oluşturur
+ * 3. Test verisini ekler
+ * 4. Başarı/başarısızlık geri bildirimi sağlar
+ * 5. Veritabanı bağlantısını düzgün şekilde kapatır
+ * 
+ * @param argc Argüman sayısı
+ * @param argv Argüman vektörü
+ *             - argv[1]: Opsiyonel veritabanı yolu (varsayılan: "test_tactical_data.db")
+ * 
+ * @return Başarıda 0
+ * @return Veritabanı başlatma hatalarında 1
+ * @return Tablo oluşturma hatalarında 1
+ * @return Test verisi ekleme hatalarında 1
+ * 
+ * @note Bu fonksiyon tam uygulama gerektirmeden hızlı test senaryoları için
+ *       bağımsız bir çalıştırılabilir dosya olarak tasarlanmıştır.
+ * 
+ * @warning Başarısızlık durumunda bile dönmeden önce her zaman veritabanı bağlantısını kapatır
+ * 
+ * Kullanım örnekleri:
+ * @code
+ * // Varsayılan veritabanı yolunu kullan
+ * ./test_data_standalone
+ * 
+ * // Özel veritabanı yolu belirt
+ * ./test_data_standalone /path/to/custom.db
+ * 
+ * // CI/CD pipeline'da
+ * ./test_data_standalone test_db.db && echo "Test verisi hazır"
+ * @endcode
+ * 
+ * @see db_init()
+ * @see db_create_tables()
+ * @see insert_test_data_standalone()
+ * @see db_close()
+ */
 // Standalone test için main fonksiyonu
 int main(int argc, char* argv[]) {
     const char *db_path = (argc > 1) ? argv[1] : "test_tactical_data.db";

@@ -1,3 +1,14 @@
+/**
+ * @file encrypted_client.c
+ * @brief Şifreli JSON dosya gönderim istemcisi
+ * @details Bu dosya, TCP/UDP/P2P protokolleri kullanarak JSON dosyalarını 
+ *          şifreli veya şifresiz olarak sunucuya gönderen istemci uygulamasını içerir.
+ *          ECDH anahtar değişimi ve AES256 şifreleme desteği sağlar.
+ * @author Ali Burak Pekışık
+ * @date 2025
+ * @version 1.0
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +24,12 @@
 #include "fallback_manager.h"
 #include "protocol_manager.h"
 
+/**
+ * @brief Ana program fonksiyonu
+ * @details İstemci uygulamasının ana giriş noktası. Kullanıcı menüsünü gösterir
+ *          ve sunucuya bağlantı kurarak JSON dosya gönderim işlemlerini yönetir.
+ * @return int Program çıkış kodu (0: başarılı, -1: hata)
+ */
 int main() {
     char filename[CONFIG_MAX_FILENAME];
     int choice;
@@ -78,7 +95,14 @@ int main() {
     return 0;
 }
 
-// Menu goster
+/**
+ * @brief Kullanıcı menüsünü ekranda gösterir
+ * @details Ana menü seçeneklerini formatlanmış şekilde ekrana yazdırır.
+ *          Kullanıcı 3 seçenekten birini seçebilir:
+ *          1. Normal JSON dosyası gönder
+ *          2. Şifreli JSON dosyası gönder  
+ *          3. Çıkış
+ */
 void show_menu(void) {
     printf("\n=== MENU ===\n");
     printf("1. Normal JSON dosyasi gonder\n");
@@ -87,7 +111,15 @@ void show_menu(void) {
     printf("============\n");
 }
 
-// Dosya icerigini oku
+/**
+ * @brief Dosya içeriğini belleğe okur
+ * @details Belirtilen dosyayı açar, boyutunu hesaplar ve tüm içeriğini
+ *          belleğe yükler. Bellek tahsisi otomatik olarak yapılır.
+ * @param filename Okunacak dosyanın adı/yolu
+ * @param file_size [OUT] Okunan dosyanın boyutu (byte cinsinden)
+ * @return char* Dosya içeriğini içeren bellek adresi (NULL: hata durumunda)
+ * @note Dönen bellek alanı çağıran tarafından free() ile serbest bırakılmalıdır
+ */
 char* read_file_content(const char* filename, size_t* file_size) {
     FILE *file = fopen(filename, "r");
     if (file == NULL) {
@@ -116,7 +148,16 @@ char* read_file_content(const char* filename, size_t* file_size) {
     return content;
 }
 
-// JSON dosyasini server'a gonder
+/**
+ * @brief JSON dosyasını sunucuya gönderir
+ * @details Belirtilen JSON dosyasını okur ve protokol mesajı formatında
+ *          sunucuya gönderir. Şifreleme seçeneği mevcuttur.
+ * @param conn Aktif sunucu bağlantısı
+ * @param filename Gönderilecek JSON dosyasının adı/yolu
+ * @param encrypt Şifreleme durumu (1: şifreli, 0: normal)
+ * @return int İşlem sonucu (0: başarılı, -1: hata)
+ * @note Şifreli gönderim için ECDH anahtar değişiminin tamamlanmış olması gerekir
+ */
 int send_json_file(client_connection_t* conn, const char* filename, int encrypt) {
     size_t file_size;
     char *content = read_file_content(filename, &file_size);
@@ -173,7 +214,13 @@ int send_json_file(client_connection_t* conn, const char* filename, int encrypt)
     return 0;
 }
 
-// Server yanitini isle
+/**
+ * @brief Sunucu yanıtını alır ve işler
+ * @details Aktif bağlantı türüne göre (TCP/UDP/P2P) sunucudan gelen
+ *          yanıt mesajını alır ve formatlanmış şekilde ekrana yazdırır.
+ * @param conn Aktif sunucu bağlantısı
+ * @note Yanıt alınamazsa veya bağlantı kesilirse uygun hata mesajları gösterilir
+ */
 void handle_server_response(client_connection_t* conn) {
     char buffer[CONFIG_BUFFER_SIZE] = {0};
     
@@ -202,6 +249,16 @@ void handle_server_response(client_connection_t* conn) {
     }
 }
 
+/**
+ * @brief Sunucuya bağlantı kurar
+ * @details Verilen sunucu adresine sırasıyla TCP, UDP ve P2P protokolleri
+ *          ile bağlantı kurmaya çalışır. Her protokol için ECDH anahtar 
+ *          değişimi gerçekleştirir ve AES256 oturum anahtarı oluşturur.
+ * @param server_host Sunucu IP adresi veya hostname (NULL ise 127.0.0.1 kullanılır)
+ * @return client_connection_t* Bağlantı yapısı (NULL: başarısız)
+ * @note Bağlantı öncelik sırası: TCP (8080) -> UDP (8081) -> P2P (8082)
+ * @warning Dönen yapı kullanım sonrasında close_connection() ile kapatılmalıdır
+ */
 client_connection_t* connect_to_server(const char* server_host) {
     client_connection_t* conn = malloc(sizeof(client_connection_t));
     if (conn == NULL) {
@@ -218,7 +275,9 @@ client_connection_t* connect_to_server(const char* server_host) {
     
     printf("Server'a baglaniliyor: %s\n", server_host);
     
-    // 1. TCP baglantisi dene (Port: 8080)
+    /* ========================================
+     * TCP Bağlantısı Denemesi (Port: 8080)
+     * ======================================== */
     printf("TCP baglantisi deneniyor (Port: %d)...\n", CONFIG_PORT);
     conn->socket = socket(AF_INET, SOCK_STREAM, 0);
     if (conn->socket >= 0) {
@@ -243,7 +302,7 @@ client_connection_t* connect_to_server(const char* server_host) {
         if (connect(conn->socket, (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) == 0) {
             printf("✓ TCP baglantisi basarili (Port: %d)\n", CONFIG_PORT);
             
-            // ECDH anahtar değişimi yap
+            /* TCP için ECDH Anahtar Değişimi */
             if (!ecdh_init_context(&conn->ecdh_ctx)) {
                 printf("ECDH context başlatılamadı\n");
                 close(conn->socket);
@@ -312,7 +371,9 @@ client_connection_t* connect_to_server(const char* server_host) {
     }
     
 try_udp:
-    // 2. UDP baglantisi dene (Port: 8081)
+    /* ========================================
+     * UDP Bağlantısı Denemesi (Port: 8081)
+     * ======================================== */
     printf("UDP baglantisi deneniyor (Port: %d)...\n", CONFIG_UDP_PORT);
     conn->socket = socket(AF_INET, SOCK_DGRAM, 0);
     if (conn->socket >= 0) {
@@ -347,7 +408,7 @@ try_udp:
             if (recvfrom(conn->socket, test_buffer, sizeof(test_buffer) - 1, 0, NULL, 0) > 0) {
                 printf("✓ UDP baglantisi basarili (Port: %d)\n", CONFIG_UDP_PORT);
                 
-                // UDP için ECDH anahtar değişimi yap
+                /* UDP için ECDH Anahtar Değişimi */
                 if (!ecdh_init_context(&conn->ecdh_ctx)) {
                     printf("UDP ECDH context başlatılamadı\n");
                     close(conn->socket);
@@ -478,7 +539,9 @@ try_udp:
     }
 
 try_p2p:
-    // 3. P2P baglantisi dene (Port: 8082)
+    /* ========================================
+     * P2P Bağlantısı Denemesi (Port: 8082)
+     * ======================================== */
     printf("P2P baglantisi deneniyor (Port: %d)...\n", CONFIG_P2P_PORT);
     conn->socket = socket(AF_INET, SOCK_STREAM, 0);
     if (conn->socket >= 0) {
@@ -504,7 +567,7 @@ try_p2p:
         if (connect(conn->socket, (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) == 0) {
             printf("✓ P2P baglantisi basarili (Port: %d)\n", CONFIG_P2P_PORT);
             
-            // P2P için ECDH anahtar değişimi yap (TCP benzeri)
+            /* P2P için ECDH Anahtar Değişimi (TCP benzeri) */
             if (!ecdh_init_context(&conn->ecdh_ctx)) {
                 printf("P2P ECDH context başlatılamadı\n");
                 close(conn->socket);
@@ -573,6 +636,7 @@ try_p2p:
         }
     }
     
+    /* Tüm protokoller başarısız */
     printf("✗ Hicbir protokol ile baglanti kurulamadi!\n");
     free(conn);
     return NULL;

@@ -1,11 +1,55 @@
+/**
+ * @file update.c
+ * @brief Veritabanı güncelleme ve tek kayıt sorgulama işlemleri
+ * @details Bu dosya SQLite3 veritabanında unit ve report kayıtlarının güncellenmesi,
+ *          ID'ye göre tek kayıt sorgulama ve prepared statement kullanımı
+ *          işlemlerini içerir. Tactical Data Transfer System'in veri güncelleme
+ *          katmanını oluşturur.
+ * @author Tactical Data Transfer System
+ * @date 2025
+ * @version 1.0
+ * @ingroup database
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sqlite3.h>
 #include <string.h>
 #include "../../include/database.h"
 
+/**
+ * @brief External global veritabanı bağlantısı
+ * @details create.c'de tanımlanan global veritabanı bağlantısına referans
+ * @see g_db in create.c
+ */
 extern sqlite3 *g_db;
 
+/**
+ * @brief UNITS tablosunda belirli ID'ye sahip kaydı günceller
+ * @details Verilen ID'ye sahip unit kaydının tüm alanlarını yeni değerlerle günceller.
+ *          CREATED_AT alanı korunur, diğer alanlar tamamen değiştirilir.
+ * 
+ * Güncellenebilen Alanlar:
+ * - UNIT_ID (string, unique constraint)
+ * - UNIT_NAME (string)
+ * - UNIT_TYPE (string)
+ * - LOCATION (string, nullable)
+ * - ACTIVE (integer boolean)
+ * 
+ * @param id Güncellenecek unit'in database ID'si
+ * @param unit Yeni unit verileri
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı güncelleme
+ * @retval -1 Güncelleme hatası (database not initialized, SQL error, ID not found)
+ * 
+ * @note sqlite3_changes() ile etkilenen kayıt sayısı kontrol edilir
+ * @warning unit pointer NULL olmamalıdır
+ * @warning UNIT_ID unique constraint violation durumunda hata verir
+ * @warning String alanlarında SQL injection koruması yok
+ * 
+ * @todo Prepared statement kullanarak SQL injection koruması ekle
+ * @see unit_t, db_get_unit_by_id()
+ */
 int db_update_unit(int id, const unit_t *unit) {
     char *zErrMsg = 0;
     char sql[1024];
@@ -40,6 +84,34 @@ int db_update_unit(int id, const unit_t *unit) {
     }
 }
 
+/**
+ * @brief REPORTS tablosunda belirli ID'ye sahip kaydı günceller
+ * @details Verilen ID'ye sahip report kaydının tüm alanlarını yeni değerlerle günceller.
+ *          CREATED_AT alanı korunur, diğer alanlar tamamen değiştirilir.
+ * 
+ * Güncellenebilen Alanlar:
+ * - UNIT_ID (integer, foreign key)
+ * - STATUS (string)
+ * - LATITUDE (double, 6 decimal precision)
+ * - LONGITUDE (double, 6 decimal precision)
+ * - DESCRIPTION (string, nullable)
+ * - TIMESTAMP (long, unix timestamp)
+ * 
+ * @param id Güncellenecek report'un database ID'si
+ * @param report Yeni report verileri
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı güncelleme
+ * @retval -1 Güncelleme hatası (database not initialized, SQL error, ID not found, foreign key violation)
+ * 
+ * @note sqlite3_changes() ile etkilenen kayıt sayısı kontrol edilir
+ * @note Koordinatlar %.6f precision ile saklanır
+ * @warning report pointer NULL olmamalıdır
+ * @warning UNIT_ID foreign key constraint ile validate edilir
+ * @warning String alanlarında SQL injection koruması yok
+ * 
+ * @todo Prepared statement kullanarak SQL injection koruması ekle
+ * @see report_t, db_get_report_by_id()
+ */
 int db_update_report(int id, const report_t *report) {
     char *zErrMsg = 0;
     char sql[1024];
@@ -74,6 +146,31 @@ int db_update_report(int id, const report_t *report) {
     }
 }
 
+/**
+ * @brief ID'ye göre tek unit kaydını getirir
+ * @details Verilen ID'ye sahip unit kaydını UNITS tablosundan getirir.
+ *          Prepared statement kullanarak güvenli sorgu yapar.
+ * 
+ * Prepared Statement Avantajları:
+ * - SQL injection koruması
+ * - Daha iyi performans
+ * - Type-safe parameter binding
+ * - Otomatik memory management
+ * 
+ * @param id Getirilecek unit'in database ID'si
+ * @param unit [OUT] Unit verilerinin yazılacağı struct
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı sorgulama, unit bulundu
+ * @retval -1 Sorgu hatası veya unit bulunamadı
+ * 
+ * @note unit struct'ı memset ile temizlenir
+ * @note NULL column değerleri güvenli şekilde handle edilir
+ * @note sqlite3_finalize() ile statement otomatik temizlenir
+ * @warning unit pointer NULL olmamalıdır
+ * @warning id geçerli bir database ID olmalıdır
+ * 
+ * @see unit_t, db_update_unit(), db_get_report_by_id()
+ */
 int db_get_unit_by_id(int id, unit_t *unit) {
     sqlite3_stmt *stmt;
     char sql[256];
@@ -117,6 +214,33 @@ int db_get_unit_by_id(int id, unit_t *unit) {
     }
 }
 
+/**
+ * @brief ID'ye göre tek report kaydını getirir
+ * @details Verilen ID'ye sahip report kaydını REPORTS tablosundan getirir.
+ *          Prepared statement kullanarak güvenli sorgu yapar.
+ * 
+ * Prepared Statement Özellikleri:
+ * - SQL injection koruması
+ * - Type-safe column access
+ * - Koordinatlar double precision ile alınır
+ * - Timestamp int64 olarak alınır
+ * - Automatic memory cleanup
+ * 
+ * @param id Getirilecek report'un database ID'si
+ * @param report [OUT] Report verilerinin yazılacağı struct
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı sorgulama, report bulundu
+ * @retval -1 Sorgu hatası veya report bulunamadı
+ * 
+ * @note report struct'ı memset ile temizlenir
+ * @note NULL column değerleri güvenli şekilde handle edilir
+ * @note sqlite3_column_double() koordinatlar için kullanılır
+ * @note sqlite3_column_int64() timestamp için kullanılır
+ * @warning report pointer NULL olmamalıdır
+ * @warning id geçerli bir database ID olmalıdır
+ * 
+ * @see report_t, db_update_report(), db_get_unit_by_id()
+ */
 int db_get_report_by_id(int id, report_t *report) {
     sqlite3_stmt *stmt;
     char sql[256];

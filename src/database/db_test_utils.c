@@ -1,9 +1,65 @@
+/**
+ * @file db_test_utils.c
+ * @brief Veritabanı test verisi oluşturma yardımcı fonksiyonları
+ * @details Bu dosya test ve demo amaçlı örnek verilerin veritabanına eklenmesi
+ *          işlemlerini içerir. Tactical Data Transfer System'in test data
+ *          katmanını oluşturur. Gerçek askeri birim isimleri ve koordinatlar kullanır.
+ * @author Tactical Data Transfer System
+ * @date 2025
+ * @version 1.0
+ * @ingroup database
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
 #include "../include/database.h"
 
+/**
+ * @brief Veritabanına örnek test verilerini ekler
+ * @details Tactical data transfer sistemi için örnek unit ve report verilerini
+ *          veritabanına ekler. Test ve demo amaçlı kullanılır.
+ * 
+ * Eklenen Test Verileri:
+ * 
+ * **Test Birimleri (4 adet):**
+ * - BIRIM-01: 1. Piyade Alayı (Ankara-Etimesgut)
+ * - BIRIM-02: 2. Zırhlı Tuğay (Ankara-Polatlı)  
+ * - BIRIM-03: Hava Savunma Taburu (İstanbul-Çatalca)
+ * - BIRIM-04: Özel Kuvvetler Timi (İzmir-Foça)
+ * 
+ * **Test Raporları (6 adet):**
+ * - Her birim için gerçekçi tactical raporlar
+ * - Farklı durum kodları (Tehlike, Güvenli, Devriye, vb.)
+ * - Gerçek GPS koordinatları
+ * - Zaman damgalı raporlar (son 1 saat içi)
+ * 
+ * Koordinat Verileri:
+ * - Ankara bölgesi: ~39.92°N, 32.85°E
+ * - İstanbul bölgesi: ~41.00°N, 28.97°E  
+ * - İzmir bölgesi: ~38.42°N, 27.14°E
+ * 
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı test verisi ekleme (en az 1 unit ve 1 report)
+ * @retval -1 Test verisi ekleme hatası veya hiç veri eklenemedi
+ * 
+ * @note Bu fonksiyon demo ve test amaçlıdır, production'da kullanılmamalı
+ * @note Gerçek askeri lokasyonlar ve birim isimleri kullanır
+ * @note Timestamp değerleri çağrı anından geriye doğru hesaplanır
+ * @note Her unit için unit_id foreign key automatic assignment yapılır
+ * @warning Mevcut veriler üzerine ekleme yapar, duplicate check yok
+ * 
+ * @see db_insert_unit(), db_insert_report(), unit_t, report_t
+ * 
+ * @example
+ * @code
+ * // Test verilerini ekle
+ * if (db_insert_test_data() == 0) {
+ *     printf("Test verileri başarıyla eklendi\n");
+ * }
+ * @endcode
+ */
 int db_insert_test_data(void) {
     printf("Test verileri ekleniyor...\n");
     fflush(stdout);

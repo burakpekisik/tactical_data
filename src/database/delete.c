@@ -1,10 +1,51 @@
+/**
+ * @file delete.c
+ * @brief Veritabanı silme işlemleri ve bellek temizleme
+ * @details Bu dosya SQLite3 veritabanından unit ve report kayıtlarının silinmesi,
+ *          foreign key constraint yönetimi ve dynamic array'lerin bellek
+ *          temizleme işlemlerini içerir. Tactical Data Transfer System'in
+ *          veri silme katmanını oluşturur.
+ * @author Tactical Data Transfer System
+ * @date 2025
+ * @version 1.0
+ * @ingroup database
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sqlite3.h>
 #include "../../include/database.h"
 
+/**
+ * @brief External global veritabanı bağlantısı
+ * @details create.c'de tanımlanan global veritabanı bağlantısına referans
+ * @see g_db in create.c
+ */
 extern sqlite3 *g_db;
 
+/**
+ * @brief UNITS tablosundan unit kaydını ve ilişkili raporları siler
+ * @details Verilen ID'ye sahip unit'i siler. Foreign key constraint nedeniyle
+ *          önce ilişkili REPORTS kayıtları, sonra UNITS kaydı silinir.
+ * 
+ * Silme Sırası (Foreign Key Constraint):
+ * 1. DELETE FROM REPORTS WHERE UNIT_ID = {id}
+ * 2. DELETE FROM UNITS WHERE ID = {id}
+ * 3. Etkilenen kayıt sayısını kontrol et
+ * 
+ * @param id Silinecek unit'in database ID'si
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı silme (unit ve ilişkili raporlar)
+ * @retval -1 Silme hatası (database not initialized, SQL error, ID not found)
+ * 
+ * @note Cascade DELETE etkisi - unit silinince tüm raporları da silinir
+ * @note sqlite3_changes() ile etkilenen kayıt sayısı kontrol edilir
+ * @note İlişkili raporlar varsa önce onlar silinir (foreign key constraint)
+ * @warning id geçerli bir database ID olmalıdır
+ * @warning Silme işlemi geri alınamaz
+ * 
+ * @see db_delete_report(), db_update_unit()
+ */
 int db_delete_unit(int id) {
     char *zErrMsg = 0;
     char sql[256];
@@ -47,6 +88,24 @@ int db_delete_unit(int id) {
     }
 }
 
+/**
+ * @brief REPORTS tablosundan tek report kaydını siler
+ * @details Verilen ID'ye sahip report kaydını REPORTS tablosundan siler.
+ *          Unit kaydı etkilenmez, sadece spesifik rapor silinir.
+ * 
+ * @param id Silinecek report'un database ID'si
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı silme
+ * @retval -1 Silme hatası (database not initialized, SQL error, ID not found)
+ * 
+ * @note sqlite3_changes() ile etkilenen kayıt sayısı kontrol edilir
+ * @note Unit kaydı etkilenmez, sadece report silinir
+ * @note Foreign key constraint unit tarafından etkilenmez
+ * @warning id geçerli bir database ID olmalıdır
+ * @warning Silme işlemi geri alınamaz
+ * 
+ * @see db_delete_unit(), db_update_report()
+ */
 int db_delete_report(int id) {
     char *zErrMsg = 0;
     char sql[256];
@@ -77,78 +136,44 @@ int db_delete_report(int id) {
     }
 }
 
+/**
+ * @brief Units dynamic array'inin belleğini serbest bırakır
+ * @details db_select_units() fonksiyonu tarafından tahsis edilen unit array'inin
+ *          belleğini güvenli şekilde serbest bırakır.
+ * 
+ * @param units Serbest bırakılacak unit array pointer'ı
+ * @param count Array eleman sayısı (kullanılmaz, ileriye dönük uyumluluk için)
+ * 
+ * @note count parametresi şu anda kullanılmaz (__attribute__((unused)))
+ * @note NULL pointer kontrolü yapar, güvenli çağrı
+ * @note Bu fonksiyon db_select_units() ile eşleşir
+ * @warning units pointer'ı malloc ile tahsis edilmiş olmalıdır
+ * 
+ * @see db_select_units(), db_free_reports()
+ */
 void db_free_units(unit_t *units, int count __attribute__((unused))) {
     if (units) {
         free(units);
     }
 }
 
+/**
+ * @brief Reports dynamic array'inin belleğini serbest bırakır
+ * @details db_select_reports() ve db_select_reports_by_unit() fonksiyonları
+ *          tarafından tahsis edilen report array'inin belleğini güvenli şekilde serbest bırakır.
+ * 
+ * @param reports Serbest bırakılacak report array pointer'ı
+ * @param count Array eleman sayısı (kullanılmaz, ileriye dönük uyumluluk için)
+ * 
+ * @note count parametresi şu anda kullanılmaz (__attribute__((unused)))
+ * @note NULL pointer kontrolü yapar, güvenli çağrı
+ * @note Bu fonksiyon db_select_reports() ve db_select_reports_by_unit() ile eşleşir
+ * @warning reports pointer'ı malloc ile tahsis edilmiş olmalıdır
+ * 
+ * @see db_select_reports(), db_select_reports_by_unit(), db_free_units()
+ */
 void db_free_reports(report_t *reports, int count __attribute__((unused))) {
     if (reports) {
         free(reports);
     }
 }
-
-// // Test function
-// int main(int argc, char* argv[]) {
-//     if (db_init("tactical_data.db") != 0) {
-//         return 1;
-//     }
-
-//     printf("Testing delete operations...\n");
-    
-//     // List current units and reports before deletion
-//     unit_t *units;
-//     int unit_count;
-    
-//     if (db_select_units(&units, &unit_count) == 0) {
-//         printf("Units before deletion: %d\n", unit_count);
-//         for (int i = 0; i < unit_count; i++) {
-//             printf("  Unit ID %d: %s (%s)\n", 
-//                    units[i].id, units[i].unit_id, units[i].unit_name);
-//         }
-//         free(units);
-//     }
-
-//     report_t *reports;
-//     int report_count;
-    
-//     if (db_select_reports(&reports, &report_count) == 0) {
-//         printf("Reports before deletion: %d\n", report_count);
-//         for (int i = 0; i < report_count; i++) {
-//             printf("  Report ID %d: Unit %d - %s\n", 
-//                    reports[i].id, reports[i].unit_id, reports[i].status);
-//         }
-//         free(reports);
-//     }
-
-//     // Test deleting a specific report
-//     printf("\nDeleting report ID 2...\n");
-//     db_delete_report(2);
-
-//     // Test deleting a unit (this will also delete associated reports)
-//     printf("\nDeleting unit ID 1 (and its reports)...\n");
-//     db_delete_unit(1);
-
-//     // Show remaining data
-//     if (db_select_units(&units, &unit_count) == 0) {
-//         printf("\nRemaining units: %d\n", unit_count);
-//         for (int i = 0; i < unit_count; i++) {
-//             printf("  Unit ID %d: %s (%s)\n", 
-//                    units[i].id, units[i].unit_id, units[i].unit_name);
-//         }
-//         free(units);
-//     }
-
-//     if (db_select_reports(&reports, &report_count) == 0) {
-//         printf("Remaining reports: %d\n", report_count);
-//         for (int i = 0; i < report_count; i++) {
-//             printf("  Report ID %d: Unit %d - %s\n", 
-//                    reports[i].id, reports[i].unit_id, reports[i].status);
-//         }
-//         free(reports);
-//     }
-
-//     db_close();
-//     return 0;
-// }

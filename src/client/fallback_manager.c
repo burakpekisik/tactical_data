@@ -1,3 +1,15 @@
+/**
+ * @file fallback_manager.c
+ * @brief Bağlantı yedekleme ve fallback mekanizması implementasyonu
+ * @details Bu dosya, ağ bağlantılarında sorun yaşandığında alternatif protokollere
+ *          otomatik geçiş yapan fallback sisteminin implementasyonunu içerir.
+ *          TCP/UDP/P2P protokolleri arasında dinamik geçiş ve ECDH yeniden kurulumu sağlar.
+ * @author Tactical Data Transfer System
+ * @date 2025
+ * @version 1.0
+ * @ingroup fallback
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +25,14 @@
 #include "fallback_manager.h"
 #include "protocol_manager.h"
 
-// Bağlantı türü adını al
+/**
+ * @brief Bağlantı türünün string karşılığını döner
+ * @details Connection type enum'ından insan okunabilir string formatına dönüştürür.
+ *          Debug ve log mesajlarında kullanılır.
+ * @param type Dönüştürülecek bağlantı türü
+ * @return const char* Bağlantı türünün metinsel karşılığı
+ * @note Bu fonksiyon sadece okunabilir string döner, bellek tahsisi yapmaz
+ */
 const char* get_connection_type_name(connection_type_t type) {
     switch (type) {
         case CONN_TCP: return "TCP";
@@ -23,7 +42,16 @@ const char* get_connection_type_name(connection_type_t type) {
     }
 }
 
-// Mevcut bağlantı türüyle mesaj göndermeyi dene
+/**
+ * @brief Mevcut bağlantı türüyle mesaj göndermeyi dener
+ * @details Verilen bağlantının türüne göre uygun protokol-spesifik gönderim
+ *          fonksiyonunu çağırır. Bu, fallback mekanizmasının ilk adımıdır.
+ * @param conn Aktif client bağlantısı (tür bilgisi içerir)
+ * @param message Gönderilecek protokol mesajı
+ * @return int Gönderim sonucu (>= 0: başarılı, < 0: hata)
+ * @note Bu fonksiyon protocol_manager.h'daki send_*_message fonksiyonlarını kullanır
+ * @see send_tcp_message(), send_udp_message(), send_p2p_message()
+ */
 int try_send_message_current_connection(client_connection_t* conn, const char* message) {
     int result = -1;
     
@@ -40,7 +68,31 @@ int try_send_message_current_connection(client_connection_t* conn, const char* m
     return result;
 }
 
-// Fallback ile mesaj göndermeyi dene
+/**
+ * @brief Fallback mekanizması ile mesaj göndermeyi dener
+ * @details Ana bağlantı başarısız olduğunda alternatif protokolleri sırasıyla dener.
+ *          Her fallback için yeni bağlantı kurar, ECDH yeniden yapar ve mesajı uyarlar.
+ *          Başarılı fallback sonrası ana bağlantı yapısını günceller.
+ * 
+ * Fallback Sırası:
+ * - Mevcut protokol dışındaki diğer protokoller
+ * - Her protokol için tam bağlantı kurulumu
+ * - Şifreli mesajlar için yeni anahtar ile yeniden şifreleme
+ * 
+ * @param conn Ana bağlantı yapısı (başarılı fallback sonrası güncellenir)
+ * @param protocol_message Orijinal protokol mesajı
+ * @param filename Dosya adı (yeniden şifreleme için)
+ * @param content Ham dosya içeriği (yeniden şifreleme için)
+ * @param encrypt Şifreleme durumu (1: şifreli, 0: normal)
+ * @return int İşlem sonucu (>= 0: başarılı, < 0: tüm fallback başarısız)
+ * 
+ * @note Başarılı fallback sonrası:
+ *       - Ana bağlantının socket'i, türü ve portu güncellenir
+ *       - ECDH context yeni bağlantıdan kopyalanır
+ *       - Eski socket kapatılır
+ * 
+ * @warning Şifreli mesajlar her fallback için yeni ECDH anahtarı ile yeniden şifrelenir
+ */
 int try_send_message_with_fallback(client_connection_t* conn, const char* protocol_message, 
                                    const char* filename, const char* content, int encrypt) {
     // Fallback sırası: mevcut tip haricinde diğerlerini dene
@@ -146,7 +198,29 @@ int try_send_message_with_fallback(client_connection_t* conn, const char* protoc
     return -1; // Tüm fallback'ler başarısız
 }
 
-// Fallback bağlantısı oluştur
+/**
+ * @brief Belirli protokol türü için yeni fallback bağlantısı oluşturur
+ * @details Orijinal bağlantının IP adresini kullanarak hedef protokol türünde
+ *          yeni bir bağlantı kurar. Her protokol için uygun port ve socket türü seçer.
+ *          Bağlantı kurulduktan sonra ECDH anahtar değişimi yapar.
+ * 
+ * Protokol-Port Eşleştirmesi:
+ * - TCP: CONFIG_PORT (8080) - SOCK_STREAM
+ * - UDP: CONFIG_UDP_PORT (8081) - SOCK_DGRAM  
+ * - P2P: CONFIG_P2P_PORT (8082) - SOCK_STREAM
+ * 
+ * @param original_conn Orijinal bağlantı (IP adresi alınır)
+ * @param target_type Hedef protokol türü
+ * @return client_connection_t* Yeni fallback bağlantısı (NULL: başarısız)
+ * 
+ * @note Bağlantı Kurulum Süreci:
+ *       1. Bellek tahsisi ve struct başlatma
+ *       2. Socket oluşturma (protokole uygun tür)
+ *       3. Bağlantı kurma (TCP/P2P) veya test ping (UDP)
+ *       4. ECDH anahtar değişimi
+ * 
+ * @warning Dönen bağlantı close_connection() ile kapatılmalıdır
+ */
 client_connection_t* create_fallback_connection(client_connection_t* original_conn, connection_type_t target_type) {
     client_connection_t* fallback_conn = malloc(sizeof(client_connection_t));
     if (fallback_conn == NULL) {
@@ -254,7 +328,27 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
     return fallback_conn;
 }
 
-// TCP/P2P için ECDH kurulumu
+/**
+ * @brief TCP/P2P bağlantıları için ECDH anahtar değişimi kurulumu
+ * @details Stream tabanlı protokoller (TCP/P2P) için standart ECDH prosedürü.
+ *          Binary formatta anahtar değişimi yapar ve AES256 oturum anahtarı üretir.
+ * 
+ * ECDH Kurulum Süreci:
+ * 1. ECDH context başlatma
+ * 2. Anahtar çifti üretme
+ * 3. Server'ın public key'ini alma (binary)
+ * 4. Kendi public key'ini gönderme (binary)
+ * 5. Shared secret hesaplama
+ * 6. AES256 anahtarı türetme
+ * 
+ * @param conn Kurulacak fallback bağlantısı
+ * @return bool İşlem sonucu
+ * @retval true ECDH başarıyla kuruldu, conn->ecdh_initialized = true
+ * @retval false ECDH kurulumu başarısız, context temizlendi
+ * 
+ * @note Bu fonksiyon sadece TCP ve P2P bağlantıları için kullanılır
+ * @see setup_udp_ecdh_for_fallback() UDP için özel implementasyon
+ */
 bool setup_ecdh_for_fallback(client_connection_t* conn) {
     if (!ecdh_init_context(&conn->ecdh_ctx)) {
         printf("Fallback ECDH context başlatılamadı\n");
@@ -303,7 +397,32 @@ bool setup_ecdh_for_fallback(client_connection_t* conn) {
     return true;
 }
 
-// UDP için ECDH kurulumu
+/**
+ * @brief UDP bağlantısı için ECDH anahtar değişimi kurulumu
+ * @details Datagram tabanlı protokol (UDP) için özel ECDH prosedürü.
+ *          Hex-encoded string formatında anahtar değişimi yapar.
+ * 
+ * UDP ECDH Kurulum Süreci:
+ * 1. ECDH context başlatma ve anahtar çifti üretme
+ * 2. "ECDH_INIT" mesajı gönderme
+ * 3. Server'dan "ECDH_PUB:xxxx" mesajı alma
+ * 4. Hex string'i binary'ye çevirme
+ * 5. "ECDH_PUB:xxxx" ile kendi key'ini gönderme
+ * 6. Shared secret hesaplama ve AES anahtarı türetme
+ * 7. "ECDH_OK" onay mesajını bekleme
+ * 
+ * @param conn Kurulacak UDP fallback bağlantısı
+ * @return bool İşlem sonucu
+ * @retval true UDP ECDH başarıyla kuruldu
+ * @retval false UDP ECDH kurulumu başarısız
+ * 
+ * @note UDP için özel mesaj formatları kullanılır:
+ *       - ECDH_INIT: Anahtar değişimi başlatma
+ *       - ECDH_PUB:hex_data: Public key gönderimi
+ *       - ECDH_OK: Başarılı tamamlanma onayı
+ * 
+ * @warning UDP'de packet loss olabileceği için timeout mekanizması var
+ */
 bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
     if (!ecdh_init_context(&conn->ecdh_ctx)) {
         printf("Fallback UDP ECDH context başlatılamadı\n");
@@ -405,7 +524,33 @@ bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
     return false;
 }
 
-// Mesajı protokol tipine göre uyarla
+/**
+ * @brief Mesajı hedef protokol türüne göre uyarlar
+ * @details Farklı protokoller için mesaj formatını optimize eder ve
+ *          protokol-spesifik prefix'ler ekler. Özellikle P2P protokolü
+ *          için özel format gereklidir.
+ * 
+ * Protokol Adaptasyonları:
+ * - TCP: Orijinal mesaj (adaptasyon gerekmez)
+ * - UDP: Orijinal mesaj (adaptasyon gerekmez)  
+ * - P2P: Özel prefix eklenir
+ *   - Şifreli veri: "P2P_ENCRYPTED:original_message"
+ *   - Normal veri: "P2P_DATA:CLIENT_pid:original_message"
+ * 
+ * @param original_message Orijinal protokol mesajı
+ * @param target_type Hedef protokol türü
+ * @return char* Uyarlanmış mesaj (NULL: adaptasyon gerekmez)
+ * 
+ * @note NULL dönerse orijinal mesaj kullanılır
+ * @warning Dönen pointer (NULL değilse) free() ile serbest bırakılmalıdır
+ * 
+ * @example
+ * @code
+ * // P2P için mesaj adaptasyonu
+ * char* adapted = adapt_message_for_protocol("ENCRYPTED:data", CONN_P2P);
+ * // Sonuç: "P2P_ENCRYPTED:ENCRYPTED:data"
+ * @endcode
+ */
 char* adapt_message_for_protocol(const char* original_message, connection_type_t target_type) {
     // P2P için özel format gerekiyor
     if (target_type == CONN_P2P) {

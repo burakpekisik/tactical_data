@@ -1,3 +1,35 @@
+/**
+ * @file encrypted_server.c
+ * @brief Şifreli taktik veri transfer sunucusu - çok threaded JSON işleme servisi
+ * @ingroup server
+ * @author Taktik Veri Sistemi
+ * @date 2025
+ * 
+ * Bu dosya şifreli taktik veri transferi için ana sunucu uygulamasını içerir.
+ * Çok threaded TCP sunucu mimarisi ile ECDH anahtar değişimi ve AES256 
+ * şifreleme destekli güvenli veri işleme sağlar.
+ * 
+ * Ana özellikler:
+ * - TCP/UDP çok threaded sunucu desteği
+ * - ECDH anahtar değişimi ile güvenli oturum kurulumu
+ * - AES256 ile şifreli JSON veri işleme
+ * - SQLite veritabanına taktik veri kaydetme
+ * - Thread monitoring ve bağlantı yönetimi
+ * - Docker desteği (interactive/non-interactive modlar)
+ * - Graceful shutdown ve signal handling
+ * 
+ * Desteklenen protokol komutları:
+ * - PARSE:filename:json_data      - Normal JSON parse ve kayıt
+ * - ENCRYPTED:filename:hex_data   - Şifreli JSON parse ve kayıt
+ * - CONTROL:command               - Sunucu kontrol komutları
+ * 
+ * @note Bu sunucu production ortamında çalışacak şekilde tasarlanmıştır.
+ *       Thread pool, connection queue ve memory management içerir.
+ * 
+ * @warning Sunucu başlatılmadan önce veritabanı dosyasının erişilebilir
+ *          olduğundan emin olun. Test verileri otomatik yüklenir.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,9 +51,30 @@
 #include "control_interface.h"
 #include "encrypted_server.h"
 
-// Global variables for signal handling
+/// @brief Sunucu çalışma durumu için global flag - signal handling için
 static volatile sig_atomic_t server_running = 1;
 
+/**
+ * @brief Graceful shutdown için signal handler
+ * @ingroup server
+ * 
+ * SIGTERM ve SIGINT sinyallerini yakalayarak sunucunun temiz bir şekilde
+ * kapatılmasını sağlar. Tüm bağlantıları kapatır ve kaynakları temizler.
+ * 
+ * Temizlik sırası:
+ * 1. TCP sunucusunu durdurur
+ * 2. Veritabanı bağlantısını kapatır
+ * 3. Konsol mesajı yazdırır
+ * 4. Program çıkışı yapar
+ * 
+ * @param sig Yakalanan sinyal numarası (SIGTERM=15, SIGINT=2)
+ * 
+ * @note Bu fonksiyon async-signal-safe'dir ve signal context'inde güvenli çalışır
+ * @warning exit() çağrısı yapar, program anında sonlanır
+ * 
+ * @see stop_tcp_server()
+ * @see db_close()
+ */
 // Signal handler for graceful shutdown
 void handle_signal(int sig) {
     printf("\n🛑 Signal %d alındı, server kapatılıyor...\n", sig);
@@ -36,6 +89,50 @@ void handle_signal(int sig) {
     printf("✓ Server temiz bir şekilde kapatıldı\n");
     exit(0);
 }
+
+/**
+ * @brief Şifreli taktik veri sunucusunun ana fonksiyonu
+ * @ingroup server
+ * 
+ * Bu fonksiyon tüm sunucu altyapısını başlatır ve yönetir. Production
+ * ortamında interactive ve Docker modlarında çalışabilir.
+ * 
+ * Başlatma sırası:
+ * 1. Connection Manager'ı başlatır
+ * 2. Control interface'i başlatır
+ * 3. Thread monitoring sistemini başlatır
+ * 4. Queue processor thread'ini başlatır
+ * 5. Veritabanını başlatır ve tabloları oluşturur
+ * 6. Test verilerini kontrol eder ve yükler
+ * 7. TCP sunucusunu başlatır
+ * 8. Interactive/Docker moduna göre çalışır
+ * 
+ * İki çalışma modu:
+ * - **Interactive Mode**: Local çalıştırma, konsol komutları kabul eder
+ * - **Docker Mode**: Background çalışma, signal ile sonlanır
+ * 
+ * Desteklenen konsol komutları:
+ * - quit/exit: Sunucuyu kapat
+ * - help: Yardım menüsünü göster
+ * - stats: Bağlantı ve thread istatistikleri
+ * - start_tcp, stop_tcp: TCP sunucu kontrol
+ * 
+ * @return 0 başarılı çıkış
+ * @return EXIT_FAILURE başlatma hatası durumunda
+ * 
+ * @note Fonksiyon stdin kontrolü ile Docker/interactive modları ayırt eder.
+ *       Docker modunda her 10 saniyede status raporu yazdırır.
+ * 
+ * @warning Başlatma hatalarında tüm kaynakları temizler ve çıkış yapar.
+ *          Signal handler kurulumu Docker modunda aktif edilir.
+ * 
+ * @see init_connection_manager()
+ * @see start_control_interface()
+ * @see init_thread_monitoring()
+ * @see db_init()
+ * @see start_tcp_server()
+ * @see handle_signal()
+ */
 
 int main() {
     printf("Encrypted JSON Server - Sifreli dosya parse sunucusu\n");
@@ -195,6 +292,48 @@ int main() {
     return 0;
 }
 
+/**
+ * @brief Client bağlantısını yöneten thread fonksiyonu
+ * @ingroup server
+ * 
+ * Her client bağlantısı için ayrı bir thread'de çalışan ana işleyici fonksiyon.
+ * ECDH anahtar değişimi, AES şifreleme ve JSON veri işleme süreçlerini yönetir.
+ * 
+ * İşlem adımları:
+ * 1. ECDH connection manager'ı başlatır
+ * 2. Client ile anahtar değişimi yapar
+ * 3. AES256 session key'i oluşturur
+ * 4. Client mesajlarını dinler ve işler
+ * 5. Protokol mesajlarını parse eder
+ * 6. PARSE/ENCRYPTED komutlarını yürütür
+ * 7. Sonuçları client'a gönderir
+ * 8. Bağlantı sonunda temizlik yapar
+ * 
+ * Desteklenen komutlar:
+ * - PARSE:filename:json_data - Normal JSON parse
+ * - ENCRYPTED:filename:hex_data - Şifreli JSON parse
+ * 
+ * Özel durumlar:
+ * - Docker health check tespiti (kısa mesajlar)
+ * - Boş bağlantılar (0 byte)
+ * - Protocol format hataları
+ * 
+ * @param arg Client socket file descriptor (int* olarak cast edilmiş)
+ * 
+ * @return NULL (pthread için void* dönüş)
+ * 
+ * @note Fonksiyon thread-safe'dir ve her client için ayrı çalışır.
+ *       Bellek yönetimi tam otomatik, ECDH cleanup dahil.
+ * 
+ * @warning arg parametresi malloc'lu memory, fonksiyon içinde free edilir.
+ *          Thread sonunda slot'u serbest bırakır.
+ * 
+ * @see init_ecdh_for_connection()
+ * @see exchange_keys_with_peer()
+ * @see parse_protocol_message()
+ * @see handle_encrypted_request()
+ * @see remove_thread_info()
+ */
 // Client ile iletisimi yonet
 void* handle_client(void* arg) {
     int client_socket = *(int*)arg;
@@ -358,6 +497,47 @@ void* handle_client(void* arg) {
     return NULL; // void* döndürmek için
 }
 
+/**
+ * @brief Şifreli JSON isteklerini işler ve veritabanına kaydeder
+ * @ingroup server
+ * 
+ * Bu fonksiyon ENCRYPTED protokol komutunu işler. Hex formatındaki
+ * şifreli veriyi çözer, JSON'a dönüştürür ve veritabanına kaydeder.
+ * 
+ * İşlem adımları:
+ * 1. Session key geçerliliğini kontrol eder
+ * 2. Hex string'i byte array'e çevirir
+ * 3. İlk 16 byte'ı IV olarak ayırır
+ * 4. AES256 ile veriyi decrypt eder
+ * 5. Decrypted JSON'u tactical data'ya parse eder
+ * 6. Veritabanına kaydeder ve response üretir
+ * 7. Tüm belleği temizler
+ * 
+ * @param filename İşlem yapılacak dosya adı (log için)
+ * @param encrypted_content Hex formatında şifreli veri
+ * @param session_key ECDH ile üretilen AES256 session key
+ * 
+ * @return Başarıda parse sonucu string'i (malloc'lu)
+ * @return Hata durumunda hata mesajı (malloc'lu)
+ * 
+ * @note Döndürülen string caller tarafından free edilmelidir.
+ *       Fonksiyon tüm geçici belleği otomatik temizler.
+ * 
+ * @warning Session key NULL olmamalı, aksi halde hata döner.
+ *          Encrypted data en az IV boyutu (16 byte) içermelidir.
+ * 
+ * Hata durumları:
+ * - NULL session key
+ * - Geçersiz hex format
+ * - Yetersiz veri boyutu (IV eksik)
+ * - Decryption başarısızlığı
+ * - JSON parse hatası
+ * 
+ * @see hex_to_bytes()
+ * @see decrypt_data()
+ * @see parse_json_to_tactical_data()
+ * @see db_save_tactical_data_and_get_response()
+ */
 // Sifreli istek ile bas et
 char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key) {
     if (session_key == NULL) {
@@ -423,6 +603,48 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
     return result;
 }
 
+/**
+ * @brief Protokol mesajını parse eder - "COMMAND:FILENAME:CONTENT" formatı
+ * @ingroup server
+ * 
+ * Client'tan gelen protokol mesajını üç parçaya ayırır: komut, dosya adı ve içerik.
+ * Sunucu protokolü gereği mesajlar ":" karakteri ile ayrılmış olmalıdır.
+ * 
+ * Protokol formatı:
+ * - PARSE:filename.json:{"unit":"data"}
+ * - ENCRYPTED:filename.json:48656c6c6f576f726c64
+ * - CONTROL:command_name:parameters
+ * 
+ * @param message Parse edilecek protokol mesajı
+ * @param command Output: Komut string'i (malloc'lu)
+ * @param filename Output: Dosya adı string'i (malloc'lu)
+ * @param content Output: İçerik string'i (malloc'lu)
+ * 
+ * @return 0 başarılı parse işlemi
+ * @return -1 format hatası veya bellek ayırma hatası
+ * 
+ * @note Başarılı parse'da tüm output parametreleri malloc'lu string'ler olur.
+ *       Caller bu string'leri free etmekle yükümlüdür.
+ * 
+ * @warning Hata durumunda kısmen ayrılan bellek otomatik temizlenir.
+ *          Output parametreleri başarısızlıkta güvenilir değildir.
+ * 
+ * Örnekler:
+ * @code
+ * char *cmd, *file, *content;
+ * 
+ * // Başarılı parse
+ * int result = parse_protocol_message("PARSE:data.json:{}", &cmd, &file, &content);
+ * if (result == 0) {
+ *     // cmd = "PARSE", file = "data.json", content = "{}"
+ *     free(cmd); free(file); free(content);
+ * }
+ * 
+ * // Geçersiz format
+ * int result = parse_protocol_message("invalid_format", &cmd, &file, &content);
+ * // result = -1, output parametreleri güvenilir değil
+ * @endcode
+ */
 // Protokol mesajini parse et: "COMMAND:FILENAME:CONTENT"
 int parse_protocol_message(const char* message, char** command, char** filename, char** content) {
     char* first_colon = strchr(message, ':');
@@ -461,6 +683,45 @@ int parse_protocol_message(const char* message, char** command, char** filename,
     return 0;
 }
 
+/**
+ * @brief Connection queue'yu işleyen background thread fonksiyonu
+ * @ingroup server
+ * 
+ * Bu thread sürekli çalışarak bekleyen client bağlantılarını kontrol eder.
+ * Thread pool dolduğunda queue'da bekleyen client'ları işleme alır.
+ * 
+ * İşlem döngüsü:
+ * 1. Queue'da bekleyen client olup olmadığını kontrol eder
+ * 2. Aktif thread sayısının limiti aşıp aşmadığını kontrol eder
+ * 3. Her iki koşul sağlanırsa queue'dan client alır
+ * 4. Yeni thread oluşturur ve client'ı işleme başlatır
+ * 5. Konfigüre edilmiş aralıklarla döngüyü tekrarlar
+ * 
+ * Kontrol parametreleri:
+ * - Queue boyutu: get_queue_size()
+ * - Aktif thread sayısı: get_active_thread_count()
+ * - Maksimum thread limiti: CONFIG_MAX_CLIENTS
+ * - Kontrol aralığı: CONFIG_QUEUE_CHECK_INTERVAL
+ * 
+ * @param arg Kullanılmayan thread parametresi (NULL)
+ * 
+ * @return NULL (pthread için void* dönüş)
+ * 
+ * @note Bu thread sunucu yaşam döngüsü boyunca sürekli çalışır.
+ *       Thread oluşturma sonrası kısa bekleme yaparak performansı optimize eder.
+ * 
+ * @warning Thread infinite loop içinde çalışır, normal şartlarda sonlanmaz.
+ *          Sunucu kapatılana kadar aktif kalır.
+ * 
+ * İstatistik çıktısı:
+ * @code
+ * 🔄 Queue işleniyor... (Queue: 3, Aktif: 8/10)
+ * @endcode
+ * 
+ * @see get_queue_size()
+ * @see get_active_thread_count()
+ * @see process_queue()
+ */
 // Queue processor thread - boş slot olduğunda queue'yu işler
 void* queue_processor(void* arg) {
     (void)arg; // unused parameter warning'ini bastır

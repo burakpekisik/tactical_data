@@ -1,8 +1,25 @@
+/**
+ * @file mainwindow.cpp
+ * @brief Qt tabanlı taktik veri gönderim istemcisi ana pencere implementasyonu
+ * @details Bu dosya, harita tabanlı taktik veri gönderim uygulamasının ana pencere
+ *          sınıfının implementasyonunu içerir. Qt framework kullanarak GUI bileşenlerini
+ *          yönetir ve kullanıcı etkileşimlerini işler.
+ * @author Tactical Data Transfer System
+ * @date 2025
+ * @version 1.0
+ */
+
 #include "mainwindow.h"
 #include <QApplication>
 #include <QMessageBox>
 #include <QDateTime>
 
+/**
+ * @brief MainWindow sınıfının constructor'ı
+ * @details Ana pencereyi başlatır, UI bileşenlerini kurar ve başlangıç değerlerini atar.
+ *          Pencere boyutunu, başlığını ve minimum boyutlarını ayarlar.
+ * @param parent Üst widget (genellikle nullptr)
+ */
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , centralWidget(nullptr)
@@ -21,10 +38,21 @@ MainWindow::MainWindow(QWidget *parent)
     resize(1400, 900);
 }
 
+/**
+ * @brief MainWindow sınıfının destructor'ı
+ * @details Pencere kapanırken gerekli temizlik işlemlerini yapar.
+ *          Qt'nin parent-child sistemi sayesinde otomatik bellek yönetimi sağlanır.
+ */
 MainWindow::~MainWindow()
 {
 }
 
+/**
+ * @brief Ana kullanıcı arayüzünü kurar
+ * @details Tüm UI bileşenlerini oluşturur ve düzenler. Ana splitter ile
+ *          harita paneli ve kontrol panelini yan yana yerleştirir.
+ * @note Bu fonksiyon constructor'da çağrılır
+ */
 void MainWindow::setupUI()
 {
     centralWidget = new QWidget(this);
@@ -49,6 +77,12 @@ void MainWindow::setupUI()
     updateConnectionStatus();
 }
 
+/**
+ * @brief Harita panelini kurar
+ * @details Sol tarafta yer alan harita bölümünü oluşturur. MapWidget'ı ekler
+ *          ve koordinat bilgisi için label ekler. Harita tıklama olaylarını dinler.
+ * @note Harita widget'ından gelen pointClicked sinyali onMapClicked slot'una bağlanır
+ */
 void MainWindow::setupMapPanel()
 {
     mapPanel = new QWidget();
@@ -69,6 +103,12 @@ void MainWindow::setupMapPanel()
     mapLayout->setContentsMargins(5, 5, 5, 5);
 }
 
+/**
+ * @brief Ana kontrol panelini kurar
+ * @details Sağ tarafta yer alan kontrol alanını oluşturur. Bağlantı, veri gönderimi
+ *          ve log panellerini içerir. Panel genişliğini sınırlar.
+ * @note Bu panel sabit genişlikte tutularak haritanın daha geniş görünmesi sağlanır
+ */
 void MainWindow::setupControlPanel()
 {
     controlPanel = new QWidget();
@@ -87,6 +127,12 @@ void MainWindow::setupControlPanel()
     controlLayout->setContentsMargins(5, 5, 5, 5);
 }
 
+/**
+ * @brief Veri gönderim panelini kurar
+ * @details Seçili nokta bilgisi, veri tipi seçimi, mesaj girişi ve gönder butonu
+ *          içeren paneli oluşturur. Taktik veri tiplerini combo box'a ekler.
+ * @note Gönder butonu sadece hem bağlantı kurulduğunda hem de nokta seçildiğinde aktif olur
+ */
 void MainWindow::setupDataPanel()
 {
     dataGroup = new QGroupBox("Veri Gönderimi");
@@ -122,6 +168,12 @@ void MainWindow::setupDataPanel()
     dataLayout->addWidget(sendButton);
 }
 
+/**
+ * @brief İşlem geçmişi panelini kurar
+ * @details Kullanıcı işlemlerini ve sistem olaylarını kaydeden log alanını oluşturur.
+ *          Salt okunur metin editörü kullanır ve başlangıç mesajını ekler.
+ * @note Log mesajları zaman damgası ile birlikte kaydedilir
+ */
 void MainWindow::setupLogPanel()
 {
     logGroup = new QGroupBox("İşlem Geçmişi");
@@ -135,6 +187,12 @@ void MainWindow::setupLogPanel()
     logLayout->addWidget(logTextEdit);
 }
 
+/**
+ * @brief Sunucu bağlantı panelini kurar
+ * @details Sunucu adresi, port girişi, bağlantı butonları ve durum göstergesini
+ *          içeren paneli oluşturur. Bağlantı durumuna göre bileşenleri etkinleştirir/devre dışı bırakır.
+ * @note Bağlantı kurulduğunda adres ve port alanları düzenlenemez hale gelir
+ */
 void MainWindow::setupConnectionPanel()
 {
     connectionGroup = new QGroupBox("Sunucu Bağlantısı");
@@ -174,6 +232,14 @@ void MainWindow::setupConnectionPanel()
     connLayout->addWidget(connectionStatusLabel);
 }
 
+/**
+ * @brief Harita tıklama olayını işler
+ * @details Kullanıcı haritada bir noktaya tıkladığında çağrılır. Seçili koordinatları
+ *          günceller, UI'daki bilgileri yeniler ve gönder butonunun durumunu kontrol eder.
+ * @param latitude Seçilen noktanın enlem koordinatı
+ * @param longitude Seçilen noktanın boylam koordinatı
+ * @note Bu slot MapWidget'ın pointClicked sinyali ile bağlıdır
+ */
 void MainWindow::onMapClicked(double latitude, double longitude)
 {
     selectedLatitude = latitude;
@@ -196,6 +262,13 @@ void MainWindow::onMapClicked(double latitude, double longitude)
                        .arg(QDateTime::currentDateTime().toString()));
 }
 
+/**
+ * @brief Veri gönderim işlemini gerçekleştirir
+ * @details Seçili koordinat, veri tipi ve mesaj bilgilerini alarak sunucuya gönderir.
+ *          Bağlantı durumu ve nokta seçimi kontrolü yapar. Başarılı/başarısız durumu bildirir.
+ * @note Şu anda sadece simülasyon yapılmaktadır, gerçek sunucu bağlantısı eklenmeli
+ * @warning Bağlantı kurulmamışsa veya nokta seçilmemişse uyarı mesajı gösterir
+ */
 void MainWindow::onSendData()
 {
     if (!connected) {
@@ -225,6 +298,13 @@ void MainWindow::onSendData()
     QMessageBox::information(this, "Başarılı", "Veri başarıyla gönderildi!");
 }
 
+/**
+ * @brief Sunucuya bağlantı kurar
+ * @details Kullanıcının girdiği adres ve port bilgilerini alarak sunucuya bağlanmaya çalışır.
+ *          Bağlantı durumunu günceller ve log'a kaydeder.
+ * @note Şu anda sadece simülasyon yapılmaktadır, gerçek bağlantı implementasyonu eklenmeli
+ * @todo Gerçek TCP/UDP bağlantı kodu eklenmeli, encrypted_client.c kodu entegre edilmeli
+ */
 void MainWindow::onConnectToServer()
 {
     QString address = serverAddressEdit->text();
@@ -243,6 +323,12 @@ void MainWindow::onConnectToServer()
     sendButton->setEnabled(connected && pointSelected);
 }
 
+/**
+ * @brief Sunucu bağlantısını keser
+ * @details Mevcut sunucu bağlantısını sonlandırır, bağlantı durumunu günceller
+ *          ve log'a kaydeder. UI bileşenlerinin durumlarını resetler.
+ * @note Bağlantı kesildikten sonra veri gönderimi devre dışı kalır
+ */
 void MainWindow::onDisconnectFromServer()
 {
     connected = false;
@@ -254,6 +340,13 @@ void MainWindow::onDisconnectFromServer()
     sendButton->setEnabled(false);
 }
 
+/**
+ * @brief Bağlantı durumuna göre UI bileşenlerini günceller
+ * @details Bağlantı durumuna göre butonların etkin/devre dışı durumlarını,
+ *          durum etiketinin rengini ve girdi alanlarının düzenlenebilirliğini ayarlar.
+ * @note Bu fonksiyon bağlantı kurulduğunda ve kesildiğinde çağrılır
+ * @see onConnectToServer(), onDisconnectFromServer()
+ */
 void MainWindow::updateConnectionStatus()
 {
     if (connected) {
