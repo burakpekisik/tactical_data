@@ -17,6 +17,7 @@
 #include <string.h>
 #include "../../include/database.h"
 #include "../../include/json_utils.h"
+#include "logger.h"
 
 /**
  * @brief External global veritabanı bağlantısı
@@ -65,7 +66,7 @@ int db_insert_unit(const unit_t *unit) {
         sqlite3_free(zErrMsg);
         return -1;
     } else {
-        printf("Unit '%s' inserted successfully\n", unit->unit_id);
+        PRINTF_LOG("Unit '%s' inserted successfully\n", unit->unit_id);
         return sqlite3_last_insert_rowid(g_db);
     }
 }
@@ -110,7 +111,7 @@ int db_insert_report(const report_t *report) {
         sqlite3_free(zErrMsg);
         return -1;
     } else {
-        printf("Report for unit ID %d inserted successfully\n", report->unit_id);
+        PRINTF_LOG("Report for unit ID %d inserted successfully\n", report->unit_id);
         return sqlite3_last_insert_rowid(g_db);
     }
 }
@@ -168,7 +169,7 @@ int db_insert_tactical_data_from_json(const tactical_data_t *tactical_data) {
         return -1;
     }
 
-    printf("Tactical data saved: Unit=%s, Status=%s, Location=(%.6f,%.6f)\n",
+    PRINTF_LOG("Tactical data saved: Unit=%s, Status=%s, Location=(%.6f,%.6f)\n",
            tactical_data->unit_id, tactical_data->status, 
            tactical_data->latitude, tactical_data->longitude);
 
@@ -224,7 +225,7 @@ int db_find_or_create_unit_by_id(const char* unit_id) {
         // Unit bulundu
         int id = sqlite3_column_int(stmt, 0);
         sqlite3_finalize(stmt);
-        printf("Existing unit found: %s (ID: %d)\n", unit_id, id);
+        PRINTF_LOG("Existing unit found: %s (ID: %d)\n", unit_id, id);
         return id;
     }
     
@@ -242,7 +243,7 @@ int db_find_or_create_unit_by_id(const char* unit_id) {
 
     int new_id = db_insert_unit(&new_unit);
     if (new_id > 0) {
-        printf("New unit created: %s (ID: %d)\n", unit_id, new_id);
+        PRINTF_LOG("New unit created: %s (ID: %d)\n", unit_id, new_id);
     }
     
     return new_id;

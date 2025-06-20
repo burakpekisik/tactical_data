@@ -26,6 +26,7 @@
 #include "json_utils.h"
 #include "crypto_utils.h"
 #include "database.h"
+#include "logger.h"
 
 /// @brief Global UDP session listesi (linked list)
 static udp_session_t* session_list = NULL;
@@ -41,7 +42,7 @@ static pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
  * @return 0 başarı
  */
 int udp_server_init(connection_manager_t* manager) {
-    printf("UDP Server modülü başlatılıyor...\n");
+    PRINTF_LOG("UDP Server modülü başlatılıyor...\n");
     
     manager->type = CONN_TYPE_UDP;
     manager->status = CONN_STATUS_STOPPED;
@@ -53,7 +54,7 @@ int udp_server_init(connection_manager_t* manager) {
     
     strcpy(manager->name, "UDP Server");
     
-    printf("✓ UDP Server modülü hazır (Port: %d)\n", manager->port);
+    PRINTF_LOG("✓ UDP Server modülü hazır (Port: %d)\n", manager->port);
     return 0;
 }
 
@@ -67,7 +68,7 @@ int udp_server_start(connection_manager_t* manager) {
     struct sockaddr_in address;
     int opt = 1;
     
-    printf("UDP Server başlatılıyor (Port: %d)...\n", manager->port);
+    PRINTF_LOG("UDP Server başlatılıyor (Port: %d)...\n", manager->port);
     
     // Socket oluştur
     if ((server_fd = socket(AF_INET, SOCK_DGRAM, 0)) == 0) {
@@ -111,7 +112,7 @@ int udp_server_start(connection_manager_t* manager) {
     
     pthread_detach(manager->server_thread);
     
-    printf("✓ UDP Server başarıyla başlatıldı (Port: %d)\n", manager->port);
+    PRINTF_LOG("✓ UDP Server başarıyla başlatıldı (Port: %d)\n", manager->port);
     return 0;
 }
 
@@ -122,11 +123,11 @@ int udp_server_start(connection_manager_t* manager) {
  */
 int udp_server_stop(connection_manager_t* manager) {
     if (manager->status != CONN_STATUS_RUNNING) {
-        printf("UDP Server zaten durdurulmuş\n");
+        PRINTF_LOG("UDP Server zaten durdurulmuş\n");
         return 0;
     }
     
-    printf("UDP Server durduruluyor...\n");
+    PRINTF_LOG("UDP Server durduruluyor...\n");
     manager->status = CONN_STATUS_STOPPING;
     
     // Server socket'ını kapat
@@ -138,7 +139,7 @@ int udp_server_stop(connection_manager_t* manager) {
     manager->status = CONN_STATUS_STOPPED;
     manager->is_active = false;
     
-    printf("✓ UDP Server durduruldu (Port: %d)\n", manager->port);
+    PRINTF_LOG("✓ UDP Server durduruldu (Port: %d)\n", manager->port);
     return 0;
 }
 
@@ -153,7 +154,7 @@ void* udp_server_thread(void* arg) {
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
     
-    printf("UDP Server thread başlatıldı (Port: %d)\n", manager->port);
+    PRINTF_LOG("UDP Server thread başlatıldı (Port: %d)\n", manager->port);
     
     while (manager->is_active && manager->status == CONN_STATUS_RUNNING) {
         memset(buffer, 0, CONFIG_BUFFER_SIZE);
@@ -184,11 +185,11 @@ void* udp_server_thread(void* arg) {
         
         // ECDH anahtar değişimi mesajlarını kontrol et
         if (strncmp(buffer, "ECDH_", 5) == 0) {
-            printf("UDP: ECDH mesajı alındı: %s:%d\n", client_ip, client_port);
+            PRINTF_LOG("UDP: ECDH mesajı alındı: %s:%d\n", client_ip, client_port);
             if (udp_handle_key_exchange(manager->server_fd, &client_addr, buffer) == 0) {
-                printf("UDP: ECDH mesajı başarıyla işlendi\n");
+                PRINTF_LOG("UDP: ECDH mesajı başarıyla işlendi\n");
             } else {
-                printf("UDP: ECDH mesajı işlenemedi\n");
+                PRINTF_LOG("UDP: ECDH mesajı işlenemedi\n");
                 const char* error_response = "UDP_ERROR: ECDH failed";
                 sendto(manager->server_fd, error_response, strlen(error_response), 0,
                        (struct sockaddr*)&client_addr, client_len);
@@ -225,7 +226,7 @@ void* udp_server_thread(void* arg) {
         }
     }
     
-    printf("UDP Server thread sonlandırıldı\n");
+    PRINTF_LOG("UDP Server thread sonlandırıldı\n");
     return NULL;
 }
 
@@ -240,7 +241,7 @@ int udp_client_init(void) {
         return -1;
     }
     
-    printf("UDP Client socket oluşturuldu\n");
+    PRINTF_LOG("UDP Client socket oluşturuldu\n");
     return client_socket;
 }
 
@@ -274,7 +275,7 @@ int udp_client_send(int socket, const char* hostname, int port, const char* data
         return -1;
     }
     
-    printf("UDP Client veri gönderildi (%s:%d, %zd bytes)\n", hostname, port, bytes_sent);
+    PRINTF_LOG("UDP Client veri gönderildi (%s:%d, %zd bytes)\n", hostname, port, bytes_sent);
     return bytes_sent;
 }
 
@@ -309,7 +310,7 @@ int udp_client_receive(int socket, char* buffer, size_t buffer_size, char* sende
         *sender_port = ntohs(sender_addr.sin_port);
     }
     
-    printf("UDP Client veri alındı (%zd bytes)\n", bytes_received);
+    PRINTF_LOG("UDP Client veri alındı (%zd bytes)\n", bytes_received);
     return bytes_received;
 }
 
@@ -320,7 +321,7 @@ int udp_client_receive(int socket, char* buffer, size_t buffer_size, char* sende
 void udp_client_close(int socket) {
     if (socket >= 0) {
         close(socket);
-        printf("UDP Client socket kapatıldı\n");
+        PRINTF_LOG("UDP Client socket kapatıldı\n");
     }
 }
 
@@ -332,7 +333,7 @@ void udp_client_close(int socket) {
 void udp_update_stats(connection_manager_t* manager, bool packet_received) {
     if (packet_received) {
         manager->total_requests++;
-        printf("UDP Stats: Total packets=%d\n", manager->total_requests);
+        PRINTF_LOG("UDP Stats: Total packets=%d\n", manager->total_requests);
     }
 }
 
@@ -347,7 +348,7 @@ void udp_log_packet(const char* client_ip, int client_port, size_t packet_size) 
     char* time_str = ctime(&now);
     time_str[strlen(time_str) - 1] = '\0'; // newline'ı kaldır
     
-    printf("[%s] UDP PACKET: %s:%d (%zu bytes)\n", 
+    PRINTF_LOG("[%s] UDP PACKET: %s:%d (%zu bytes)\n", 
            time_str, client_ip, client_port, packet_size);
 }
 
@@ -360,18 +361,18 @@ void udp_log_packet(const char* client_ip, int client_port, size_t packet_size) 
  * @return 0 başarı, -1 hata
  */
 int udp_parse_message(const char* message, const char* client_ip, int client_port, connection_manager_t* manager) {
-    printf("UDP Mesaj parsing: %s (kaynak: %s:%d)\n", message, client_ip, client_port);
+    PRINTF_LOG("UDP Mesaj parsing: %s (kaynak: %s:%d)\n", message, client_ip, client_port);
     
     // PING mesajı - basit test mesajı
     if (strcmp(message, "PING") == 0) {
-        printf("UDP: PING mesajı alındı - test bağlantısı\n");
+        PRINTF_LOG("UDP: PING mesajı alındı - test bağlantısı\n");
         return 0; // Başarılı olarak dön
     }
     
     // Protokol mesajini parse et (PARSE:filename:content veya ENCRYPTED:filename:content)
     char *message_copy = strdup(message);
     if (!message_copy) {
-        printf("UDP Parse Error: Memory allocation failed\n");
+        PRINTF_LOG("UDP Parse Error: Memory allocation failed\n");
         return -1;
     }
     
@@ -380,31 +381,31 @@ int udp_parse_message(const char* message, const char* client_ip, int client_por
     char *content = strtok(NULL, "\0"); // Geri kalan kısmı al
     
     if (!command || !filename || !content) {
-        printf("UDP Parse Error: Invalid protocol format (Expected: COMMAND:filename:content)\n");
+        PRINTF_LOG("UDP Parse Error: Invalid protocol format (Expected: COMMAND:filename:content)\n");
         free(message_copy);
         return -1;
     }
     
-    printf("UDP Command: %s, File: %s\n", command, filename);
+    PRINTF_LOG("UDP Command: %s, File: %s\n", command, filename);
     
     int result = -1;
     
     if (strcmp(command, "PARSE") == 0) {
-        printf("UDP Normal JSON parse ediliyor...\n");
+        PRINTF_LOG("UDP Normal JSON parse ediliyor...\n");
         result = udp_process_json_data(content, filename, client_ip, client_port);
     } else if (strcmp(command, "ENCRYPTED") == 0) {
-        printf("UDP Encrypted JSON parse ediliyor...\n");
+        PRINTF_LOG("UDP Encrypted JSON parse ediliyor...\n");
         
         // Session bul
         udp_session_t* session = udp_find_session(client_ip, client_port);
         if (session == NULL || !session->ecdh_initialized) {
-            printf("UDP Encrypted Error: ECDH session bulunamadı. Önce anahtar değişimi yapın.\n");
+            PRINTF_LOG("UDP Encrypted Error: ECDH session bulunamadı. Önce anahtar değişimi yapın.\n");
             result = -1;
         } else {
             result = udp_process_encrypted_data(content, filename, client_ip, client_port, session->ecdh_ctx.aes_key);
         }
     } else {
-        printf("UDP Parse Error: Unknown command: %s\n", command);
+        PRINTF_LOG("UDP Parse Error: Unknown command: %s\n", command);
     }
     
     manager->total_requests++;
@@ -421,26 +422,26 @@ int udp_parse_message(const char* message, const char* client_ip, int client_por
  * @return 0 başarı, -1 hata
  */
 int udp_process_json_data(const char* json_data, const char* filename, const char* client_ip, int client_port) {
-    printf("UDP JSON Processing: %s from %s:%d\n", filename, client_ip, client_port);
+    PRINTF_LOG("UDP JSON Processing: %s from %s:%d\n", filename, client_ip, client_port);
     
     // JSON'u tactical data struct'ına parse et (TCP'deki gibi)
     tactical_data_t* tactical_data = parse_json_to_tactical_data(json_data, filename);
     if (tactical_data != NULL && tactical_data->is_valid) {
-        printf("UDP: Tactical data parsed successfully\n");
+        PRINTF_LOG("UDP: Tactical data parsed successfully\n");
         
         // Database'e kaydet
         char* response = db_save_tactical_data_and_get_response(tactical_data, filename);
         if (response) {
-            printf("UDP: Database save response: %s\n", response);
+            PRINTF_LOG("UDP: Database save response: %s\n", response);
             free(response);
         }
         
         free_tactical_data(tactical_data);
         
-        printf("UDP JSON Success: Data saved to database for %s\n", filename);
+        PRINTF_LOG("UDP JSON Success: Data saved to database for %s\n", filename);
         return 0;
     } else {
-        printf("UDP JSON Error: Invalid tactical data format\n");
+        PRINTF_LOG("UDP JSON Error: Invalid tactical data format\n");
         if (tactical_data) free_tactical_data(tactical_data);
         return -1;
     }
@@ -456,10 +457,10 @@ int udp_process_json_data(const char* json_data, const char* filename, const cha
  * @return 0 başarı, -1 hata
  */
 int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port, const uint8_t* session_key) {
-    printf("UDP Encrypted Processing: %s from %s:%d\n", filename, client_ip, client_port);
+    PRINTF_LOG("UDP Encrypted Processing: %s from %s:%d\n", filename, client_ip, client_port);
     
     if (session_key == NULL) {
-        printf("UDP Encrypted Error: Session key NULL - anahtar değişimi yapılmamış\n");
+        PRINTF_LOG("UDP Encrypted Error: Session key NULL - anahtar değişimi yapılmamış\n");
         return -1;
     }
     
@@ -467,13 +468,13 @@ int udp_process_encrypted_data(const char* encrypted_data, const char* filename,
     size_t binary_len;
     uint8_t* binary_data = hex_to_bytes(encrypted_data, &binary_len);
     if (!binary_data) {
-        printf("UDP Encrypted Error: Hex decode failed\n");
+        PRINTF_LOG("UDP Encrypted Error: Hex decode failed\n");
         return -1;
     }
     
     // Decrypt data - IV ilk 16 byte'ta
     if (binary_len < 16) {
-        printf("UDP Encrypted Error: Data too short for IV\n");
+        PRINTF_LOG("UDP Encrypted Error: Data too short for IV\n");
         free(binary_data);
         return -1;
     }
@@ -486,32 +487,32 @@ int udp_process_encrypted_data(const char* encrypted_data, const char* filename,
     free(binary_data);
     
     if (!decrypted_json) {
-        printf("UDP Encrypted Error: Decryption failed\n");
+        PRINTF_LOG("UDP Encrypted Error: Decryption failed\n");
         return -1;
     }
     
-    printf("UDP: Data decrypted successfully\n");
+    PRINTF_LOG("UDP: Data decrypted successfully\n");
     
     // Parse decrypted JSON
     tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename);
     free(decrypted_json);
     
     if (tactical_data != NULL && tactical_data->is_valid) {
-        printf("UDP: Encrypted tactical data parsed successfully\n");
+        PRINTF_LOG("UDP: Encrypted tactical data parsed successfully\n");
         
         // Database'e kaydet
         char* response = db_save_tactical_data_and_get_response(tactical_data, filename);
         if (response) {
-            printf("UDP: Database save response: %s\n", response);
+            PRINTF_LOG("UDP: Database save response: %s\n", response);
             free(response);
         }
         
         free_tactical_data(tactical_data);
         
-        printf("UDP Encrypted Success: Data saved to database for %s\n", filename);
+        PRINTF_LOG("UDP Encrypted Success: Data saved to database for %s\n", filename);
         return 0;
     } else {
-        printf("UDP Encrypted Error: Invalid decrypted tactical data format\n");
+        PRINTF_LOG("UDP Encrypted Error: Invalid decrypted tactical data format\n");
         if (tactical_data) free_tactical_data(tactical_data);
         return -1;
     }
@@ -580,7 +581,7 @@ udp_session_t* udp_create_session(const char* client_ip, int client_port) {
     session_list = session;
     pthread_mutex_unlock(&session_mutex);
     
-    printf("UDP: Yeni session oluşturuldu: %s:%d\n", client_ip, client_port);
+    PRINTF_LOG("UDP: Yeni session oluşturuldu: %s:%d\n", client_ip, client_port);
     return session;
 }
 
@@ -615,7 +616,7 @@ void udp_cleanup_session(udp_session_t* session) {
         ecdh_cleanup_context(&session->ecdh_ctx);
     }
     
-    printf("UDP: Session temizlendi: %s:%d\n", session->client_ip, session->client_port);
+    PRINTF_LOG("UDP: Session temizlendi: %s:%d\n", session->client_ip, session->client_port);
     free(session);
 }
 
@@ -667,14 +668,14 @@ int udp_handle_key_exchange(int socket, struct sockaddr_in* client_addr, const c
     int client_port = ntohs(client_addr->sin_port);
     
     if (strncmp(message, "ECDH_INIT", 9) == 0) {
-        printf("UDP: ECDH init isteği alındı: %s:%d\n", client_ip, client_port);
+        PRINTF_LOG("UDP: ECDH init isteği alındı: %s:%d\n", client_ip, client_port);
         
         // Mevcut session'ı bul veya yeni oluştur
         udp_session_t* session = udp_find_session(client_ip, client_port);
         if (session == NULL) {
             session = udp_create_session(client_ip, client_port);
             if (session == NULL) {
-                printf("UDP: Session oluşturulamadı\n");
+                PRINTF_LOG("UDP: Session oluşturulamadı\n");
                 return -1;
             }
         }
@@ -691,19 +692,19 @@ int udp_handle_key_exchange(int socket, struct sockaddr_in* client_addr, const c
         ssize_t sent = sendto(socket, response, strlen(response), 0,
                              (struct sockaddr*)client_addr, sizeof(*client_addr));
         if (sent < 0) {
-            printf("UDP: Public key gönderilemedi\n");
+            PRINTF_LOG("UDP: Public key gönderilemedi\n");
             return -1;
         }
         
-        printf("UDP: Public key gönderildi: %s:%d\n", client_ip, client_port);
+        PRINTF_LOG("UDP: Public key gönderildi: %s:%d\n", client_ip, client_port);
         return 0;
     }
     else if (strncmp(message, "ECDH_PUB:", 9) == 0) {
-        printf("UDP: Client public key alındı: %s:%d\n", client_ip, client_port);
+        PRINTF_LOG("UDP: Client public key alındı: %s:%d\n", client_ip, client_port);
         
         udp_session_t* session = udp_find_session(client_ip, client_port);
         if (session == NULL) {
-            printf("UDP: Session bulunamadı\n");
+            PRINTF_LOG("UDP: Session bulunamadı\n");
             return -1;
         }
         
@@ -711,21 +712,21 @@ int udp_handle_key_exchange(int socket, struct sockaddr_in* client_addr, const c
         size_t peer_key_len;
         uint8_t* peer_public_key = hex_to_bytes(message + 9, &peer_key_len);
         if (peer_public_key == NULL || peer_key_len != ECC_PUB_KEY_SIZE) {
-            printf("UDP: Geçersiz public key\n");
+            PRINTF_LOG("UDP: Geçersiz public key\n");
             if (peer_public_key) free(peer_public_key);
             return -1;
         }
         
         // Shared secret hesapla
         if (!ecdh_compute_shared_secret(&session->ecdh_ctx, peer_public_key)) {
-            printf("UDP: Shared secret hesaplanamadı\n");
+            PRINTF_LOG("UDP: Shared secret hesaplanamadı\n");
             free(peer_public_key);
             return -1;
         }
         
         // AES anahtarını türet
         if (!ecdh_derive_aes_key(&session->ecdh_ctx)) {
-            printf("UDP: AES anahtarı türetilemedi\n");
+            PRINTF_LOG("UDP: AES anahtarı türetilemedi\n");
             free(peer_public_key);
             return -1;
         }
@@ -737,7 +738,7 @@ int udp_handle_key_exchange(int socket, struct sockaddr_in* client_addr, const c
         sendto(socket, ack, strlen(ack), 0,
                (struct sockaddr*)client_addr, sizeof(*client_addr));
         
-        printf("UDP: ✓ ECDH anahtar değişimi tamamlandı: %s:%d\n", client_ip, client_port);
+        PRINTF_LOG("UDP: ✓ ECDH anahtar değişimi tamamlandı: %s:%d\n", client_ip, client_port);
         return 0;
     }
     

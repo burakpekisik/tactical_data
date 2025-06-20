@@ -20,6 +20,7 @@
 #include "connection_manager.h"
 #include "config.h"
 #include "thread_monitor.h"
+#include "logger.h"
 
 // Global control state
 volatile int control_running = 0;
@@ -32,11 +33,11 @@ pthread_t control_thread_id;
  */
 int start_control_interface(void) {
     if (control_running) {
-        printf("Control interface already running\n");
+        PRINTF_LOG("Control interface already running\n");
         return 0;
     }
     
-    printf("Starting control interface on port %d\n", CONFIG_CONTROL_PORT);
+    PRINTF_LOG("Starting control interface on port %d\n", CONFIG_CONTROL_PORT);
     
     if (pthread_create(&control_thread_id, NULL, control_interface_thread, NULL) != 0) {
         perror("Control interface thread creation failed");
@@ -45,7 +46,7 @@ int start_control_interface(void) {
     
     pthread_detach(control_thread_id);
     control_running = 1;
-    printf("✓ Control interface started (Port: %d)\n", CONFIG_CONTROL_PORT);
+    PRINTF_LOG("✓ Control interface started (Port: %d)\n", CONFIG_CONTROL_PORT);
     return 0;
 }
 
@@ -56,10 +57,10 @@ int start_control_interface(void) {
 void stop_control_interface(void) {
     if (!control_running) return;
     
-    printf("Stopping control interface...\n");
+    PRINTF_LOG("Stopping control interface...\n");
     control_running = 0;
     
-    printf("✓ Control interface stopped\n");
+    PRINTF_LOG("✓ Control interface stopped\n");
 }
 
 /**
@@ -100,7 +101,7 @@ void* control_interface_thread(void* arg) {
         return NULL;
     }
     
-    printf("Control interface listening on port %d\n", CONFIG_CONTROL_PORT);
+    PRINTF_LOG("Control interface listening on port %d\n", CONFIG_CONTROL_PORT);
     
     while (control_running) {
         struct sockaddr_in client_addr;
@@ -123,7 +124,7 @@ void* control_interface_thread(void* arg) {
             char* newline = strchr(command, '\n');
             if (newline) *newline = '\0';
             
-            printf("Control command received: '%s'\n", command);
+            PRINTF_LOG("Control command received: '%s'\n", command);
             handle_control_command(command, client_sock);
         }
         
@@ -131,7 +132,7 @@ void* control_interface_thread(void* arg) {
     }
     
     close(control_socket);
-    printf("Control interface thread ended\n");
+    PRINTF_LOG("Control interface thread ended\n");
     return NULL;
 }
 
@@ -248,7 +249,7 @@ void handle_control_command(const char* command, int response_socket) {
         // Health check için basit response - counter'ı artır
         increment_healthcheck_count();
         snprintf(response, sizeof(response), "HEALTHY\n");
-        printf(" HEALTHCHECK: Docker health check received\n");
+        PRINTF_LOG(" HEALTHCHECK: Docker health check received\n");
     }
     else {
         snprintf(response, sizeof(response), 

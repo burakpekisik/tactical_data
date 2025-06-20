@@ -42,6 +42,7 @@
 #include <string.h>
 #include <time.h>
 #include "json_utils.h"
+#include "logger.h"
 
 /**
  * @brief JSON içeriğini parse edip formatlanmış string'e dönüştürür
@@ -385,10 +386,10 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
     // JSON parse et
     cJSON *json = cJSON_Parse(json_content);
     if (json == NULL) {
-        printf("HATA: JSON parse edilemedi - %s\n", filename);
+        PRINTF_LOG("HATA: JSON parse edilemedi - %s\n", filename);
         const char *error_ptr = cJSON_GetErrorPtr();
         if (error_ptr != NULL) {
-            printf("Parse hatası: %s\n", error_ptr);
+            PRINTF_LOG("Parse hatası: %s\n", error_ptr);
         }
         free(data);
         return NULL;
@@ -400,7 +401,7 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
         strncpy(data->unit_id, unit_id->valuestring, sizeof(data->unit_id) - 1);
         data->unit_id[sizeof(data->unit_id) - 1] = '\0';
     } else {
-        printf("UYARI: unit_id field'ı bulunamadı veya geçersiz\n");
+        PRINTF_LOG("UYARI: unit_id field'ı bulunamadı veya geçersiz\n");
         strcpy(data->unit_id, "UNKNOWN");
     }
     
@@ -410,7 +411,7 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
         strncpy(data->status, status->valuestring, sizeof(data->status) - 1);
         data->status[sizeof(data->status) - 1] = '\0';
     } else {
-        printf("UYARI: status field'ı bulunamadı veya geçersiz\n");
+        PRINTF_LOG("UYARI: status field'ı bulunamadı veya geçersiz\n");
         strcpy(data->status, "UNKNOWN");
     }
     
@@ -419,7 +420,7 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
     if (cJSON_IsNumber(latitude)) {
         data->latitude = latitude->valuedouble;
     } else {
-        printf("UYARI: latitude field'ı bulunamadı veya geçersiz\n");
+        PRINTF_LOG("UYARI: latitude field'ı bulunamadı veya geçersiz\n");
         data->latitude = 0.0;
     }
     
@@ -428,7 +429,7 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
     if (cJSON_IsNumber(longitude)) {
         data->longitude = longitude->valuedouble;
     } else {
-        printf("UYARI: longitude field'ı bulunamadı veya geçersiz\n");
+        PRINTF_LOG("UYARI: longitude field'ı bulunamadı veya geçersiz\n");
         data->longitude = 0.0;
     }
     
@@ -438,7 +439,7 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
         strncpy(data->description, description->valuestring, sizeof(data->description) - 1);
         data->description[sizeof(data->description) - 1] = '\0';
     } else {
-        printf("UYARI: description field'ı bulunamadı veya geçersiz\n");
+        PRINTF_LOG("UYARI: description field'ı bulunamadı veya geçersiz\n");
         strcpy(data->description, "Açıklama yok");
     }
     
@@ -447,20 +448,20 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
     if (cJSON_IsNumber(timestamp)) {
         data->timestamp = (long)timestamp->valuedouble;
     } else {
-        printf("UYARI: timestamp field'ı bulunamadı veya geçersiz\n");
+        PRINTF_LOG("UYARI: timestamp field'ı bulunamadı veya geçersiz\n");
         data->timestamp = time(NULL); // Current time as fallback
     }
     
     data->is_valid = 1;
     cJSON_Delete(json);
     
-    printf("JSON başarıyla tactical_data_t'ye parse edildi:\n");
-    printf("  - Unit ID: %s\n", data->unit_id);
-    printf("  - Status: %s\n", data->status);
-    printf("  - Konum: %.6f, %.6f\n", data->latitude, data->longitude);
-    printf("  - Açıklama: %.50s%s\n", data->description, 
+    PRINTF_LOG("JSON başarıyla tactical_data_t'ye parse edildi:\n");
+    PRINTF_LOG("  - Unit ID: %s\n", data->unit_id);
+    PRINTF_LOG("  - Status: %s\n", data->status);
+    PRINTF_LOG("  - Konum: %.6f, %.6f\n", data->latitude, data->longitude);
+    PRINTF_LOG("  - Açıklama: %.50s%s\n", data->description, 
            strlen(data->description) > 50 ? "..." : "");
-    printf("  - Timestamp: %ld\n", data->timestamp);
+    PRINTF_LOG("  - Timestamp: %ld\n", data->timestamp);
     
     return data;
 }

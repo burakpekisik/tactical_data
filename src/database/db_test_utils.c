@@ -15,6 +15,7 @@
 #include <time.h>
 #include <string.h>
 #include "../include/database.h"
+#include "logger.h"
 
 /**
  * @brief Veritabanına örnek test verilerini ekler

@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <sqlite3.h>
 #include "../../include/database.h"
+#include "logger.h"
 
 /**
  * @brief External global veritabanı bağlantısı
@@ -79,10 +80,10 @@ int db_delete_unit(int id) {
     } else {
         int changes = sqlite3_changes(g_db);
         if (changes > 0) {
-            printf("Unit ID %d and associated reports deleted successfully\n", id);
+            PRINTF_LOG("Unit ID %d and associated reports deleted successfully\n", id);
             return 0;
         } else {
-            printf("No unit found with ID %d\n", id);
+            PRINTF_LOG("No unit found with ID %d\n", id);
             return -1;
         }
     }
@@ -127,10 +128,10 @@ int db_delete_report(int id) {
     } else {
         int changes = sqlite3_changes(g_db);
         if (changes > 0) {
-            printf("Report ID %d deleted successfully\n", id);
+            PRINTF_LOG("Report ID %d deleted successfully\n", id);
             return 0;
         } else {
-            printf("No report found with ID %d\n", id);
+            PRINTF_LOG("No report found with ID %d\n", id);
             return -1;
         }
     }

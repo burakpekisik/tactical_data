@@ -24,6 +24,7 @@
 #include "crypto_utils.h"
 #include "json_utils.h"
 #include "database.h"
+#include "logger.h"
 
 /// @brief External client handler function
 void* handle_client(void* arg);
@@ -36,7 +37,7 @@ extern int parse_protocol_message(const char* message, char** command, char** fi
  * @return 0 başarı
  */
 int tcp_server_init(connection_manager_t* manager) {
-    printf("TCP Server modülü başlatılıyor...\n");
+    PRINTF_LOG("TCP Server modülü başlatılıyor...\n");
     
     manager->type = CONN_TYPE_TCP;
     manager->status = CONN_STATUS_STOPPED;
@@ -48,7 +49,7 @@ int tcp_server_init(connection_manager_t* manager) {
     
     strcpy(manager->name, "TCP Server");
     
-    printf("✓ TCP Server modülü hazır (Port: %d)\n", manager->port);
+    PRINTF_LOG("✓ TCP Server modülü hazır (Port: %d)\n", manager->port);
     return 0;
 }
 
@@ -62,7 +63,7 @@ int tcp_server_start(connection_manager_t* manager) {
     struct sockaddr_in address;
     int opt = 1;
     
-    printf("TCP Server başlatılıyor (Port: %d)...\n", manager->port);
+    PRINTF_LOG("TCP Server başlatılıyor (Port: %d)...\n", manager->port);
     
     // Socket oluştur
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
@@ -114,7 +115,7 @@ int tcp_server_start(connection_manager_t* manager) {
     
     pthread_detach(manager->server_thread);
     
-    printf("✓ TCP Server başarıyla başlatıldı (Port: %d)\n", manager->port);
+    PRINTF_LOG("✓ TCP Server başarıyla başlatıldı (Port: %d)\n", manager->port);
     return 0;
 }
 
@@ -125,11 +126,11 @@ int tcp_server_start(connection_manager_t* manager) {
  */
 int tcp_server_stop(connection_manager_t* manager) {
     if (manager->status != CONN_STATUS_RUNNING) {
-        printf("TCP Server zaten durdurulmuş\n");
+        PRINTF_LOG("TCP Server zaten durdurulmuş\n");
         return 0;
     }
     
-    printf("TCP Server durduruluyor...\n");
+    PRINTF_LOG("TCP Server durduruluyor...\n");
     manager->status = CONN_STATUS_STOPPING;
     
     // Önce tüm TCP client bağlantılarını sonlandır
@@ -148,8 +149,8 @@ int tcp_server_stop(connection_manager_t* manager) {
     manager->status = CONN_STATUS_STOPPED;
     manager->is_active = false;
     
-    printf("✓ TCP Server durduruldu (Port: %d)\n", manager->port);
-    printf("server> TCP Server thread sonlandırıldı\n");
+    PRINTF_LOG("✓ TCP Server durduruldu (Port: %d)\n", manager->port);
+    PRINTF_LOG("server> TCP Server thread sonlandırıldı\n");
     return 0;
 }
 
@@ -163,7 +164,7 @@ void* tcp_server_thread(void* arg) {
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
     
-    printf("TCP Server thread başlatıldı (Port: %d)\n", manager->port);
+    PRINTF_LOG("TCP Server thread başlatıldı (Port: %d)\n", manager->port);
     
     while (manager->is_active && manager->status == CONN_STATUS_RUNNING) {
         int client_socket = accept(manager->server_fd, (struct sockaddr*)&client_addr, &client_len);
@@ -200,12 +201,12 @@ void* tcp_server_thread(void* arg) {
             // Thread bilgisini monitor sistemine ekle
             add_thread_info(client_thread, client_socket, client_ip, client_port);
             pthread_detach(client_thread);
-            printf("TCP Thread added to monitor (ID: %lu, Socket: %d)\n", 
+            PRINTF_LOG("TCP Thread added to monitor (ID: %lu, Socket: %d)\n", 
                    (unsigned long)client_thread, client_socket);
         }
     }
     
-    printf("TCP Server thread sonlandırıldı\n");
+    PRINTF_LOG("TCP Server thread sonlandırıldı\n");
     return NULL;
 }
 
@@ -242,7 +243,7 @@ int tcp_client_connect(const char* hostname, int port) {
         return -1;
     }
     
-    printf("TCP Client bağlandı (%s:%d)\n", hostname, port);
+    PRINTF_LOG("TCP Client bağlandı (%s:%d)\n", hostname, port);
     return client_socket;
 }
 
@@ -260,7 +261,7 @@ int tcp_client_send(int socket, const char* data, size_t length) {
         return -1;
     }
     
-    printf("TCP Client veri gönderildi (%zd bytes)\n", bytes_sent);
+    PRINTF_LOG("TCP Client veri gönderildi (%zd bytes)\n", bytes_sent);
     return bytes_sent;
 }
 
@@ -279,7 +280,7 @@ int tcp_client_receive(int socket, char* buffer, size_t buffer_size) {
     }
     
     buffer[bytes_received] = '\0';
-    printf("TCP Client veri alındı (%zd bytes)\n", bytes_received);
+    PRINTF_LOG("TCP Client veri alındı (%zd bytes)\n", bytes_received);
     return bytes_received;
 }
 
@@ -290,7 +291,7 @@ int tcp_client_receive(int socket, char* buffer, size_t buffer_size) {
 void tcp_client_disconnect(int socket) {
     if (socket >= 0) {
         close(socket);
-        printf("TCP Client bağlantısı kapatıldı\n");
+        PRINTF_LOG("TCP Client bağlantısı kapatıldı\n");
     }
 }
 
@@ -303,13 +304,13 @@ void tcp_update_stats(connection_manager_t* manager, bool connection_added) {
     if (connection_added) {
         manager->client_count++;
         manager->total_connections++;
-        printf("TCP Stats: Active=%d, Total=%d\n", 
+        PRINTF_LOG("TCP Stats: Active=%d, Total=%d\n", 
                manager->client_count, manager->total_connections);
     } else {
         if (manager->client_count > 0) {
             manager->client_count--;
         }
-        printf("TCP Stats: Active=%d, Total=%d\n", 
+        PRINTF_LOG("TCP Stats: Active=%d, Total=%d\n", 
                manager->client_count, manager->total_connections);
     }
 }
@@ -325,7 +326,7 @@ void tcp_log_connection(const char* client_ip, int client_port, bool connected) 
     char* time_str = ctime(&now);
     time_str[strlen(time_str) - 1] = '\0'; // newline'ı kaldır
     
-    printf("[%s] TCP %s: %s:%d\n", 
+    PRINTF_LOG("[%s] TCP %s: %s:%d\n", 
            time_str, 
            connected ? "CONNECT" : "DISCONNECT", 
            client_ip, client_port);

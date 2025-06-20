@@ -40,6 +40,7 @@
 #include <sys/resource.h>
 #include "thread_monitor.h"
 #include "config.h"
+#include "logger.h"
 
 /// @brief Aktif thread bilgilerini tutan static array - CONFIG_MAX_CLIENTS kadar
 static thread_info_t active_threads[CONFIG_MAX_CLIENTS];
@@ -186,7 +187,7 @@ void remove_thread_info(pthread_t thread_id) {
     for (int i = 0; i < CONFIG_MAX_CLIENTS; i++) {
         if (active_threads[i].is_active && active_threads[i].thread_id == thread_id) {
             time_t duration = time(NULL) - active_threads[i].start_time;
-            printf("Thread sonlandi: %s (Calisma suresi: %ld saniye)\n", 
+            PRINTF_LOG("Thread sonlandi: %s (Calisma suresi: %ld saniye)\n", 
                    active_threads[i].thread_name, duration);
             
             memset(&active_threads[i], 0, sizeof(thread_info_t));
@@ -360,38 +361,38 @@ void log_thread_stats(void) {
     time_t current_time = time(NULL);
     time_t uptime = current_time - server_start_time;
     
-    printf("\n=== THREAD & QUEUE ISTATISTIKLERI ===\n");
-    printf("Server uptime: %ld saniye (%ld dakika)\n", uptime, uptime/60);
-    printf("Aktif thread sayisi: %d/%d\n", thread_count, CONFIG_MAX_CLIENTS);
-    printf("Queue boyutu: %d/%d\n", get_queue_size(), CONFIG_MAX_QUEUE_SIZE);
-    printf("Toplam baglanti: %d\n", total_connections);
-    printf("Health check sayisi: %d\n", healthcheck_count);
-    printf("Aktif TCP client: %d\n", thread_count); // Gerçek client = aktif thread sayısı
+    PRINTF_LOG("\n=== THREAD & QUEUE ISTATISTIKLERI ===\n");
+    PRINTF_LOG("Server uptime: %ld saniye (%ld dakika)\n", uptime, uptime/60);
+    PRINTF_LOG("Aktif thread sayisi: %d/%d\n", thread_count, CONFIG_MAX_CLIENTS);
+    PRINTF_LOG("Queue boyutu: %d/%d\n", get_queue_size(), CONFIG_MAX_QUEUE_SIZE);
+    PRINTF_LOG("Toplam baglanti: %d\n", total_connections);
+    PRINTF_LOG("Health check sayisi: %d\n", healthcheck_count);
+    PRINTF_LOG("Aktif TCP client: %d\n", thread_count); // Gerçek client = aktif thread sayısı
     
     if (thread_count > 0) {
-        printf("Aktif thread'ler:\n");
+        PRINTF_LOG("Aktif thread'ler:\n");
         for (int i = 0; i < CONFIG_MAX_CLIENTS; i++) {
             if (active_threads[i].is_active) {
                 time_t duration = current_time - active_threads[i].start_time;
-                printf("  - %s (Socket: %d, Sure: %ld s)\n", 
+                PRINTF_LOG("  - %s (Socket: %d, Sure: %ld s)\n", 
                        active_threads[i].thread_name,
                        active_threads[i].client_socket,
                        duration);
             }
         }
     } else {
-        printf("Aktif thread yok\n");
+        PRINTF_LOG("Aktif thread yok\n");
     }
     
     // Sistem kaynak kullanımı
     struct rusage usage;
     if (getrusage(RUSAGE_SELF, &usage) == 0) {
-        printf("Bellek kullanimi: %ld KB\n", usage.ru_maxrss);
-        printf("CPU zamanı: %ld.%06ld saniye\n", 
+        PRINTF_LOG("Bellek kullanimi: %ld KB\n", usage.ru_maxrss);
+        PRINTF_LOG("CPU zamanı: %ld.%06ld saniye\n", 
                usage.ru_utime.tv_sec, usage.ru_utime.tv_usec);
     }
     
-    printf("====================================\n");
+    PRINTF_LOG("====================================\n");
     
     pthread_mutex_unlock(&thread_mutex);
     
@@ -400,7 +401,7 @@ void log_thread_stats(void) {
         log_queue_stats();
     }
     
-    printf("\n");
+    PRINTF_LOG("\n");
     fflush(stdout);
 }
 
@@ -428,7 +429,7 @@ void init_thread_monitoring(void) {
     server_start_time = time(NULL);
     memset(active_threads, 0, sizeof(active_threads));
     thread_count = 0;
-    printf("Thread monitoring sistemi aktif\n");
+    PRINTF_LOG("Thread monitoring sistemi aktif\n");
     fflush(stdout);
 }
 
@@ -502,7 +503,7 @@ void add_to_queue(int client_socket, struct sockaddr_in client_addr) {
     if (queue_size >= CONFIG_MAX_QUEUE_SIZE) {
         char client_ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
-        printf("Queue dolu! Client reddediliyor: %s:%d\n", 
+        PRINTF_LOG("Queue dolu! Client reddediliyor: %s:%d\n", 
                client_ip, ntohs(client_addr.sin_port));
         
         const char* reject_msg = "QUEUE_FULL: Server kuyruğu dolu, lütfen daha sonra tekrar deneyin\n";
@@ -515,7 +516,7 @@ void add_to_queue(int client_socket, struct sockaddr_in client_addr) {
     // Yeni queue node oluştur
     queue_client_t* new_client = malloc(sizeof(queue_client_t));
     if (new_client == NULL) {
-        printf("Queue memory allocation hatası!\n");
+        PRINTF_LOG("Queue memory allocation hatası!\n");
         close(client_socket);
         pthread_mutex_unlock(&queue_mutex);
         return;
@@ -539,7 +540,7 @@ void add_to_queue(int client_socket, struct sockaddr_in client_addr) {
     
     char client_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
-    printf("Client queue'ya eklendi: %s:%d (Queue boyutu: %d/%d)\n", 
+    PRINTF_LOG("Client queue'ya eklendi: %s:%d (Queue boyutu: %d/%d)\n", 
            client_ip, ntohs(client_addr.sin_port), queue_size, CONFIG_MAX_QUEUE_SIZE);
     
     // Queue işleyicisine signal gönder
@@ -615,7 +616,7 @@ int process_queue(void) {
     inet_ntop(AF_INET, &client->client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
     time_t wait_time = time(NULL) - client->queue_time;
     
-    printf("Queue'dan client işleniyor: %s:%d (Bekleme süresi: %ld saniye)\n", 
+    PRINTF_LOG("Queue'dan client işleniyor: %s:%d (Bekleme süresi: %ld saniye)\n", 
            client_ip, ntohs(client->client_addr.sin_port), wait_time);
     
     int client_socket = client->client_socket;
@@ -630,7 +631,7 @@ int process_queue(void) {
     *client_socket_ptr = client_socket;
     
     if (pthread_create(&thread_id, NULL, (void* (*)(void*))handle_client, client_socket_ptr) != 0) {
-        printf("Queue'dan thread oluşturma hatası!\n");
+        PRINTF_LOG("Queue'dan thread oluşturma hatası!\n");
         free(client_socket_ptr);
         close(client_socket);
         return 0;
@@ -640,7 +641,7 @@ int process_queue(void) {
     add_thread_info(thread_id, client_socket, client_ip, ntohs(client_addr.sin_port));
     pthread_detach(thread_id);
     
-    printf("Queue'dan thread oluşturuldu (Thread ID: %lu)\n", thread_id);
+    PRINTF_LOG("Queue'dan thread oluşturuldu (Thread ID: %lu)\n", thread_id);
     
     return 1; // Başarıyla işlendi
 }
@@ -657,13 +658,13 @@ int get_queue_size(void) {
 void log_queue_stats(void) {
     pthread_mutex_lock(&queue_mutex);
     
-    printf("=== QUEUE ISTATISTIKLERI ===\n");
-    printf("Mevcut queue boyutu: %d/%d\n", queue_size, CONFIG_MAX_QUEUE_SIZE);
-    printf("Toplam kuyruklanmış: %d\n", total_queued);
-    printf("Toplam işlenmiş: %d\n", queue_processed);
+    PRINTF_LOG("=== QUEUE ISTATISTIKLERI ===\n");
+    PRINTF_LOG("Mevcut queue boyutu: %d/%d\n", queue_size, CONFIG_MAX_QUEUE_SIZE);
+    PRINTF_LOG("Toplam kuyruklanmış: %d\n", total_queued);
+    PRINTF_LOG("Toplam işlenmiş: %d\n", queue_processed);
     
     if (queue_size > 0) {
-        printf("Bekleyen client'ler:\n");
+        PRINTF_LOG("Bekleyen client'ler:\n");
         queue_client_t* current = queue_head;
         int index = 1;
         time_t current_time = time(NULL);
@@ -673,14 +674,14 @@ void log_queue_stats(void) {
             inet_ntop(AF_INET, &current->client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
             time_t wait_time = current_time - current->queue_time;
             
-            printf("  %d. %s:%d (Bekleme: %ld saniye)\n", 
+            PRINTF_LOG("  %d. %s:%d (Bekleme: %ld saniye)\n", 
                    index++, client_ip, ntohs(current->client_addr.sin_port), wait_time);
             
             current = current->next;
         }
     }
     
-    printf("===========================\n");
+    PRINTF_LOG("===========================\n");
     
     pthread_mutex_unlock(&queue_mutex);
 }
@@ -695,7 +696,7 @@ void clear_queue(void) {
         
         char client_ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &current->client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
-        printf("Queue temizleme: %s:%d bağlantısı kapatılıyor\n", 
+        PRINTF_LOG("Queue temizleme: %s:%d bağlantısı kapatılıyor\n", 
                client_ip, ntohs(current->client_addr.sin_port));
         
         close(current->client_socket);
@@ -761,11 +762,11 @@ void clear_queue(void) {
 void terminate_all_tcp_clients(void) {
     pthread_mutex_lock(&thread_mutex);
     
-    printf("Tüm TCP client bağlantıları sonlandırılıyor...\n");
+    PRINTF_LOG("Tüm TCP client bağlantıları sonlandırılıyor...\n");
     
     for (int i = 0; i < CONFIG_MAX_CLIENTS; i++) {
         if (active_threads[i].is_active) {
-            printf("TCP client sonlandırılıyor: %s (Socket: %d)\n", 
+            PRINTF_LOG("TCP client sonlandırılıyor: %s (Socket: %d)\n", 
                    active_threads[i].thread_name, active_threads[i].client_socket);
             
             // Client socket'ını kapat
@@ -784,7 +785,7 @@ void terminate_all_tcp_clients(void) {
         }
     }
     
-    printf("✓ Tüm TCP client bağlantıları sonlandırıldı\n");
+    PRINTF_LOG("✓ Tüm TCP client bağlantıları sonlandırıldı\n");
     
     pthread_mutex_unlock(&thread_mutex);
 }

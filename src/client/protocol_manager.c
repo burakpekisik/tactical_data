@@ -24,6 +24,7 @@
 #include "encrypted_client.h"
 #include "fallback_manager.h"
 #include "protocol_manager.h"
+#include "logger.h"
 
 /**
  * @brief Normal (şifresiz) protokol mesajı oluşturur
@@ -50,7 +51,7 @@ char* create_normal_protocol_message(const char* filename, const char* content) 
     char *message = malloc(total_size);
     
     if (message == NULL) {
-        printf("Bellek tahsis hatasi\n");
+        PRINTF_LOG("Bellek tahsis hatasi\n");
         return NULL;
     }
     
@@ -90,7 +91,7 @@ char* create_normal_protocol_message(const char* filename, const char* content) 
  */
 char* create_encrypted_protocol_message(const char* filename, const char* content, const uint8_t* session_key) {
     if (session_key == NULL) {
-        printf("Session key NULL - şifreleme yapılamaz\n");
+        PRINTF_LOG("Session key NULL - şifreleme yapılamaz\n");
         return NULL;
     }
     
@@ -98,23 +99,23 @@ char* create_encrypted_protocol_message(const char* filename, const char* conten
     uint8_t iv[CRYPTO_IV_SIZE];
     generate_random_iv(iv);
     
-    printf("Random IV olusturuldu\n");
+    PRINTF_LOG("Random IV olusturuldu\n");
     
     // JSON'u sifrele
     crypto_result_t* encrypted = encrypt_data(content, session_key, iv);
     if (encrypted == NULL || !encrypted->success) {
-        printf("Sifreleme hatasi\n");
+        PRINTF_LOG("Sifreleme hatasi\n");
         if (encrypted) free_crypto_result(encrypted);
         return NULL;
     }
     
-    printf("JSON basariyla sifrelendi (%zu byte)\n", encrypted->length);
+    PRINTF_LOG("JSON basariyla sifrelendi (%zu byte)\n", encrypted->length);
     
     // IV + sifreli veri kombinasyonu olustur
     size_t combined_length = CRYPTO_IV_SIZE + encrypted->length;
     uint8_t* combined_data = malloc(combined_length);
     if (combined_data == NULL) {
-        printf("Bellek tahsis hatasi\n");
+        PRINTF_LOG("Bellek tahsis hatasi\n");
         free_crypto_result(encrypted);
         return NULL;
     }
@@ -128,18 +129,18 @@ char* create_encrypted_protocol_message(const char* filename, const char* conten
     free_crypto_result(encrypted);
     
     if (hex_data == NULL) {
-        printf("Hex donusumu hatasi\n");
+        PRINTF_LOG("Hex donusumu hatasi\n");
         return NULL;
     }
     
-    printf("Hex encoding tamamlandi (%zu karakter)\n", strlen(hex_data));
+    PRINTF_LOG("Hex encoding tamamlandi (%zu karakter)\n", strlen(hex_data));
     
     // Protokol mesajini olustur
     size_t total_size = strlen("ENCRYPTED:") + strlen(filename) + strlen(hex_data) + 3;
     char *message = malloc(total_size);
     
     if (message == NULL) {
-        printf("Bellek tahsis hatasi\n");
+        PRINTF_LOG("Bellek tahsis hatasi\n");
         free(hex_data);
         return NULL;
     }
@@ -205,7 +206,7 @@ int send_tcp_message(client_connection_t* conn, const char* message) {
         perror("TCP send hatasi");
         return -1;
     }
-    printf("TCP mesaj gonderildi (%zd bytes)\n", bytes_sent);
+    PRINTF_LOG("TCP mesaj gonderildi (%zd bytes)\n", bytes_sent);
     
     // Yanıt bekle
     char buffer[CONFIG_BUFFER_SIZE] = {0};
@@ -213,17 +214,17 @@ int send_tcp_message(client_connection_t* conn, const char* message) {
     
     if (bytes_received > 0) {
         buffer[bytes_received] = '\0';
-        printf("TCP yanit alindi (%zd bytes)\n", bytes_received);
-        printf("\nServer yaniti:\n");
-        printf("=============\n");
-        printf("%s\n", buffer);
-        printf("=============\n");
+        PRINTF_LOG("TCP yanit alindi (%zd bytes)\n", bytes_received);
+        PRINTF_LOG("\nServer yaniti:\n");
+        PRINTF_LOG("=============\n");
+        PRINTF_LOG("%s\n", buffer);
+        PRINTF_LOG("=============\n");
         return 0;
     } else if (bytes_received == 0) {
-        printf("TCP baglanti kapatildi\n");
+        PRINTF_LOG("TCP baglanti kapatildi\n");
         return -1;
     } else {
-        printf("TCP yanitlama hatasi\n");
+        PRINTF_LOG("TCP yanitlama hatasi\n");
         return -1;
     }
 }
@@ -258,7 +259,7 @@ int send_udp_message(client_connection_t* conn, const char* message) {
         perror("UDP send hatasi");
         return -1;
     }
-    printf("UDP mesaj gonderildi (%zd bytes)\n", bytes_sent);
+    PRINTF_LOG("UDP mesaj gonderildi (%zd bytes)\n", bytes_sent);
     
     // Yanıt bekle
     char buffer[CONFIG_BUFFER_SIZE] = {0};
@@ -266,17 +267,17 @@ int send_udp_message(client_connection_t* conn, const char* message) {
     
     if (bytes_received > 0) {
         buffer[bytes_received] = '\0';
-        printf("UDP yanit alindi (%zd bytes)\n", bytes_received);
-        printf("\nServer yaniti:\n");
-        printf("=============\n");
-        printf("%s\n", buffer);
-        printf("=============\n");
+        PRINTF_LOG("UDP yanit alindi (%zd bytes)\n", bytes_received);
+        PRINTF_LOG("\nServer yaniti:\n");
+        PRINTF_LOG("=============\n");
+        PRINTF_LOG("%s\n", buffer);
+        PRINTF_LOG("=============\n");
         return 0;
     } else if (bytes_received == 0) {
-        printf("UDP baglanti kapatildi\n");
+        PRINTF_LOG("UDP baglanti kapatildi\n");
         return -1;
     } else {
-        printf("UDP yanitlama hatasi\n");
+        PRINTF_LOG("UDP yanitlama hatasi\n");
         return -1;
     }
 }
@@ -317,16 +318,16 @@ int send_p2p_message(client_connection_t* conn, const char* message) {
         // Mesaj zaten P2P formatında - direkt gönder
         strncpy(p2p_message, message, sizeof(p2p_message) - 1);
         p2p_message[sizeof(p2p_message) - 1] = '\0';
-        printf("P2P formatlanmış mesaj gönderiliyor...\n");
+        PRINTF_LOG("P2P formatlanmış mesaj gönderiliyor...\n");
     } else if (strncmp(message, "ENCRYPTED:", 10) == 0) {
         // Şifreli veri için P2P_ENCRYPTED formatında gönder
         snprintf(p2p_message, sizeof(p2p_message), "P2P_ENCRYPTED:%s", message);
-        printf("P2P şifreli mesaj gönderiliyor...\n");
+        PRINTF_LOG("P2P şifreli mesaj gönderiliyor...\n");
     } else {
         // Normal veri için P2P_DATA formatında gönder
         snprintf(p2p_message, sizeof(p2p_message), "P2P_DATA:CLIENT_%d:%s", 
                  getpid(), message);
-        printf("P2P normal mesaj gönderiliyor...\n");
+        PRINTF_LOG("P2P normal mesaj gönderiliyor...\n");
     }
     
     ssize_t bytes_sent = send(conn->socket, p2p_message, strlen(p2p_message), 0);
@@ -334,7 +335,7 @@ int send_p2p_message(client_connection_t* conn, const char* message) {
         perror("P2P send hatasi");
         return -1;
     }
-    printf("P2P mesaj gonderildi (%zd bytes)\n", bytes_sent);
+    PRINTF_LOG("P2P mesaj gonderildi (%zd bytes)\n", bytes_sent);
     
     // Yanıt bekle
     char buffer[CONFIG_BUFFER_SIZE] = {0};
@@ -342,17 +343,17 @@ int send_p2p_message(client_connection_t* conn, const char* message) {
     
     if (bytes_received > 0) {
         buffer[bytes_received] = '\0';
-        printf("P2P yanit alindi (%zd bytes)\n", bytes_received);
-        printf("\nServer yaniti:\n");
-        printf("=============\n");
-        printf("%s\n", buffer);
-        printf("=============\n");
+        PRINTF_LOG("P2P yanit alindi (%zd bytes)\n", bytes_received);
+        PRINTF_LOG("\nServer yaniti:\n");
+        PRINTF_LOG("=============\n");
+        PRINTF_LOG("%s\n", buffer);
+        PRINTF_LOG("=============\n");
         return 0;
     } else if (bytes_received == 0) {
-        printf("P2P baglanti kapatildi\n");
+        PRINTF_LOG("P2P baglanti kapatildi\n");
         return -1;
     } else {
-        printf("P2P yanitlama hatasi\n");
+        PRINTF_LOG("P2P yanitlama hatasi\n");
         return -1;
     }
 }
@@ -385,12 +386,12 @@ int receive_tcp_response(client_connection_t* conn, char* buffer, size_t buffer_
         perror("TCP receive hatasi");
         return -1;
     } else if (bytes_received == 0) {
-        printf("TCP baglanti kapatildi\n");
+        PRINTF_LOG("TCP baglanti kapatildi\n");
         return -1;
     }
     
     buffer[bytes_received] = '\0';
-    printf("TCP yanit alindi (%zd bytes)\n", bytes_received);
+    PRINTF_LOG("TCP yanit alindi (%zd bytes)\n", bytes_received);
     return bytes_received;
 }
 
@@ -429,7 +430,7 @@ int receive_udp_response(client_connection_t* conn, char* buffer, size_t buffer_
     }
     
     buffer[bytes_received] = '\0';
-    printf("UDP yanit alindi (%zd bytes)\n", bytes_received);
+    PRINTF_LOG("UDP yanit alindi (%zd bytes)\n", bytes_received);
     return bytes_received;
 }
 
@@ -462,11 +463,11 @@ int receive_p2p_response(client_connection_t* conn, char* buffer, size_t buffer_
         perror("P2P receive hatasi");
         return -1;
     } else if (bytes_received == 0) {
-        printf("P2P baglanti kapatildi\n");
+        PRINTF_LOG("P2P baglanti kapatildi\n");
         return -1;
     }
     
     buffer[bytes_received] = '\0';
-    printf("P2P yanit alindi (%zd bytes)\n", bytes_received);
+    PRINTF_LOG("P2P yanit alindi (%zd bytes)\n", bytes_received);
     return bytes_received;
 }

@@ -23,6 +23,7 @@
 #include "encrypted_client.h"
 #include "fallback_manager.h"
 #include "protocol_manager.h"
+#include "logger.h"
 
 /**
  * @brief Ana program fonksiyonu
@@ -34,23 +35,34 @@ int main() {
     char filename[CONFIG_MAX_FILENAME];
     int choice;
     
-    printf("Encrypted JSON Client - Sifreli dosya gonderme istemcisi\n");
-    printf("=======================================================\n");
-    
-    // Server'a baglan
-    client_connection_t* conn = connect_to_server(getenv("SERVER_HOST"));
-    if (conn == NULL) {
+    // Logger'ı başlat
+    if (logger_init(LOGGER_CLIENT, LOG_DEBUG) != 0) {
+        fprintf(stderr, "Logger başlatılamadı!\n");
         return -1;
     }
     
-    printf("Server'a basariyla baglandi\n");
+    LOG_CLIENT_INFO("Starting Encrypted JSON Client...");
+    PRINTF_CLIENT("Encrypted JSON Client - Sifreli dosya gonderme istemcisi\n");
+    PRINTF_CLIENT("=======================================================\n");
+    
+    // Server'a baglan
+    LOG_CLIENT_DEBUG("Attempting to connect to server...");
+    client_connection_t* conn = connect_to_server(getenv("SERVER_HOST"));
+    if (conn == NULL) {
+        LOG_CLIENT_ERROR("Failed to connect to server");
+        logger_cleanup(LOGGER_CLIENT);
+        return -1;
+    }
+    
+    LOG_CLIENT_INFO("Successfully connected to server");
+    PRINTF_CLIENT("Server'a basariyla baglandi\n");
     
     while (1) {
         show_menu();
-        printf("Seciminiz: ");
+        PRINTF_LOG("Seciminiz: ");
         
         if (scanf("%d", &choice) != 1) {
-            printf("Gecersiz secim\n");
+            PRINTF_LOG("Gecersiz secim\n");
             while (getchar() != '\n'); // Buffer temizle
             continue;
         }
@@ -59,7 +71,7 @@ int main() {
         
         switch (choice) {
             case 1: // Normal JSON gonder
-                printf("JSON dosya adini girin: ");
+                PRINTF_LOG("JSON dosya adini girin: ");
                 if (fgets(filename, CONFIG_MAX_FILENAME, stdin) != NULL) {
                     filename[strcspn(filename, "\n")] = 0; // Newline kaldir
                     if (strlen(filename) > 0) {
@@ -69,7 +81,7 @@ int main() {
                 break;
                 
             case 2: // Sifreli JSON gonder
-                printf("JSON dosya adini girin: ");
+                PRINTF_LOG("JSON dosya adini girin: ");
                 if (fgets(filename, CONFIG_MAX_FILENAME, stdin) != NULL) {
                     filename[strcspn(filename, "\n")] = 0;
                     if (strlen(filename) > 0) {
@@ -79,19 +91,24 @@ int main() {
                 break;
                 
             case 3: // Cikis
-                printf("Baglanti kapatiliyor...\n");
+                LOG_CLIENT_INFO("User requested shutdown");
+                PRINTF_CLIENT("Baglanti kapatiliyor...\n");
                 close_connection(conn);
+                LOG_CLIENT_INFO("Connection closed, shutting down client");
+                logger_cleanup(LOGGER_CLIENT);
                 return 0;
                 
             default:
-                printf("Gecersiz secim. Lutfen 1-3 arasi bir sayi girin.\n");
+                PRINTF_LOG("Gecersiz secim. Lutfen 1-3 arasi bir sayi girin.\n");
                 break;
         }
         
-        printf("\n");
+        PRINTF_LOG("\n");
     }
     
+    LOG_CLIENT_INFO("Client shutting down");
     close_connection(conn);
+    logger_cleanup(LOGGER_CLIENT);
     return 0;
 }
 
@@ -104,11 +121,11 @@ int main() {
  *          3. Çıkış
  */
 void show_menu(void) {
-    printf("\n=== MENU ===\n");
-    printf("1. Normal JSON dosyasi gonder\n");
-    printf("2. Sifreli JSON dosyasi gonder\n");
-    printf("3. Cikis\n");
-    printf("============\n");
+    PRINTF_LOG("\n=== MENU ===\n");
+    PRINTF_LOG("1. Normal JSON dosyasi gonder\n");
+    PRINTF_LOG("2. Sifreli JSON dosyasi gonder\n");
+    PRINTF_LOG("3. Cikis\n");
+    PRINTF_LOG("============\n");
 }
 
 /**
@@ -123,7 +140,7 @@ void show_menu(void) {
 char* read_file_content(const char* filename, size_t* file_size) {
     FILE *file = fopen(filename, "r");
     if (file == NULL) {
-        printf("Dosya acilamadi: %s\n", filename);
+        PRINTF_LOG("Dosya acilamadi: %s\n", filename);
         return NULL;
     }
     
@@ -135,7 +152,7 @@ char* read_file_content(const char* filename, size_t* file_size) {
     // Bellek tahsis et
     char *content = malloc(*file_size + 1);
     if (content == NULL) {
-        printf("Bellek tahsis hatasi\n");
+        PRINTF_LOG("Bellek tahsis hatasi\n");
         fclose(file);
         return NULL;
     }
@@ -166,19 +183,19 @@ int send_json_file(client_connection_t* conn, const char* filename, int encrypt)
         return -1;
     }
     
-    printf("Dosya okundu: %s (%zu byte)\n", filename, file_size);
+    PRINTF_LOG("Dosya okundu: %s (%zu byte)\n", filename, file_size);
     
     char *protocol_message;
     if (encrypt) {
-        printf("Sifreleme islemi baslatiliyor...\n");
+        PRINTF_LOG("Sifreleme islemi baslatiliyor...\n");
         if (!conn->ecdh_initialized) {
-            printf("ECDH başlatılmamış - şifreleme yapılamaz\n");
+            PRINTF_LOG("ECDH başlatılmamış - şifreleme yapılamaz\n");
             free(content);
             return -1;
         }
         protocol_message = create_encrypted_protocol_message(filename, content, conn->ecdh_ctx.aes_key);
     } else {
-        printf("Normal gonderim hazırlaniyor...\n");
+        PRINTF_LOG("Normal gonderim hazırlaniyor...\n");
         protocol_message = create_normal_protocol_message(filename, content);
     }
     
@@ -187,13 +204,13 @@ int send_json_file(client_connection_t* conn, const char* filename, int encrypt)
         return -1;
     }
     
-    printf("Server'a gonderiliyor...\n");
+    PRINTF_LOG("Server'a gonderiliyor...\n");
     
     // İlk olarak mevcut bağlantı türüyle dene
     int result = try_send_message_current_connection(conn, protocol_message);
     
     if (result < 0) {
-        printf("Mevcut bağlantı türü (%s) ile gönderim başarısız, fallback deneniyor...\n", 
+        PRINTF_LOG("Mevcut bağlantı türü (%s) ile gönderim başarısız, fallback deneniyor...\n", 
                get_connection_type_name(conn->type));
         
         // Fallback metodlarını dene
@@ -201,13 +218,13 @@ int send_json_file(client_connection_t* conn, const char* filename, int encrypt)
     }
     
     if (result < 0) {
-        printf("Tüm fallback metodları başarısız\n");
+        PRINTF_LOG("Tüm fallback metodları başarısız\n");
         free(content);
         free(protocol_message);
         return -1;
     }
     
-    printf("Basariyla gonderildi\n");
+    PRINTF_LOG("Basariyla gonderildi\n");
     
     free(content);
     free(protocol_message);
@@ -232,20 +249,20 @@ void handle_server_response(client_connection_t* conn) {
     } else if (conn->type == CONN_P2P) {
         bytes_received = receive_p2p_response(conn, buffer, CONFIG_BUFFER_SIZE - 1);
     } else {
-        printf("Bilinmeyen baglanti tipi yanit alinamadi\n");
+        PRINTF_LOG("Bilinmeyen baglanti tipi yanit alinamadi\n");
         return;
     }
     
     if (bytes_received > 0) {
         buffer[bytes_received] = '\0';
-        printf("\nServer yaniti:\n");
-        printf("=============\n");
-        printf("%s\n", buffer);
-        printf("=============\n");
+        PRINTF_LOG("\nServer yaniti:\n");
+        PRINTF_LOG("=============\n");
+        PRINTF_LOG("%s\n", buffer);
+        PRINTF_LOG("=============\n");
     } else if (bytes_received == 0) {
-        printf("Server baglantisi kapatildi\n");
+        PRINTF_LOG("Server baglantisi kapatildi\n");
     } else {
-        printf("Yanitlama hatasi\n");
+        PRINTF_LOG("Yanitlama hatasi\n");
     }
 }
 
@@ -262,7 +279,8 @@ void handle_server_response(client_connection_t* conn) {
 client_connection_t* connect_to_server(const char* server_host) {
     client_connection_t* conn = malloc(sizeof(client_connection_t));
     if (conn == NULL) {
-        printf("Bellek tahsis hatasi\n");
+        LOG_CLIENT_ERROR("Memory allocation failed for connection");
+        PRINTF_LOG("Bellek tahsis hatasi\n");
         return NULL;
     }
     
@@ -273,12 +291,14 @@ client_connection_t* connect_to_server(const char* server_host) {
         server_host = "127.0.0.1";
     }
     
-    printf("Server'a baglaniliyor: %s\n", server_host);
+    LOG_CLIENT_INFO("Attempting to connect to server: %s", server_host);
+    PRINTF_CLIENT("Server'a baglaniliyor: %s\n", server_host);
     
     /* ========================================
      * TCP Bağlantısı Denemesi (Port: 8080)
      * ======================================== */
-    printf("TCP baglantisi deneniyor (Port: %d)...\n", CONFIG_PORT);
+    LOG_CLIENT_DEBUG("Trying TCP connection (Port: %d)...", CONFIG_PORT);
+    PRINTF_CLIENT("TCP baglantisi deneniyor (Port: %d)...\n", CONFIG_PORT);
     conn->socket = socket(AF_INET, SOCK_STREAM, 0);
     if (conn->socket >= 0) {
         conn->server_addr.sin_family = AF_INET;
@@ -288,11 +308,12 @@ client_connection_t* connect_to_server(const char* server_host) {
         
         // IP adresini çözümle
         if (inet_pton(AF_INET, server_host, &conn->server_addr.sin_addr) <= 0) {
+            LOG_CLIENT_DEBUG("Resolving hostname: %s", server_host);
             struct hostent *host_entry = gethostbyname(server_host);
             if (host_entry != NULL) {
                 conn->server_addr.sin_addr = *((struct in_addr*)host_entry->h_addr_list[0]);
             } else {
-                printf("Host cozumlenemedi: %s\n", server_host);
+                PRINTF_LOG("Host cozumlenemedi: %s\n", server_host);
                 close(conn->socket);
                 goto try_udp;
             }
@@ -300,31 +321,31 @@ client_connection_t* connect_to_server(const char* server_host) {
         
         // TCP baglantisi dene
         if (connect(conn->socket, (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) == 0) {
-            printf("✓ TCP baglantisi basarili (Port: %d)\n", CONFIG_PORT);
+            PRINTF_LOG("✓ TCP baglantisi basarili (Port: %d)\n", CONFIG_PORT);
             
             /* TCP için ECDH Anahtar Değişimi */
             if (!ecdh_init_context(&conn->ecdh_ctx)) {
-                printf("ECDH context başlatılamadı\n");
+                PRINTF_LOG("ECDH context başlatılamadı\n");
                 close(conn->socket);
                 free(conn);
                 return NULL;
             }
             
             if (!ecdh_generate_keypair(&conn->ecdh_ctx)) {
-                printf("ECDH anahtar çifti üretilemedi\n");
+                PRINTF_LOG("ECDH anahtar çifti üretilemedi\n");
                 close(conn->socket);
                 free(conn);
                 return NULL;
             }
             
             // Server ile anahtar değişimi
-            printf("Server ile anahtar değişimi yapılıyor...\n");
+            PRINTF_LOG("Server ile anahtar değişimi yapılıyor...\n");
             
             // Server'in public key'ini al
             uint8_t server_public_key[ECC_PUB_KEY_SIZE];
             ssize_t received = recv(conn->socket, server_public_key, ECC_PUB_KEY_SIZE, 0);
             if (received != ECC_PUB_KEY_SIZE) {
-                printf("Server public key alınamadı\n");
+                PRINTF_LOG("Server public key alınamadı\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -334,7 +355,7 @@ client_connection_t* connect_to_server(const char* server_host) {
             // Kendi public key'imizi gönder
             ssize_t sent = send(conn->socket, conn->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
             if (sent != ECC_PUB_KEY_SIZE) {
-                printf("Public key gönderilemedi\n");
+                PRINTF_LOG("Public key gönderilemedi\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -343,7 +364,7 @@ client_connection_t* connect_to_server(const char* server_host) {
             
             // Shared secret hesapla
             if (!ecdh_compute_shared_secret(&conn->ecdh_ctx, server_public_key)) {
-                printf("Shared secret hesaplanamadı\n");
+                PRINTF_LOG("Shared secret hesaplanamadı\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -352,7 +373,7 @@ client_connection_t* connect_to_server(const char* server_host) {
             
             // AES anahtarını türet
             if (!ecdh_derive_aes_key(&conn->ecdh_ctx)) {
-                printf("AES anahtarı türetilemedi\n");
+                PRINTF_LOG("AES anahtarı türetilemedi\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -360,12 +381,12 @@ client_connection_t* connect_to_server(const char* server_host) {
             }
             
             conn->ecdh_initialized = true;
-            printf("✓ ECDH anahtar değişimi tamamlandı\n");
-            printf("✓ AES256 oturum anahtarı hazır\n");
+            PRINTF_LOG("✓ ECDH anahtar değişimi tamamlandı\n");
+            PRINTF_LOG("✓ AES256 oturum anahtarı hazır\n");
             
             return conn;
         } else {
-            printf("✗ TCP baglantisi basarisiz (Port: %d)\n", CONFIG_PORT);
+            PRINTF_LOG("✗ TCP baglantisi basarisiz (Port: %d)\n", CONFIG_PORT);
             close(conn->socket);
         }
     }
@@ -374,7 +395,7 @@ try_udp:
     /* ========================================
      * UDP Bağlantısı Denemesi (Port: 8081)
      * ======================================== */
-    printf("UDP baglantisi deneniyor (Port: %d)...\n", CONFIG_UDP_PORT);
+    PRINTF_LOG("UDP baglantisi deneniyor (Port: %d)...\n", CONFIG_UDP_PORT);
     conn->socket = socket(AF_INET, SOCK_DGRAM, 0);
     if (conn->socket >= 0) {
         conn->server_addr.sin_family = AF_INET;
@@ -388,7 +409,7 @@ try_udp:
             if (host_entry != NULL) {
                 conn->server_addr.sin_addr = *((struct in_addr*)host_entry->h_addr_list[0]);
             } else {
-                printf("Host cozumlenemedi: %s\n", server_host);
+                PRINTF_LOG("Host cozumlenemedi: %s\n", server_host);
                 close(conn->socket);
                 goto try_p2p;
             }
@@ -406,18 +427,18 @@ try_udp:
             
             char test_buffer[64];
             if (recvfrom(conn->socket, test_buffer, sizeof(test_buffer) - 1, 0, NULL, 0) > 0) {
-                printf("✓ UDP baglantisi basarili (Port: %d)\n", CONFIG_UDP_PORT);
+                PRINTF_LOG("✓ UDP baglantisi basarili (Port: %d)\n", CONFIG_UDP_PORT);
                 
                 /* UDP için ECDH Anahtar Değişimi */
                 if (!ecdh_init_context(&conn->ecdh_ctx)) {
-                    printf("UDP ECDH context başlatılamadı\n");
+                    PRINTF_LOG("UDP ECDH context başlatılamadı\n");
                     close(conn->socket);
                     free(conn);
                     return NULL;
                 }
                 
                 if (!ecdh_generate_keypair(&conn->ecdh_ctx)) {
-                    printf("UDP ECDH anahtar çifti üretilemedi\n");
+                    PRINTF_LOG("UDP ECDH anahtar çifti üretilemedi\n");
                     ecdh_cleanup_context(&conn->ecdh_ctx);
                     close(conn->socket);
                     free(conn);
@@ -425,13 +446,13 @@ try_udp:
                 }
                 
                 // Server ile UDP ECDH anahtar değişimi
-                printf("UDP Server ile anahtar değişimi yapılıyor...\n");
+                PRINTF_LOG("UDP Server ile anahtar değişimi yapılıyor...\n");
                 
                 // ECDH init mesajı gönder
                 const char* ecdh_init = "ECDH_INIT";
                 if (sendto(conn->socket, ecdh_init, strlen(ecdh_init), 0,
                           (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) < 0) {
-                    printf("UDP ECDH init mesajı gönderilemedi\n");
+                    PRINTF_LOG("UDP ECDH init mesajı gönderilemedi\n");
                     ecdh_cleanup_context(&conn->ecdh_ctx);
                     close(conn->socket);
                     free(conn);
@@ -442,7 +463,7 @@ try_udp:
                 char server_response[1024];
                 ssize_t received = recvfrom(conn->socket, server_response, sizeof(server_response) - 1, 0, NULL, 0);
                 if (received < 0) {
-                    printf("UDP Server public key alınamadı\n");
+                    PRINTF_LOG("UDP Server public key alınamadı\n");
                     ecdh_cleanup_context(&conn->ecdh_ctx);
                     close(conn->socket);
                     free(conn);
@@ -453,7 +474,7 @@ try_udp:
                 
                 // "ECDH_PUB:" prefix'ini kontrol et
                 if (strncmp(server_response, "ECDH_PUB:", 9) != 0) {
-                    printf("UDP Geçersiz server response: %s\n", server_response);
+                    PRINTF_LOG("UDP Geçersiz server response: %s\n", server_response);
                     ecdh_cleanup_context(&conn->ecdh_ctx);
                     close(conn->socket);
                     free(conn);
@@ -464,7 +485,7 @@ try_udp:
                 size_t server_key_len;
                 uint8_t* server_public_key = hex_to_bytes(server_response + 9, &server_key_len);
                 if (server_public_key == NULL || server_key_len != ECC_PUB_KEY_SIZE) {
-                    printf("UDP Server public key decode hatası\n");
+                    PRINTF_LOG("UDP Server public key decode hatası\n");
                     if (server_public_key) free(server_public_key);
                     ecdh_cleanup_context(&conn->ecdh_ctx);
                     close(conn->socket);
@@ -483,7 +504,7 @@ try_udp:
                 
                 if (sendto(conn->socket, client_pub_msg, strlen(client_pub_msg), 0,
                           (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) < 0) {
-                    printf("UDP Client public key gönderilemedi\n");
+                    PRINTF_LOG("UDP Client public key gönderilemedi\n");
                     free(server_public_key);
                     ecdh_cleanup_context(&conn->ecdh_ctx);
                     close(conn->socket);
@@ -493,7 +514,7 @@ try_udp:
                 
                 // Shared secret hesapla
                 if (!ecdh_compute_shared_secret(&conn->ecdh_ctx, server_public_key)) {
-                    printf("UDP Shared secret hesaplanamadı\n");
+                    PRINTF_LOG("UDP Shared secret hesaplanamadı\n");
                     free(server_public_key);
                     ecdh_cleanup_context(&conn->ecdh_ctx);
                     close(conn->socket);
@@ -503,7 +524,7 @@ try_udp:
                 
                 // AES anahtarını türet
                 if (!ecdh_derive_aes_key(&conn->ecdh_ctx)) {
-                    printf("UDP AES anahtarı türetilemedi\n");
+                    PRINTF_LOG("UDP AES anahtarı türetilemedi\n");
                     free(server_public_key);
                     ecdh_cleanup_context(&conn->ecdh_ctx);
                     close(conn->socket);
@@ -520,13 +541,13 @@ try_udp:
                     ack_buffer[ack_received] = '\0';
                     if (strcmp(ack_buffer, "ECDH_OK") == 0) {
                         conn->ecdh_initialized = true;
-                        printf("✓ UDP ECDH anahtar değişimi tamamlandı\n");
-                        printf("✓ UDP AES256 oturum anahtarı hazır\n");
+                        PRINTF_LOG("✓ UDP ECDH anahtar değişimi tamamlandı\n");
+                        PRINTF_LOG("✓ UDP AES256 oturum anahtarı hazır\n");
                         return conn;
                     }
                 }
                 
-                printf("UDP ECDH onay mesajı alınamadı\n");
+                PRINTF_LOG("UDP ECDH onay mesajı alınamadı\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -534,7 +555,7 @@ try_udp:
             }
         }
         
-        printf("✗ UDP baglantisi basarisiz (Port: %d)\n", CONFIG_UDP_PORT);
+        PRINTF_LOG("✗ UDP baglantisi basarisiz (Port: %d)\n", CONFIG_UDP_PORT);
         close(conn->socket);
     }
 
@@ -542,7 +563,7 @@ try_p2p:
     /* ========================================
      * P2P Bağlantısı Denemesi (Port: 8082)
      * ======================================== */
-    printf("P2P baglantisi deneniyor (Port: %d)...\n", CONFIG_P2P_PORT);
+    PRINTF_LOG("P2P baglantisi deneniyor (Port: %d)...\n", CONFIG_P2P_PORT);
     conn->socket = socket(AF_INET, SOCK_STREAM, 0);
     if (conn->socket >= 0) {
         conn->server_addr.sin_family = AF_INET;
@@ -556,7 +577,7 @@ try_p2p:
             if (host_entry != NULL) {
                 conn->server_addr.sin_addr = *((struct in_addr*)host_entry->h_addr_list[0]);
             } else {
-                printf("Host cozumlenemedi: %s\n", server_host);
+                PRINTF_LOG("Host cozumlenemedi: %s\n", server_host);
                 close(conn->socket);
                 free(conn);
                 return NULL;
@@ -565,18 +586,18 @@ try_p2p:
         
         // P2P TCP baglantisi dene
         if (connect(conn->socket, (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) == 0) {
-            printf("✓ P2P baglantisi basarili (Port: %d)\n", CONFIG_P2P_PORT);
+            PRINTF_LOG("✓ P2P baglantisi basarili (Port: %d)\n", CONFIG_P2P_PORT);
             
             /* P2P için ECDH Anahtar Değişimi (TCP benzeri) */
             if (!ecdh_init_context(&conn->ecdh_ctx)) {
-                printf("P2P ECDH context başlatılamadı\n");
+                PRINTF_LOG("P2P ECDH context başlatılamadı\n");
                 close(conn->socket);
                 free(conn);
                 return NULL;
             }
             
             if (!ecdh_generate_keypair(&conn->ecdh_ctx)) {
-                printf("P2P ECDH anahtar çifti üretilemedi\n");
+                PRINTF_LOG("P2P ECDH anahtar çifti üretilemedi\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -584,13 +605,13 @@ try_p2p:
             }
             
             // Server ile P2P ECDH anahtar değişimi
-            printf("P2P Server ile anahtar değişimi yapılıyor...\n");
+            PRINTF_LOG("P2P Server ile anahtar değişimi yapılıyor...\n");
             
             // Server'in public key'ini al
             uint8_t server_public_key[ECC_PUB_KEY_SIZE];
             ssize_t received = recv(conn->socket, server_public_key, ECC_PUB_KEY_SIZE, 0);
             if (received != ECC_PUB_KEY_SIZE) {
-                printf("P2P Server public key alınamadı\n");
+                PRINTF_LOG("P2P Server public key alınamadı\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -600,7 +621,7 @@ try_p2p:
             // Kendi public key'imizi gönder
             ssize_t sent = send(conn->socket, conn->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
             if (sent != ECC_PUB_KEY_SIZE) {
-                printf("P2P Public key gönderilemedi\n");
+                PRINTF_LOG("P2P Public key gönderilemedi\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -609,7 +630,7 @@ try_p2p:
             
             // Shared secret hesapla
             if (!ecdh_compute_shared_secret(&conn->ecdh_ctx, server_public_key)) {
-                printf("P2P Shared secret hesaplanamadı\n");
+                PRINTF_LOG("P2P Shared secret hesaplanamadı\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -618,7 +639,7 @@ try_p2p:
             
             // AES anahtarını türet
             if (!ecdh_derive_aes_key(&conn->ecdh_ctx)) {
-                printf("P2P AES anahtarı türetilemedi\n");
+                PRINTF_LOG("P2P AES anahtarı türetilemedi\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -626,18 +647,18 @@ try_p2p:
             }
             
             conn->ecdh_initialized = true;
-            printf("✓ P2P ECDH anahtar değişimi tamamlandı\n");
-            printf("✓ P2P AES256 oturum anahtarı hazır\n");
+            PRINTF_LOG("✓ P2P ECDH anahtar değişimi tamamlandı\n");
+            PRINTF_LOG("✓ P2P AES256 oturum anahtarı hazır\n");
             
             return conn;
         } else {
-            printf("✗ P2P baglantisi basarisiz (Port: %d)\n", CONFIG_P2P_PORT);
+            PRINTF_LOG("✗ P2P baglantisi basarisiz (Port: %d)\n", CONFIG_P2P_PORT);
             close(conn->socket);
         }
     }
     
     /* Tüm protokoller başarısız */
-    printf("✗ Hicbir protokol ile baglanti kurulamadi!\n");
+    PRINTF_LOG("✗ Hicbir protokol ile baglanti kurulamadi!\n");
     free(conn);
     return NULL;
 }

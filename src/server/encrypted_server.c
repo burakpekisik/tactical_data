@@ -50,6 +50,7 @@
 #include "connection_manager.h"
 #include "control_interface.h"
 #include "encrypted_server.h"
+#include "logger.h"
 
 /// @brief Sunucu çalışma durumu için global flag - signal handling için
 static volatile sig_atomic_t server_running = 1;
@@ -77,16 +78,22 @@ static volatile sig_atomic_t server_running = 1;
  */
 // Signal handler for graceful shutdown
 void handle_signal(int sig) {
-    printf("\n🛑 Signal %d alındı, server kapatılıyor...\n", sig);
+    LOG_SERVER_INFO("Signal %d received, shutting down server...", sig);
+    PRINTF_SERVER("\n🛑 Signal %d alındı, server kapatılıyor...\n", sig);
     server_running = 0;
     
     // TCP server'ı durdur
+    LOG_SERVER_INFO("Stopping TCP server...");
     stop_tcp_server();
     
     // Database'i kapat
+    LOG_SERVER_INFO("Closing database connection...");
     db_close();
     
-    printf("✓ Server temiz bir şekilde kapatıldı\n");
+    // Logger'ı temizle
+    logger_cleanup(LOGGER_SERVER);
+    
+    PRINTF_LOG("✓ Server temiz bir şekilde kapatıldı\n");
     exit(0);
 }
 
@@ -135,22 +142,40 @@ void handle_signal(int sig) {
  */
 
 int main() {
-    printf("Encrypted JSON Server - Sifreli dosya parse sunucusu\n");
-    printf("===================================================\n");
+    PRINTF_SERVER("Encrypted JSON Server - Sifreli dosya parse sunucusu\n");
+    PRINTF_SERVER("===================================================\n");
+    
+    // Logger'ı başlat (önce logger başlatılmalı)
+    if (logger_init(LOGGER_SERVER, LOG_DEBUG) != 0) {
+        fprintf(stderr, "Logger başlatılamadı!\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    LOG_SERVER_INFO("Starting Encrypted JSON Server...");
+    LOG_SERVER_INFO("Server initialization began");
     
     // Connection Manager'ı başlat
+    LOG_SERVER_DEBUG("Initializing Connection Manager...");
     if (init_connection_manager() != 0) {
-        fprintf(stderr, "Connection Manager başlatılamadı!\n");
+        LOG_SERVER_ERROR("Failed to initialize Connection Manager");
+        PRINTF_SERVER("Connection Manager başlatılamadı!\n");
+        logger_cleanup(LOGGER_SERVER);
         exit(EXIT_FAILURE);
     }
+    LOG_SERVER_INFO("Connection Manager initialized successfully");
     
     // Control interface'i başlat
+    LOG_SERVER_DEBUG("Starting Control Interface...");
     if (start_control_interface() != 0) {
-        fprintf(stderr, "Control interface başlatılamadı!\n");
+        LOG_SERVER_ERROR("Failed to start Control Interface");
+        PRINTF_SERVER("Control interface başlatılamadı!\n");
+        logger_cleanup(LOGGER_SERVER);
         exit(EXIT_FAILURE);
     }
+    LOG_SERVER_INFO("Control Interface started successfully");
     
     // Thread monitoring sistemini başlat
+    LOG_SERVER_DEBUG("Initializing Thread Monitoring...");
     init_thread_monitoring();
 
     pthread_t monitor_thread;
@@ -162,44 +187,55 @@ int main() {
     pthread_create(&queue_thread, NULL, queue_processor, NULL);
     pthread_detach(queue_thread);
     
-    printf("Thread monitoring sistemi aktif\n");
-    printf("Queue processing sistemi aktif\n");
+    LOG_SERVER_INFO("Thread monitoring system activated");
+    LOG_SERVER_INFO("Queue processing system activated");
+    PRINTF_SERVER("Thread monitoring sistemi aktif\n");
+    PRINTF_SERVER("Queue processing sistemi aktif\n");
     fflush(stdout);
     
     // Database baslat
-    printf("Database baslatiiliyor...\n");
+    LOG_SERVER_DEBUG("Initializing database...");
+    PRINTF_SERVER("Database baslatiiliyor...\n");
     fflush(stdout);
     
     if (db_init("data/tactical_data.db") != 0) {
-        fprintf(stderr, "Database baglantisi basarisiz!\n");
+        LOG_SERVER_ERROR("Database connection failed!");
+        PRINTF_SERVER("Database baglantisi basarisiz!\n");
         fflush(stderr);
         exit(EXIT_FAILURE);
     }
     
     if (db_create_tables() != 0) {
-        fprintf(stderr, "Database tablolari olusturulamadi!\n");
+        LOG_SERVER_ERROR("Failed to create database tables");
+        PRINTF_SERVER("Database tablolari olusturulamadi!\n");
         fflush(stderr);
         db_close();
         exit(EXIT_FAILURE);
     }
     
-    printf("Database basariyla baslatildi ve tablolar hazir\n");
+    LOG_SERVER_INFO("Database successfully initialized, tables ready");
+    PRINTF_SERVER("Database basariyla baslatildi ve tablolar hazir\n");
     
     // Test verilerini yükle (sadece ilk çalıştırmada)
-    printf("Test verileri kontrol ediliyor...\n");
+    LOG_SERVER_DEBUG("Checking test data...");
+    PRINTF_SERVER("Test verileri kontrol ediliyor...\n");
     unit_t *existing_units;
     int unit_count;
     
     if (db_select_units(&existing_units, &unit_count) == 0) {
         if (unit_count == 0) {
-            printf("Database boş, test verileri ekleniyor...\n");
+            LOG_SERVER_INFO("Database empty, inserting test data...");
+            PRINTF_SERVER("Database boş, test verileri ekleniyor...\n");
             if (db_insert_test_data() == 0) {
-                printf("Test verileri başarıyla eklendi\n");
+                LOG_SERVER_INFO("Test data inserted successfully");
+                PRINTF_SERVER("Test verileri başarıyla eklendi\n");
             } else {
-                printf("Test verileri eklenirken hata oluştu\n");
+                LOG_SERVER_ERROR("Failed to insert test data");
+                PRINTF_SERVER("Test verileri eklenirken hata oluştu\n");
             }
         } else {
-            printf("Database'de %d birim mevcut, test verileri atlanıyor\n", unit_count);
+            LOG_SERVER_INFO("Database has %d existing units, skipping test data", unit_count);
+            PRINTF_SERVER("Database'de %d birim mevcut, test verileri atlanıyor\n", unit_count);
         }
         if (existing_units) free(existing_units);
     }
@@ -207,21 +243,23 @@ int main() {
     fflush(stdout);
     
     // TCP Server'ı başlat
-    printf("TCP Server başlatılıyor...\n");
+    LOG_SERVER_DEBUG("Starting TCP Server...");
+    PRINTF_SERVER("TCP Server başlatılıyor...\n");
     if (start_tcp_server(CONFIG_PORT) != 0) {
-        fprintf(stderr, "TCP Server başlatılamadı!\n");
+        LOG_SERVER_ERROR("Failed to start TCP Server");
+        PRINTF_SERVER("TCP Server başlatılamadı!\n");
         db_close();
         exit(EXIT_FAILURE);
     }
     
-    
-    printf("Server başlatıldı\n");
-    printf("Desteklenen komutlar:\n");
-    printf("  PARSE:filename:{json_data}      - Normal JSON parse\n");
-    printf("  ENCRYPTED:filename:{hex_data}   - Sifreli JSON parse\n");
-    printf("  CONTROL:command                 - Server control\n");
-    printf("Control komutları: start_tcp, stop_tcp, list, stats\n");
-    printf("Çıkış için Ctrl+C'ye basın\n\n");
+    LOG_SERVER_INFO("Server started successfully");
+    PRINTF_SERVER("Server başlatıldı\n");
+    PRINTF_SERVER("Desteklenen komutlar:\n");
+    PRINTF_SERVER("  PARSE:filename:{json_data}      - Normal JSON parse\n");
+    PRINTF_SERVER("  ENCRYPTED:filename:{hex_data}   - Sifreli JSON parse\n");
+    PRINTF_SERVER("  CONTROL:command                 - Server control\n");
+    PRINTF_SERVER("Control komutları: start_tcp, stop_tcp, list, stats\n");
+    PRINTF_SERVER("Çıkış için Ctrl+C'ye basın\n\n");
     fflush(stdout);
     
     // Docker modunu kontrol et (stdin kullanılabilir mi?)
@@ -229,12 +267,13 @@ int main() {
     
     if (is_interactive) {
         // Interactive mode - local çalıştırma
-        printf("\n=== SERVER CONTROL INTERFACE ===\n");
-        printf("Commands: stop_tcp, start_tcp, list, stats, help, quit\n");
+        LOG_SERVER_INFO("Running in interactive mode");
+        PRINTF_SERVER("\n=== SERVER CONTROL INTERFACE ===\n");
+        PRINTF_LOG("Commands: stop_tcp, start_tcp, list, stats, help, quit\n");
         
         char command[256];
         while (1) {
-            printf("server> ");
+            PRINTF_LOG("server> ");
             fflush(stdout);
             
             if (fgets(command, sizeof(command), stdin) != NULL) {
@@ -243,7 +282,7 @@ int main() {
                 if (strlen(command) == 0) continue;
                 
                 if (strcmp(command, "quit") == 0 || strcmp(command, "exit") == 0) {
-                    printf("Server kapatılıyor...\n");
+                    PRINTF_LOG("Server kapatılıyor...\n");
                     break;
                 } else if (strcmp(command, "help") == 0) {
                     show_connection_menu();
@@ -252,8 +291,8 @@ int main() {
                     log_thread_stats();
                 } else {
                     if (process_connection_command(command) != 0) {
-                        printf("Bilinmeyen komut: %s\n", command);
-                        printf("'help' yazın veya 'quit' ile çıkın\n");
+                        PRINTF_LOG("Bilinmeyen komut: %s\n", command);
+                        PRINTF_LOG("'help' yazın veya 'quit' ile çıkın\n");
                     }
                 }
             } else {
@@ -262,10 +301,10 @@ int main() {
         }
     } else {
         // Non-interactive mode - Docker çalıştırma
-        printf("\n=== DOCKER MODE - Server running in background ===\n");
-        printf("Server TCP port %d'de çalışıyor\n", CONFIG_PORT);
-        printf("UDP server için 'start_udp' komutu ile başlatabilirsiniz\n");
-        printf("Container'ı durdurmak için: docker-compose down\n");
+        PRINTF_LOG("\n=== DOCKER MODE - Server running in background ===\n");
+        PRINTF_LOG("Server TCP port %d'de çalışıyor\n", CONFIG_PORT);
+        PRINTF_LOG("UDP server için 'start_udp' komutu ile başlatabilirsiniz\n");
+        PRINTF_LOG("Container'ı durdurmak için: docker-compose down\n");
         fflush(stdout);
         
         // Signal handler kurulumu
@@ -277,18 +316,18 @@ int main() {
             sleep(10);
             
             // Her 10 saniyede bir stats yazdır
-            printf("=== SERVER STATUS ===\n");
+            PRINTF_LOG("=== SERVER STATUS ===\n");
             list_active_connections();
             log_thread_stats();
-            printf("Server aktif, bağlantı bekleniyor... (PID: %d)\n", getpid());
+            PRINTF_LOG("Server aktif, bağlantı bekleniyor... (PID: %d)\n", getpid());
             fflush(stdout);
         }
     }
     
-    printf("Sunucu kapatılıyor...\n");
+    PRINTF_LOG("Sunucu kapatılıyor...\n");
     stop_tcp_server();
     db_close();
-    printf("Server kapatıldı\n");
+    PRINTF_LOG("Server kapatıldı\n");
     return 0;
 }
 
@@ -340,7 +379,7 @@ void* handle_client(void* arg) {
     pthread_t current_thread = pthread_self();
     free(arg); // malloc'ed memory'yi temizle
 
-    printf("Client thread baslatildi (Thread ID: %lu, Socket: %d)\n", 
+    PRINTF_LOG("Client thread baslatildi (Thread ID: %lu, Socket: %d)\n", 
            current_thread, client_socket);
     fflush(stdout);
 
@@ -350,7 +389,7 @@ void* handle_client(void* arg) {
     snprintf(client_manager.name, sizeof(client_manager.name), "Client-%d", client_socket);
     
     if (!init_ecdh_for_connection(&client_manager)) {
-        printf("ECDH başlatılamadı (Thread: %lu)\n", current_thread);
+        PRINTF_LOG("ECDH başlatılamadı (Thread: %lu)\n", current_thread);
         close(client_socket);
         remove_thread_info(current_thread);
         return NULL;
@@ -358,7 +397,7 @@ void* handle_client(void* arg) {
     
     // Anahtar değişimi yap
     if (!exchange_keys_with_peer(&client_manager, client_socket)) {
-        printf("Anahtar değişimi başarısız (Thread: %lu)\n", current_thread);
+        PRINTF_LOG("Anahtar değişimi başarısız (Thread: %lu)\n", current_thread);
         cleanup_ecdh_for_connection(&client_manager);
         close(client_socket);
         remove_thread_info(current_thread);
@@ -368,14 +407,14 @@ void* handle_client(void* arg) {
     // AES256 oturum anahtarını al
     const uint8_t* session_key = get_session_key(&client_manager);
     if (session_key == NULL) {
-        printf("Oturum anahtarı alınamadı (Thread: %lu)\n", current_thread);
+        PRINTF_LOG("Oturum anahtarı alınamadı (Thread: %lu)\n", current_thread);
         cleanup_ecdh_for_connection(&client_manager);
         close(client_socket);
         remove_thread_info(current_thread);
         return NULL;
     }
     
-    printf("✓ ECDH anahtar değişimi tamamlandı (Thread: %lu)\n", current_thread);
+    PRINTF_LOG("✓ ECDH anahtar değişimi tamamlandı (Thread: %lu)\n", current_thread);
 
     char buffer[CONFIG_BUFFER_SIZE];
     int request_count = 0;
@@ -386,23 +425,23 @@ void* handle_client(void* arg) {
         ssize_t bytes_received = read(client_socket, buffer, CONFIG_BUFFER_SIZE - 1);
         if (bytes_received <= 0) {
             if (bytes_received == 0) {
-                printf("Client normal olarak ayrıldı (Thread: %lu)\n", current_thread);
+                PRINTF_LOG("Client normal olarak ayrıldı (Thread: %lu)\n", current_thread);
             } else {
-                printf("Client bağlantı hatası (Thread: %lu, Hata: %s)\n", 
+                PRINTF_LOG("Client bağlantı hatası (Thread: %lu, Hata: %s)\n", 
                        current_thread, strerror(errno));
             }
             break;
         }
         
         request_count++;
-        printf("İstek alındı (Thread: %lu, İstek #%d, Boyut: %zd bytes)\n", 
+        PRINTF_LOG("İstek alındı (Thread: %lu, İstek #%d, Boyut: %zd bytes)\n", 
                current_thread, request_count, bytes_received);
         
         buffer[bytes_received] = '\0';
         
         // Health check detection - Docker healthcheck'i tespit et
         if (bytes_received == 0 || (bytes_received > 0 && buffer[0] == '\0')) {
-            printf("HEALTHCHECK: Docker health check tespit edildi (Thread: %lu)\n", current_thread);
+            PRINTF_LOG("HEALTHCHECK: Docker health check tespit edildi (Thread: %lu)\n", current_thread);
             fflush(stdout);
             close(client_socket);
             remove_thread_info(current_thread);
@@ -411,7 +450,7 @@ void* handle_client(void* arg) {
         
         // Boş veya çok kısa mesajları health check olarak değerlendir
         if (bytes_received < 5) {
-            printf("HEALTHCHECK: Kısa mesaj - muhtemelen health check (Thread: %lu, Boyut: %zd)\n", 
+            PRINTF_LOG("HEALTHCHECK: Kısa mesaj - muhtemelen health check (Thread: %lu, Boyut: %zd)\n", 
                    current_thread, bytes_received);
             fflush(stdout);
             close(client_socket);
@@ -420,7 +459,7 @@ void* handle_client(void* arg) {
         }
         
         char *current_time = get_current_time();
-        printf("[%s] Mesaj alindi (%zd byte)\n", current_time, bytes_received);
+        PRINTF_LOG("[%s] Mesaj alindi (%zd byte)\n", current_time, bytes_received);
         fflush(stdout);
         free(current_time);
         
@@ -435,15 +474,15 @@ void* handle_client(void* arg) {
             continue;
         }
         
-        printf("Komut: %s\n", command);
-        printf("Dosya: %s\n", filename);
+        PRINTF_LOG("Komut: %s\n", command);
+        PRINTF_LOG("Dosya: %s\n", filename);
         fflush(stdout);
         
         char *parsed_result = NULL;
         
         // Komut tipine gore islem yap
         if (strcmp(command, "PARSE") == 0) {
-            printf("Normal JSON parse ediliyor (Tactical Data format)...\n");
+            PRINTF_LOG("Normal JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
             
             // JSON'u tactical data struct'ına parse et
@@ -458,7 +497,7 @@ void* handle_client(void* arg) {
                 if (tactical_data) free_tactical_data(tactical_data);
             }
         } else if (strcmp(command, "ENCRYPTED") == 0) {
-            printf("Sifreli JSON parse ediliyor (Tactical Data format)...\n");
+            PRINTF_LOG("Sifreli JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
             parsed_result = handle_encrypted_request(filename, content, session_key);
         } else {
@@ -469,7 +508,7 @@ void* handle_client(void* arg) {
         // Sonucu client'a gonder
         if (parsed_result != NULL) {
             send(client_socket, parsed_result, strlen(parsed_result), 0);
-            printf("Parse sonucu gonderildi\n");
+            PRINTF_LOG("Parse sonucu gonderildi\n");
             fflush(stdout);
             free(parsed_result);
         }
@@ -481,7 +520,7 @@ void* handle_client(void* arg) {
     }
 
     close(client_socket);
-    printf("Client bağlantısı kapatıldı (Thread: %lu, Toplam istek: %d)\n", 
+    PRINTF_LOG("Client bağlantısı kapatıldı (Thread: %lu, Toplam istek: %d)\n", 
            current_thread, request_count);
     
     // ECDH temizliği
@@ -490,7 +529,7 @@ void* handle_client(void* arg) {
     // Thread bilgilerini temizle
     remove_thread_info(current_thread);
     
-    printf("✅ Thread slot serbest kaldı - Queue kontrol ediliyor...\n");
+    PRINTF_LOG("✅ Thread slot serbest kaldı - Queue kontrol ediliyor...\n");
     fflush(stdout);
     
     fflush(stdout);
@@ -583,7 +622,7 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         return error_msg;
     }
     
-    printf("Decrypted JSON: %s\n", decrypted_json);
+    PRINTF_LOG("Decrypted JSON: %s\n", decrypted_json);
     
     // JSON'u tactical data struct'ına parse et
     tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename);
@@ -726,13 +765,13 @@ int parse_protocol_message(const char* message, char** command, char** filename,
 void* queue_processor(void* arg) {
     (void)arg; // unused parameter warning'ini bastır
     
-    printf("Queue processor thread başlatıldı\n");
+    PRINTF_LOG("Queue processor thread başlatıldı\n");
     fflush(stdout);
     
     while (1) {
         // Queue'da client var mı ve boş thread slot'u var mı kontrol et
         while (get_queue_size() > 0 && get_active_thread_count() < CONFIG_MAX_CLIENTS) {
-            printf("🔄 Queue işleniyor... (Queue: %d, Aktif: %d/%d)\n", 
+            PRINTF_LOG("🔄 Queue işleniyor... (Queue: %d, Aktif: %d/%d)\n", 
                    get_queue_size(), get_active_thread_count(), CONFIG_MAX_CLIENTS);
             
             if (process_queue() == 0) {

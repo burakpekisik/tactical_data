@@ -16,6 +16,7 @@
 #include <sqlite3.h>
 #include <string.h>
 #include "../../include/database.h"
+#include "logger.h"
 
 /**
  * @brief External global veritabanı bağlantısı
@@ -75,10 +76,10 @@ int db_update_unit(int id, const unit_t *unit) {
     } else {
         int changes = sqlite3_changes(g_db);
         if (changes > 0) {
-            printf("Unit ID %d updated successfully\n", id);
+            PRINTF_LOG("Unit ID %d updated successfully\n", id);
             return 0;
         } else {
-            printf("No unit found with ID %d\n", id);
+            PRINTF_LOG("No unit found with ID %d\n", id);
             return -1;
         }
     }
@@ -137,10 +138,10 @@ int db_update_report(int id, const report_t *report) {
     } else {
         int changes = sqlite3_changes(g_db);
         if (changes > 0) {
-            printf("Report ID %d updated successfully\n", id);
+            PRINTF_LOG("Report ID %d updated successfully\n", id);
             return 0;
         } else {
-            printf("No report found with ID %d\n", id);
+            PRINTF_LOG("No report found with ID %d\n", id);
             return -1;
         }
     }

@@ -15,6 +15,7 @@
 #include <sqlite3.h>
 #include <string.h>
 #include "../../include/database.h"
+#include "logger.h"
 
 /**
  * @brief External global veritabanı bağlantısı

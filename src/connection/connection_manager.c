@@ -48,6 +48,7 @@
 #include "p2p_connection.h"
 #include "config.h"
 #include "crypto_utils.h"
+#include "logger.h"
 
 /// @brief TCP bağlantı yöneticisi - global context
 static connection_manager_t tcp_manager;
@@ -130,10 +131,10 @@ int init_connection_manager(void) {
     manager_initialized = true;
     pthread_mutex_unlock(&conn_mutex);
     
-    printf("Connection Manager initialized\n");
-    printf("- TCP: Port %d (Ready)\n", tcp_manager.port);
-    printf("- UDP: Port %d (Ready)\n", udp_manager.port);
-    printf("- P2P: Port %d (Ready)\n", p2p_manager.port);
+    PRINTF_LOG("Connection Manager initialized\n");
+    PRINTF_LOG("- TCP: Port %d (Ready)\n", tcp_manager.port);
+    PRINTF_LOG("- UDP: Port %d (Ready)\n", udp_manager.port);
+    PRINTF_LOG("- P2P: Port %d (Ready)\n", p2p_manager.port);
     fflush(stdout);
     
     return 0;
@@ -172,7 +173,7 @@ int init_connection_manager(void) {
  * @code
  * int result = start_tcp_server(8080);
  * if (result != 0) {
- *     printf("TCP sunucu başlatılamadı: %d\n", result);
+ *     PRINTF_LOG("TCP sunucu başlatılamadı: %d\n", result);
  * }
  * @endcode
  */
@@ -181,7 +182,7 @@ int start_tcp_server(int port) {
     pthread_mutex_lock(&conn_mutex);
     
     if (tcp_manager.status == CONN_STATUS_RUNNING) {
-        printf("TCP Server zaten çalışıyor (Port: %d)\n", tcp_manager.port);
+        PRINTF_LOG("TCP Server zaten çalışıyor (Port: %d)\n", tcp_manager.port);
         pthread_mutex_unlock(&conn_mutex);
         return 0;
     }
@@ -239,7 +240,7 @@ int start_udp_server(int port) {
     pthread_mutex_lock(&conn_mutex);
     
     if (udp_manager.status == CONN_STATUS_RUNNING) {
-        printf("UDP Server zaten çalışıyor (Port: %d)\n", udp_manager.port);
+        PRINTF_LOG("UDP Server zaten çalışıyor (Port: %d)\n", udp_manager.port);
         pthread_mutex_unlock(&conn_mutex);
         return 0;
     }
@@ -266,7 +267,7 @@ int start_p2p_node(int port) {
     pthread_mutex_lock(&conn_mutex);
     
     if (p2p_manager.status == CONN_STATUS_RUNNING) {
-        printf("P2P Node zaten çalışıyor (Port: %d)\n", p2p_manager.port);
+        PRINTF_LOG("P2P Node zaten çalışıyor (Port: %d)\n", p2p_manager.port);
         pthread_mutex_unlock(&conn_mutex);
         return 0;
     }
@@ -327,10 +328,10 @@ int stop_p2p_node(void) {
 void list_active_connections(void) {
     pthread_mutex_lock(&conn_mutex);
     
-    printf("\n==== ACTIVE CONNECTIONS ====\n");
+    PRINTF_LOG("\n==== ACTIVE CONNECTIONS ====\n");
     
     // TCP Status
-    printf("TCP Server: %s (Port: %d, Status: %s)\n",
+    PRINTF_LOG("TCP Server: %s (Port: %d, Status: %s)\n",
            tcp_manager.is_active ? "ACTIVE" : "INACTIVE",
            tcp_manager.port,
            tcp_manager.status == CONN_STATUS_RUNNING ? "RUNNING" :
@@ -338,7 +339,7 @@ void list_active_connections(void) {
            tcp_manager.status == CONN_STATUS_ERROR ? "ERROR" : "UNKNOWN");
     
     // UDP Status
-    printf("UDP Server: %s (Port: %d, Status: %s)\n",
+    PRINTF_LOG("UDP Server: %s (Port: %d, Status: %s)\n",
            udp_manager.is_active ? "ACTIVE" : "INACTIVE",
            udp_manager.port,
            udp_manager.status == CONN_STATUS_RUNNING ? "RUNNING" :
@@ -346,14 +347,14 @@ void list_active_connections(void) {
            udp_manager.status == CONN_STATUS_ERROR ? "ERROR" : "UNKNOWN");
     
     // P2P Status
-    printf("P2P Node: %s (Port: %d, Status: %s)\n",
+    PRINTF_LOG("P2P Node: %s (Port: %d, Status: %s)\n",
            p2p_manager.is_active ? "ACTIVE" : "INACTIVE",
            p2p_manager.port,
            p2p_manager.status == CONN_STATUS_RUNNING ? "RUNNING" :
            p2p_manager.status == CONN_STATUS_STOPPED ? "STOPPED" :
            p2p_manager.status == CONN_STATUS_ERROR ? "ERROR" : "UNKNOWN");
     
-    printf("============================\n\n");
+    PRINTF_LOG("============================\n\n");
     
     pthread_mutex_unlock(&conn_mutex);
 }
@@ -384,22 +385,22 @@ connection_status_t get_connection_status(connection_type_t type) {
 
 // Connection menüsü
 void show_connection_menu(void) {
-    printf("\n=== CONNECTION CONTROL MENU ===\n");
-    printf("TCP Commands:\n");
-    printf("  start_tcp  - Start TCP Server\n");
-    printf("  stop_tcp   - Stop TCP Server\n");
-    printf("UDP Commands:\n");
-    printf("  start_udp  - Start UDP Server\n");
-    printf("  stop_udp   - Stop UDP Server\n");
-    printf("P2P Commands:\n");
-    printf("  start_p2p  - Start P2P Node\n");
-    printf("  stop_p2p   - Stop P2P Node\n");
-    printf("General Commands:\n");
-    printf("  list       - List Active Connections\n");
-    printf("  stats      - Show Statistics\n");
-    printf("  help       - Show this menu\n");
-    printf("  quit       - Exit server\n");
-    printf("===============================\n");
+    PRINTF_LOG("\n=== CONNECTION CONTROL MENU ===\n");
+    PRINTF_LOG("TCP Commands:\n");
+    PRINTF_LOG("  start_tcp  - Start TCP Server\n");
+    PRINTF_LOG("  stop_tcp   - Stop TCP Server\n");
+    PRINTF_LOG("UDP Commands:\n");
+    PRINTF_LOG("  start_udp  - Start UDP Server\n");
+    PRINTF_LOG("  stop_udp   - Stop UDP Server\n");
+    PRINTF_LOG("P2P Commands:\n");
+    PRINTF_LOG("  start_p2p  - Start P2P Node\n");
+    PRINTF_LOG("  stop_p2p   - Stop P2P Node\n");
+    PRINTF_LOG("General Commands:\n");
+    PRINTF_LOG("  list       - List Active Connections\n");
+    PRINTF_LOG("  stats      - Show Statistics\n");
+    PRINTF_LOG("  help       - Show this menu\n");
+    PRINTF_LOG("  quit       - Exit server\n");
+    PRINTF_LOG("===============================\n");
 }
 
 // Command işleme
@@ -482,18 +483,18 @@ int init_ecdh_for_connection(connection_manager_t* manager) {
     
     // ECDH context'i başlat
     if (!ecdh_init_context(&manager->ecdh_ctx)) {
-        printf("ECDH context başlatılamadı\n");
+        PRINTF_LOG("ECDH context başlatılamadı\n");
         return 0;
     }
     
     // Anahtar çifti üret
     if (!ecdh_generate_keypair(&manager->ecdh_ctx)) {
-        printf("ECDH anahtar çifti üretilemedi\n");
+        PRINTF_LOG("ECDH anahtar çifti üretilemedi\n");
         return 0;
     }
     
     manager->ecdh_initialized = true;
-    printf("ECDH %s için başlatıldı\n", manager->name);
+    PRINTF_LOG("ECDH %s için başlatıldı\n", manager->name);
     
     return 1;
 }
@@ -559,12 +560,12 @@ int exchange_keys_with_peer(connection_manager_t* manager, int socket) {
         return 0;
     }
     
-    printf("Peer ile anahtar değişimi başlıyor...\n");
+    PRINTF_LOG("Peer ile anahtar değişimi başlıyor...\n");
     
     // Önce kendi public key'imizi gönder
     ssize_t sent = send(socket, manager->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
     if (sent != ECC_PUB_KEY_SIZE) {
-        printf("Public key gönderilemedi\n");
+        PRINTF_LOG("Public key gönderilemedi\n");
         return 0;
     }
     
@@ -572,24 +573,24 @@ int exchange_keys_with_peer(connection_manager_t* manager, int socket) {
     uint8_t peer_public_key[ECC_PUB_KEY_SIZE];
     ssize_t received = recv(socket, peer_public_key, ECC_PUB_KEY_SIZE, 0);
     if (received != ECC_PUB_KEY_SIZE) {
-        printf("Peer public key alınamadı\n");
+        PRINTF_LOG("Peer public key alınamadı\n");
         return 0;
     }
     
     // Shared secret hesapla
     if (!ecdh_compute_shared_secret(&manager->ecdh_ctx, peer_public_key)) {
-        printf("Shared secret hesaplanamadı\n");
+        PRINTF_LOG("Shared secret hesaplanamadı\n");
         return 0;
     }
     
     // AES anahtarını türet
     if (!ecdh_derive_aes_key(&manager->ecdh_ctx)) {
-        printf("AES anahtarı türetilemedi\n");
+        PRINTF_LOG("AES anahtarı türetilemedi\n");
         return 0;
     }
     
-    printf("✓ Anahtar değişimi başarıyla tamamlandı\n");
-    printf("✓ AES256 oturum anahtarı hazır\n");
+    PRINTF_LOG("✓ Anahtar değişimi başarıyla tamamlandı\n");
+    PRINTF_LOG("✓ AES256 oturum anahtarı hazır\n");
     
     return 1;
 }
@@ -668,6 +669,6 @@ void cleanup_ecdh_for_connection(connection_manager_t* manager) {
     if (manager != NULL && manager->ecdh_initialized) {
         ecdh_cleanup_context(&manager->ecdh_ctx);
         manager->ecdh_initialized = false;
-        printf("ECDH %s için temizlendi\n", manager->name);
+        PRINTF_LOG("ECDH %s için temizlendi\n", manager->name);
     }
 }

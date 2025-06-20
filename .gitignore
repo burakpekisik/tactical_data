@@ -3,6 +3,7 @@ html
 latex
 man
 xml
+logs
 
 # Prerequisites
 *.d

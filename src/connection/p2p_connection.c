@@ -24,6 +24,7 @@
 #include "crypto_utils.h"
 #include "database.h"
 #include "json_utils.h"
+#include "logger.h"
 
 /// @brief Aktif peer bilgilerini tutan global array
 static p2p_peer_t peers[CONFIG_MAX_CLIENTS];
@@ -46,7 +47,7 @@ typedef struct {
  * @return 0 başarı
  */
 int p2p_node_init(connection_manager_t* manager) {
-    printf("P2P Node modülü başlatılıyor...\n");
+    PRINTF_LOG("P2P Node modülü başlatılıyor...\n");
     
     manager->type = CONN_TYPE_P2P;
     manager->status = CONN_STATUS_STOPPED;
@@ -68,7 +69,7 @@ int p2p_node_init(connection_manager_t* manager) {
     peer_count = 0;
     pthread_mutex_unlock(&p2p_mutex);
     
-    printf("✓ P2P Node modülü hazır (Port: %d, NodeID: %s)\n", 
+    PRINTF_LOG("✓ P2P Node modülü hazır (Port: %d, NodeID: %s)\n", 
            manager->port, local_node_id);
     return 0;
 }
@@ -83,7 +84,7 @@ int p2p_node_start(connection_manager_t* manager) {
     struct sockaddr_in address;
     int opt = 1;
     
-    printf("P2P Node başlatılıyor (Port: %d)...\n", manager->port);
+    PRINTF_LOG("P2P Node başlatılıyor (Port: %d)...\n", manager->port);
     
     // Socket oluştur (TCP tabanlı P2P)
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
@@ -135,7 +136,7 @@ int p2p_node_start(connection_manager_t* manager) {
     
     pthread_detach(manager->server_thread);
     
-    printf("✓ P2P Node başarıyla başlatıldı (Port: %d, NodeID: %s)\n", 
+    PRINTF_LOG("✓ P2P Node başarıyla başlatıldı (Port: %d, NodeID: %s)\n", 
            manager->port, local_node_id);
     return 0;
 }
@@ -147,11 +148,11 @@ int p2p_node_start(connection_manager_t* manager) {
  */
 int p2p_node_stop(connection_manager_t* manager) {
     if (manager->status != CONN_STATUS_RUNNING) {
-        printf("P2P Node zaten durdurulmuş\n");
+        PRINTF_LOG("P2P Node zaten durdurulmuş\n");
         return 0;
     }
     
-    printf("P2P Node durduruluyor...\n");
+    PRINTF_LOG("P2P Node durduruluyor...\n");
     manager->status = CONN_STATUS_STOPPING;
     
     // Tüm peer bağlantılarını kapat
@@ -174,7 +175,7 @@ int p2p_node_stop(connection_manager_t* manager) {
     manager->status = CONN_STATUS_STOPPED;
     manager->is_active = false;
     
-    printf("✓ P2P Node durduruldu (Port: %d)\n", manager->port);
+    PRINTF_LOG("✓ P2P Node durduruldu (Port: %d)\n", manager->port);
     return 0;
 }
 
@@ -188,7 +189,7 @@ void* p2p_node_thread(void* arg) {
     struct sockaddr_in peer_addr;
     socklen_t peer_len = sizeof(peer_addr);
     
-    printf("P2P Node thread başlatıldı (Port: %d, NodeID: %s)\n", 
+    PRINTF_LOG("P2P Node thread başlatıldı (Port: %d, NodeID: %s)\n", 
            manager->port, local_node_id);
     
     while (manager->is_active && manager->status == CONN_STATUS_RUNNING) {
@@ -206,7 +207,7 @@ void* p2p_node_thread(void* arg) {
         inet_ntop(AF_INET, &peer_addr.sin_addr, peer_ip, INET_ADDRSTRLEN);
         int peer_port = ntohs(peer_addr.sin_port);
         
-        printf("P2P Yeni peer bağlantısı: %s:%d\n", peer_ip, peer_port);
+        PRINTF_LOG("P2P Yeni peer bağlantısı: %s:%d\n", peer_ip, peer_port);
         
         // Peer'i listeye ekle
         pthread_mutex_lock(&p2p_mutex);
@@ -222,7 +223,7 @@ void* p2p_node_thread(void* arg) {
             
             p2p_log_peer_activity(peers[peer_count-1].node_id, "CONNECTED");
         } else {
-            printf("P2P Maksimum peer sayısına ulaşıldı, bağlantı reddediliyor\n");
+            PRINTF_LOG("P2P Maksimum peer sayısına ulaşıldı, bağlantı reddediliyor\n");
             close(peer_socket);
         }
         pthread_mutex_unlock(&p2p_mutex);
@@ -248,7 +249,7 @@ void* p2p_node_thread(void* arg) {
         }
     }
     
-    printf("P2P Node thread sonlandırıldı\n");
+    PRINTF_LOG("P2P Node thread sonlandırıldı\n");
     return NULL;
 }
 
@@ -263,7 +264,7 @@ int p2p_add_peer(const char* ip, int port) {
     
     if (peer_count >= CONFIG_MAX_CLIENTS) {
         pthread_mutex_unlock(&p2p_mutex);
-        printf("P2P Maksimum peer sayısına ulaşıldı\n");
+        PRINTF_LOG("P2P Maksimum peer sayısına ulaşıldı\n");
         return -1;
     }
     
@@ -271,7 +272,7 @@ int p2p_add_peer(const char* ip, int port) {
     for (int i = 0; i < peer_count; i++) {
         if (strcmp(peers[i].ip, ip) == 0 && peers[i].port == port) {
             pthread_mutex_unlock(&p2p_mutex);
-            printf("P2P Peer zaten mevcut: %s:%d\n", ip, port);
+            PRINTF_LOG("P2P Peer zaten mevcut: %s:%d\n", ip, port);
             return 0;
         }
     }
@@ -286,7 +287,7 @@ int p2p_add_peer(const char* ip, int port) {
     peers[peer_count].socket_fd = -1;
     peer_count++;
     
-    printf("P2P Yeni peer eklendi: %s:%d (NodeID: %s)\n", 
+    PRINTF_LOG("P2P Yeni peer eklendi: %s:%d (NodeID: %s)\n", 
            ip, port, peers[peer_count-1].node_id);
     
     pthread_mutex_unlock(&p2p_mutex);
@@ -314,7 +315,7 @@ int p2p_remove_peer(const char* node_id) {
             }
             peer_count--;
             
-            printf("P2P Peer kaldırıldı: %s\n", node_id);
+            PRINTF_LOG("P2P Peer kaldırıldı: %s\n", node_id);
             p2p_log_peer_activity(node_id, "REMOVED");
             
             pthread_mutex_unlock(&p2p_mutex);
@@ -323,7 +324,7 @@ int p2p_remove_peer(const char* node_id) {
     }
     
     pthread_mutex_unlock(&p2p_mutex);
-    printf("P2P Peer bulunamadı: %s\n", node_id);
+    PRINTF_LOG("P2P Peer bulunamadı: %s\n", node_id);
     return -1;
 }
 
@@ -334,7 +335,7 @@ int p2p_remove_peer(const char* node_id) {
  */
 int p2p_connect_to_peer(p2p_peer_t* peer) {
     if (peer->is_connected) {
-        printf("P2P Peer zaten bağlı: %s:%d\n", peer->ip, peer->port);
+        PRINTF_LOG("P2P Peer zaten bağlı: %s:%d\n", peer->ip, peer->port);
         return 0;
     }
     
@@ -359,7 +360,7 @@ int p2p_connect_to_peer(p2p_peer_t* peer) {
     peer->is_connected = true;
     peer->last_seen = time(NULL);
     
-    printf("P2P Peer'e bağlandı: %s:%d\n", peer->ip, peer->port);
+    PRINTF_LOG("P2P Peer'e bağlandı: %s:%d\n", peer->ip, peer->port);
     p2p_log_peer_activity(peer->node_id, "CONNECTED");
     
     return 0;
@@ -382,7 +383,7 @@ int p2p_disconnect_from_peer(p2p_peer_t* peer) {
     
     peer->is_connected = false;
     
-    printf("P2P Peer bağlantısı kesildi: %s:%d\n", peer->ip, peer->port);
+    PRINTF_LOG("P2P Peer bağlantısı kesildi: %s:%d\n", peer->ip, peer->port);
     p2p_log_peer_activity(peer->node_id, "DISCONNECTED");
     
     return 0;
@@ -397,7 +398,7 @@ void p2p_handle_peer_message(int socket, connection_manager_t* manager) {
     char buffer[CONFIG_BUFFER_SIZE];
     
     // P2P peer için ECDH anahtar değişimi yap
-    printf("P2P: Yeni peer ile ECDH anahtar değişimi başlıyor...\n");
+    PRINTF_LOG("P2P: Yeni peer ile ECDH anahtar değişimi başlıyor...\n");
     
     // Yeni peer oluştur ve ECDH başlat
     p2p_peer_t temp_peer;
@@ -406,54 +407,54 @@ void p2p_handle_peer_message(int socket, connection_manager_t* manager) {
     snprintf(temp_peer.node_id, sizeof(temp_peer.node_id), "PEER_SOCKET_%d", socket);
     
     if (!p2p_init_ecdh_for_peer(&temp_peer)) {
-        printf("P2P: ECDH başlatılamadı\n");
+        PRINTF_LOG("P2P: ECDH başlatılamadı\n");
         close(socket);
         return;
     }
     
     // ECDH anahtar değişimi yap
     if (!p2p_exchange_keys_with_peer(&temp_peer)) {
-        printf("P2P: Anahtar değişimi başarısız\n");
+        PRINTF_LOG("P2P: Anahtar değişimi başarısız\n");
         p2p_cleanup_ecdh_for_peer(&temp_peer);
         close(socket);
         return;
     }
     
-    printf("P2P: ECDH anahtar değişimi tamamlandı\n");
+    PRINTF_LOG("P2P: ECDH anahtar değişimi tamamlandı\n");
     
     while (1) {
         memset(buffer, 0, CONFIG_BUFFER_SIZE);
         
         ssize_t bytes_received = recv(socket, buffer, CONFIG_BUFFER_SIZE - 1, 0);
         if (bytes_received <= 0) {
-            printf("P2P Peer bağlantısı kesildi (socket: %d)\n", socket);
+            PRINTF_LOG("P2P Peer bağlantısı kesildi (socket: %d)\n", socket);
             break;
         }
         
         buffer[bytes_received] = '\0';
-        printf("P2P Mesaj alındı (%zd bytes): %.100s%s\n", 
+        PRINTF_LOG("P2P Mesaj alındı (%zd bytes): %.100s%s\n", 
                bytes_received, buffer, bytes_received > 100 ? "..." : "");
         
         // P2P mesajını işle
         if (strncmp(buffer, "P2P_DATA:", 9) == 0) {
             // Tactical data mesajı
             char* data_part = buffer + 9;
-            printf("P2P Tactical data işleniyor...\n");
+            PRINTF_LOG("P2P Tactical data işleniyor...\n");
             
             // P2P protokol formatını parse et
             if (process_p2p_tactical_data(data_part) == 0) {
                 const char* response = "P2P_ACK:Data processed successfully";
                 send(socket, response, strlen(response), 0);
-                printf("P2P Tactical data başarıyla işlendi\n");
+                PRINTF_LOG("P2P Tactical data başarıyla işlendi\n");
             } else {
                 const char* response = "P2P_NACK:Data processing failed";
                 send(socket, response, strlen(response), 0);
-                printf("P2P Tactical data işleme hatası\n");
+                PRINTF_LOG("P2P Tactical data işleme hatası\n");
             }
         } else if (strncmp(buffer, "P2P_ENCRYPTED:", 14) == 0) {
             // Şifreli tactical data mesajı
             char* encrypted_part = buffer + 14;
-            printf("P2P Şifreli tactical data işleniyor...\n");
+            PRINTF_LOG("P2P Şifreli tactical data işleniyor...\n");
             
             // ENCRYPTED:filename:hexdata formatını parse et
             if (strncmp(encrypted_part, "ENCRYPTED:", 10) == 0) {
@@ -469,25 +470,25 @@ void p2p_handle_peer_message(int socket, connection_manager_t* manager) {
                     
                     char* hex_data = first_colon + 1;
                     
-                    printf("P2P: Parsing - File: %s, Hex length: %zu\n", filename, strlen(hex_data));
+                    PRINTF_LOG("P2P: Parsing - File: %s, Hex length: %zu\n", filename, strlen(hex_data));
                     
                     // Şifreli veriyi işle
                     if (p2p_process_encrypted_data(hex_data, filename, &temp_peer) == 0) {
                         const char* response = "P2P_ACK:Encrypted data processed successfully";
                         send(socket, response, strlen(response), 0);
-                        printf("P2P Şifreli tactical data başarıyla işlendi\n");
+                        PRINTF_LOG("P2P Şifreli tactical data başarıyla işlendi\n");
                     } else {
                         const char* response = "P2P_NACK:Encrypted data processing failed";
                         send(socket, response, strlen(response), 0);
-                        printf("P2P Şifreli tactical data işleme hatası\n");
+                        PRINTF_LOG("P2P Şifreli tactical data işleme hatası\n");
                     }
                 } else {
-                    printf("P2P: Geçersiz şifreli veri formatı - colon bulunamadı\n");
+                    PRINTF_LOG("P2P: Geçersiz şifreli veri formatı - colon bulunamadı\n");
                     const char* response = "P2P_NACK:Invalid encrypted data format";
                     send(socket, response, strlen(response), 0);
                 }
             } else {
-                printf("P2P: Geçersiz şifreli veri formatı - ENCRYPTED prefix yok\n");
+                PRINTF_LOG("P2P: Geçersiz şifreli veri formatı - ENCRYPTED prefix yok\n");
                 const char* response = "P2P_NACK:Invalid encrypted data format";
                 send(socket, response, strlen(response), 0);
             }
@@ -540,7 +541,7 @@ int p2p_broadcast_message(const char* message) {
         if (peers[i].is_connected && peers[i].socket_fd >= 0) {
             if (send(peers[i].socket_fd, message, strlen(message), 0) > 0) {
                 sent_count++;
-                printf("P2P Broadcast gönderildi: %s -> %s\n", 
+                PRINTF_LOG("P2P Broadcast gönderildi: %s -> %s\n", 
                        message, peers[i].node_id);
             }
         }
@@ -548,7 +549,7 @@ int p2p_broadcast_message(const char* message) {
     
     pthread_mutex_unlock(&p2p_mutex);
     
-    printf("P2P Broadcast tamamlandı: %d peer'e gönderildi\n", sent_count);
+    PRINTF_LOG("P2P Broadcast tamamlandı: %d peer'e gönderildi\n", sent_count);
     return sent_count;
 }
 
@@ -558,7 +559,7 @@ int p2p_broadcast_message(const char* message) {
  */
 void p2p_update_stats(connection_manager_t* manager) {
     manager->client_count = peer_count;
-    printf("P2P Stats: Connected peers=%d, Total requests=%d\n", 
+    PRINTF_LOG("P2P Stats: Connected peers=%d, Total requests=%d\n", 
            manager->client_count, manager->total_requests);
 }
 
@@ -572,7 +573,7 @@ void p2p_log_peer_activity(const char* node_id, const char* activity) {
     char* time_str = ctime(&now);
     time_str[strlen(time_str) - 1] = '\0'; // newline'ı kaldır
     
-    printf("[%s] P2P %s: %s\n", time_str, activity, node_id);
+    PRINTF_LOG("[%s] P2P %s: %s\n", time_str, activity, node_id);
 }
 
 /**
@@ -594,12 +595,12 @@ int p2p_get_peer_count(void) {
 void p2p_list_peers(void) {
     pthread_mutex_lock(&p2p_mutex);
     
-    printf("\n=== P2P PEER LIST ===\n");
-    printf("Local Node ID: %s\n", local_node_id);
-    printf("Connected Peers: %d\n", peer_count);
+    PRINTF_LOG("\n=== P2P PEER LIST ===\n");
+    PRINTF_LOG("Local Node ID: %s\n", local_node_id);
+    PRINTF_LOG("Connected Peers: %d\n", peer_count);
     
     for (int i = 0; i < peer_count; i++) {
-        printf("  [%d] %s:%d (%s) - %s\n", 
+        PRINTF_LOG("  [%d] %s:%d (%s) - %s\n", 
                i + 1,
                peers[i].ip, 
                peers[i].port,
@@ -607,7 +608,7 @@ void p2p_list_peers(void) {
                peers[i].is_connected ? "CONNECTED" : "DISCONNECTED");
     }
     
-    printf("====================\n\n");
+    PRINTF_LOG("====================\n\n");
     
     pthread_mutex_unlock(&p2p_mutex);
 }
@@ -620,7 +621,7 @@ void p2p_list_peers(void) {
  */
 int process_tactical_data(const char* data) {
     if (data == NULL || strlen(data) == 0) {
-        printf("P2P Boş data alındı\n");
+        PRINTF_LOG("P2P Boş data alındı\n");
         return -1;
     }
     
@@ -628,18 +629,18 @@ int process_tactical_data(const char* data) {
     
     // Eğer hex format ise decrypt et
     if (strstr(data, "\"encrypted_data\":") != NULL) {
-        printf("P2P Şifreli data decrypt ediliyor...\n");
+        PRINTF_LOG("P2P Şifreli data decrypt ediliyor...\n");
         
         // JSON parse ederek encrypted_data değerini al
         cJSON* json = cJSON_Parse(data);
         if (!json) {
-            printf("P2P Error: JSON parse failed\n");
+            PRINTF_LOG("P2P Error: JSON parse failed\n");
             return -1;
         }
         
         cJSON* encrypted_data_obj = cJSON_GetObjectItem(json, "encrypted_data");
         if (!encrypted_data_obj || !cJSON_IsString(encrypted_data_obj)) {
-            printf("P2P Error: encrypted_data field not found\n");
+            PRINTF_LOG("P2P Error: encrypted_data field not found\n");
             cJSON_Delete(json);
             return -1;
         }
@@ -652,13 +653,13 @@ int process_tactical_data(const char* data) {
         cJSON_Delete(json);
         
         if (!binary_data) {
-            printf("P2P Encrypted Error: Hex decode failed\n");
+            PRINTF_LOG("P2P Encrypted Error: Hex decode failed\n");
             return -1;
         }
         
         // Decrypt data - IV ilk 16 byte'ta
         if (binary_len < 16) {
-            printf("P2P Encrypted Error: Data too short for IV\n");
+            PRINTF_LOG("P2P Encrypted Error: Data too short for IV\n");
             free(binary_data);
             return -1;
         }
@@ -671,38 +672,38 @@ int process_tactical_data(const char* data) {
         free(binary_data);
         
         if (!decrypted_json) {
-            printf("P2P Encrypted Error: Decryption failed - P2P şu anda ECDH desteklemiyor\n");
-            printf("P2P Encrypted Info: TCP bağlantısı kullanarak ECDH ile şifreli iletişim yapın\n");
+            PRINTF_LOG("P2P Encrypted Error: Decryption failed - P2P şu anda ECDH desteklemiyor\n");
+            PRINTF_LOG("P2P Encrypted Info: TCP bağlantısı kullanarak ECDH ile şifreli iletişim yapın\n");
             return -1;
         }
         
-        printf("P2P: Data decrypted successfully\n");
+        PRINTF_LOG("P2P: Data decrypted successfully\n");
         
         // Şifrelenmiş JSON'u çöz
         tactical_data = parse_json_to_tactical_data(decrypted_json, "p2p_data");
         free(decrypted_json);
     } else {
-        printf("P2P Normal data processing\n");
+        PRINTF_LOG("P2P Normal data processing\n");
         // Normal JSON processing
         tactical_data = parse_json_to_tactical_data(data, "p2p_data");
     }
     
     if (tactical_data != NULL && tactical_data->is_valid) {
-        printf("P2P: Tactical data parsed successfully\n");
+        PRINTF_LOG("P2P: Tactical data parsed successfully\n");
         
         // Database'e kaydet
         char* response = db_save_tactical_data_and_get_response(tactical_data, "p2p_data");
         if (response) {
-            printf("P2P: Database save response: %s\n", response);
+            PRINTF_LOG("P2P: Database save response: %s\n", response);
             free(response);
         }
         
         free_tactical_data(tactical_data);
         
-        printf("P2P Success: Data saved to database\n");
+        PRINTF_LOG("P2P Success: Data saved to database\n");
         return 0;
     } else {
-        printf("P2P Error: Invalid tactical data format\n");
+        PRINTF_LOG("P2P Error: Invalid tactical data format\n");
         if (tactical_data) free_tactical_data(tactical_data);
         return -1;
     }
@@ -716,17 +717,17 @@ int process_tactical_data(const char* data) {
  */
 int process_p2p_tactical_data(const char* p2p_data) {
     if (p2p_data == NULL || strlen(p2p_data) == 0) {
-        printf("P2P Boş protocol data alındı\n");
+        PRINTF_LOG("P2P Boş protocol data alındı\n");
         return -1;
     }
     
-    printf("P2P Protocol data: %.100s%s\n", p2p_data, strlen(p2p_data) > 100 ? "..." : "");
+    PRINTF_LOG("P2P Protocol data: %.100s%s\n", p2p_data, strlen(p2p_data) > 100 ? "..." : "");
     
     // P2P formatını parse et: CLIENT_ID:TYPE:FILENAME:DATA
     size_t data_len = strlen(p2p_data);
     char* data_copy = malloc(data_len + 1);
     if (!data_copy) {
-        printf("P2P Memory allocation failed\n");
+        PRINTF_LOG("P2P Memory allocation failed\n");
         return -1;
     }
     strcpy(data_copy, p2p_data);
@@ -737,17 +738,17 @@ int process_p2p_tactical_data(const char* p2p_data) {
     char* json_data = strtok(NULL, "");  // Rest of the string
     
     if (!client_id || !data_type || !filename || !json_data) {
-        printf("P2P Invalid protocol format\n");
+        PRINTF_LOG("P2P Invalid protocol format\n");
         free(data_copy);
         return -1;
     }
     
-    printf("P2P Parse: Client=%s, Type=%s, File=%s\n", client_id, data_type, filename);
+    PRINTF_LOG("P2P Parse: Client=%s, Type=%s, File=%s\n", client_id, data_type, filename);
     
     int result = -1;
     
     if (strcmp(data_type, "ENCRYPTED") == 0) {
-        printf("P2P Encrypted data processing\n");
+        PRINTF_LOG("P2P Encrypted data processing\n");
         // Encrypted data için JSON wrapper oluştur
         cJSON* wrapper = cJSON_CreateObject();
         cJSON_AddStringToObject(wrapper, "encrypted_data", json_data);
@@ -760,11 +761,11 @@ int process_p2p_tactical_data(const char* p2p_data) {
             free(wrapper_str);
         }
     } else if (strcmp(data_type, "NORMAL") == 0) {
-        printf("P2P Normal data processing\n");
+        PRINTF_LOG("P2P Normal data processing\n");
         // Normal JSON data
         result = process_tactical_data(json_data);
     } else {
-        printf("P2P Unknown data type: %s\n", data_type);
+        PRINTF_LOG("P2P Unknown data type: %s\n", data_type);
     }
     
     free(data_copy);
@@ -830,19 +831,19 @@ int p2p_init_ecdh_for_peer(p2p_peer_t* peer) {
     
     // ECDH context'i başlat
     if (!ecdh_init_context(&peer->ecdh_ctx)) {
-        printf("P2P: ECDH context başlatılamadı: %s\n", peer->node_id);
+        PRINTF_LOG("P2P: ECDH context başlatılamadı: %s\n", peer->node_id);
         return 0;
     }
     
     // Anahtar çifti üret
     if (!ecdh_generate_keypair(&peer->ecdh_ctx)) {
-        printf("P2P: ECDH anahtar çifti üretilemedi: %s\n", peer->node_id);
+        PRINTF_LOG("P2P: ECDH anahtar çifti üretilemedi: %s\n", peer->node_id);
         ecdh_cleanup_context(&peer->ecdh_ctx);
         return 0;
     }
     
     peer->ecdh_initialized = true;
-    printf("P2P: ECDH başlatıldı: %s\n", peer->node_id);
+    PRINTF_LOG("P2P: ECDH başlatıldı: %s\n", peer->node_id);
     
     return 1;
 }
@@ -858,12 +859,12 @@ int p2p_exchange_keys_with_peer(p2p_peer_t* peer) {
         return 0;
     }
     
-    printf("P2P: Peer ile anahtar değişimi başlıyor: %s\n", peer->node_id);
+    PRINTF_LOG("P2P: Peer ile anahtar değişimi başlıyor: %s\n", peer->node_id);
     
     // Önce kendi public key'imizi gönder
     ssize_t sent = send(peer->socket_fd, peer->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
     if (sent != ECC_PUB_KEY_SIZE) {
-        printf("P2P: Public key gönderilemedi: %s\n", peer->node_id);
+        PRINTF_LOG("P2P: Public key gönderilemedi: %s\n", peer->node_id);
         return 0;
     }
     
@@ -871,23 +872,23 @@ int p2p_exchange_keys_with_peer(p2p_peer_t* peer) {
     uint8_t peer_public_key[ECC_PUB_KEY_SIZE];
     ssize_t received = recv(peer->socket_fd, peer_public_key, ECC_PUB_KEY_SIZE, 0);
     if (received != ECC_PUB_KEY_SIZE) {
-        printf("P2P: Peer public key alınamadı: %s\n", peer->node_id);
+        PRINTF_LOG("P2P: Peer public key alınamadı: %s\n", peer->node_id);
         return 0;
     }
     
     // Shared secret hesapla
     if (!ecdh_compute_shared_secret(&peer->ecdh_ctx, peer_public_key)) {
-        printf("P2P: Shared secret hesaplanamadı: %s\n", peer->node_id);
+        PRINTF_LOG("P2P: Shared secret hesaplanamadı: %s\n", peer->node_id);
         return 0;
     }
     
     // AES anahtarını türet
     if (!ecdh_derive_aes_key(&peer->ecdh_ctx)) {
-        printf("P2P: AES anahtarı türetilemedi: %s\n", peer->node_id);
+        PRINTF_LOG("P2P: AES anahtarı türetilemedi: %s\n", peer->node_id);
         return 0;
     }
     
-    printf("P2P: ✓ Anahtar değişimi tamamlandı: %s\n", peer->node_id);
+    PRINTF_LOG("P2P: ✓ Anahtar değişimi tamamlandı: %s\n", peer->node_id);
     
     return 1;
 }
@@ -901,7 +902,7 @@ void p2p_cleanup_ecdh_for_peer(p2p_peer_t* peer) {
     if (peer != NULL && peer->ecdh_initialized) {
         ecdh_cleanup_context(&peer->ecdh_ctx);
         peer->ecdh_initialized = false;
-        printf("P2P: ECDH temizlendi: %s\n", peer->node_id);
+        PRINTF_LOG("P2P: ECDH temizlendi: %s\n", peer->node_id);
     }
 }
 
@@ -915,25 +916,25 @@ void p2p_cleanup_ecdh_for_peer(p2p_peer_t* peer) {
  */
 int p2p_process_encrypted_data(const char* encrypted_data, const char* filename, p2p_peer_t* peer) {
     if (peer == NULL || !peer->ecdh_initialized) {
-        printf("P2P: ECDH session bulunamadı\n");
+        PRINTF_LOG("P2P: ECDH session bulunamadı\n");
         return -1;
     }
     
-    printf("P2P: Şifreli veri işleniyor: %s (Peer: %s)\n", filename, peer->node_id);
+    PRINTF_LOG("P2P: Şifreli veri işleniyor: %s (Peer: %s)\n", filename, peer->node_id);
     
     // Hex string'i bytes'a çevir
     size_t encrypted_length;
     uint8_t* encrypted_bytes = hex_to_bytes(encrypted_data, &encrypted_length);
     
     if (encrypted_bytes == NULL) {
-        printf("P2P: Geçersiz hex format\n");
+        PRINTF_LOG("P2P: Geçersiz hex format\n");
         return -1;
     }
     
     // IV'yi ayıkla (ilk 16 byte)
     if (encrypted_length < CRYPTO_IV_SIZE) {
         free(encrypted_bytes);
-        printf("P2P: Yetersiz veri boyutu (IV eksik)\n");
+        PRINTF_LOG("P2P: Yetersiz veri boyutu (IV eksik)\n");
         return -1;
     }
     
@@ -951,11 +952,11 @@ int p2p_process_encrypted_data(const char* encrypted_data, const char* filename,
     free(encrypted_bytes);
     
     if (decrypted_json == NULL) {
-        printf("P2P: Decryption başarısız\n");
+        PRINTF_LOG("P2P: Decryption başarısız\n");
         return -1;
     }
     
-    printf("P2P: Veri başarıyla decrypt edildi\n");
+    PRINTF_LOG("P2P: Veri başarıyla decrypt edildi\n");
     
     // JSON'u parse et (tactical data format)
     tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename);
@@ -965,16 +966,16 @@ int p2p_process_encrypted_data(const char* encrypted_data, const char* filename,
         // Database'e kaydet
         char* response = db_save_tactical_data_and_get_response(tactical_data, filename);
         if (response) {
-            printf("P2P: Database save response: %s\n", response);
+            PRINTF_LOG("P2P: Database save response: %s\n", response);
             free(response);
         }
         
         free_tactical_data(tactical_data);
         
-        printf("P2P: Şifreli veri başarıyla kaydedildi: %s\n", filename);
+        PRINTF_LOG("P2P: Şifreli veri başarıyla kaydedildi: %s\n", filename);
         return 0;
     } else {
-        printf("P2P: Geçersiz tactical data formatı\n");
+        PRINTF_LOG("P2P: Geçersiz tactical data formatı\n");
         if (tactical_data) free_tactical_data(tactical_data);
         return -1;
     }

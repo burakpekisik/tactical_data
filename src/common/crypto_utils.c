@@ -21,6 +21,7 @@
 #include "config.h"
 #include "aes.h"
 #include "ecdh.h"
+#include "logger.h"
 
 /**
  * @brief Metni AES256-CBC ile şifreler
@@ -522,18 +523,18 @@ int ecdh_generate_keypair(ecdh_context_t* ctx) {
     
     // Rastgele private key üret
     if (!generate_secure_random(ctx->private_key, ECC_PRV_KEY_SIZE)) {
-        printf("Error: Rastgele private key üretilemedi\n");
+        PRINTF_LOG("Error: Rastgele private key üretilemedi\n");
         return 0;
     }
     
     // Public key üret
     if (!ecdh_generate_keys(ctx->public_key, ctx->private_key)) {
-        printf("Error: ECDH anahtar çifti üretilemedi\n");
+        PRINTF_LOG("Error: ECDH anahtar çifti üretilemedi\n");
         return 0;
     }
     
     ctx->initialized = 1;
-    printf("ECDH anahtar çifti başarıyla üretildi\n");
+    PRINTF_LOG("ECDH anahtar çifti başarıyla üretildi\n");
     
     return 1;
 }
@@ -565,11 +566,11 @@ int ecdh_compute_shared_secret(ecdh_context_t* ctx, const uint8_t* other_public_
     
     // Shared secret hesapla
     if (!ecdh_shared_secret(ctx->private_key, other_public_key, ctx->shared_secret)) {
-        printf("Error: Shared secret hesaplanamadı\n");
+        PRINTF_LOG("Error: Shared secret hesaplanamadı\n");
         return 0;
     }
     
-    printf("Shared secret başarıyla hesaplandı\n");
+    PRINTF_LOG("Shared secret başarıyla hesaplandı\n");
     
     return 1;
 }
@@ -611,7 +612,7 @@ int ecdh_derive_aes_key(ecdh_context_t* ctx) {
         memset(ctx->aes_key + ECC_PUB_KEY_SIZE, 0, CRYPTO_KEY_SIZE - ECC_PUB_KEY_SIZE);
     }
     
-    printf("AES256 anahtarı shared secret'ten türetildi\n");
+    PRINTF_LOG("AES256 anahtarı shared secret'ten türetildi\n");
     
     return 1;
 }

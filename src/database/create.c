@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <sqlite3.h>
 #include "../../include/database.h"
+#include "logger.h"
 
 /**
  * @brief Global veritabanı bağlantısı
@@ -47,7 +48,7 @@ int db_init(const char *db_path) {
         fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(g_db));
         return -1;
     } else {
-        printf("Database opened successfully: %s\n", db_path);
+        PRINTF_LOG("Database opened successfully: %s\n", db_path);
         return 0;
     }
 }
@@ -116,7 +117,7 @@ int db_create_tables(void) {
         sqlite3_free(zErrMsg);
         return -1;
     } else {
-        printf("UNITS table created successfully\n");
+        PRINTF_LOG("UNITS table created successfully\n");
     }
 
     // Create REPORTS table with foreign key
@@ -139,7 +140,7 @@ int db_create_tables(void) {
         sqlite3_free(zErrMsg);
         return -1;
     } else {
-        printf("REPORTS table created successfully\n");
+        PRINTF_LOG("REPORTS table created successfully\n");
     }
 
     // Enable foreign key constraints
@@ -174,7 +175,7 @@ int db_close(void) {
     if (g_db) {
         sqlite3_close(g_db);
         g_db = NULL;
-        printf("Database closed successfully\n");
+        PRINTF_LOG("Database closed successfully\n");
         return 0;
     }
     return -1;

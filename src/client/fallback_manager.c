@@ -24,6 +24,7 @@
 #include "encrypted_client.h"
 #include "fallback_manager.h"
 #include "protocol_manager.h"
+#include "logger.h"
 
 /**
  * @brief Bağlantı türünün string karşılığını döner
@@ -62,7 +63,7 @@ int try_send_message_current_connection(client_connection_t* conn, const char* m
     } else if (conn->type == CONN_P2P) {
         result = send_p2p_message(conn, message);
     } else {
-        printf("Bilinmeyen baglanti tipi\n");
+        PRINTF_LOG("Bilinmeyen baglanti tipi\n");
     }
     
     return result;
@@ -113,12 +114,12 @@ int try_send_message_with_fallback(client_connection_t* conn, const char* protoc
     // Her fallback tipini dene
     for (int i = 0; i < fallback_count; i++) {
         connection_type_t fallback_type = fallback_order[i];
-        printf("Fallback deneniyor: %s\n", get_connection_type_name(fallback_type));
+        PRINTF_LOG("Fallback deneniyor: %s\n", get_connection_type_name(fallback_type));
         
         // Yeni bağlantı tipi için socket oluştur ve bağlan
         client_connection_t* fallback_conn = create_fallback_connection(conn, fallback_type);
         if (fallback_conn == NULL) {
-            printf("Fallback bağlantı oluşturulamadı: %s\n", get_connection_type_name(fallback_type));
+            PRINTF_LOG("Fallback bağlantı oluşturulamadı: %s\n", get_connection_type_name(fallback_type));
             continue;
         }
         
@@ -128,10 +129,10 @@ int try_send_message_with_fallback(client_connection_t* conn, const char* protoc
         // Şifreli mesaj mı kontrol et
         if (encrypt && strncmp(protocol_message, "ENCRYPTED:", 10) == 0) {
             // Şifreli mesaj için yeni ECDH anahtarıyla yeniden şifrele
-            printf("Fallback için JSON yeniden şifreleniyor...\n");
+            PRINTF_LOG("Fallback için JSON yeniden şifreleniyor...\n");
             
             if (!fallback_conn->ecdh_initialized) {
-                printf("Fallback ECDH başlatılmamış - şifreleme yapılamaz\n");
+                PRINTF_LOG("Fallback ECDH başlatılmamış - şifreleme yapılamaz\n");
                 close_connection(fallback_conn);
                 continue;
             }
@@ -139,7 +140,7 @@ int try_send_message_with_fallback(client_connection_t* conn, const char* protoc
             // Yeni anahtar ile yeniden şifrele
             fallback_message = create_encrypted_protocol_message(filename, content, fallback_conn->ecdh_ctx.aes_key);
             if (fallback_message == NULL) {
-                printf("Fallback şifreleme başarısız\n");
+                PRINTF_LOG("Fallback şifreleme başarısız\n");
                 close_connection(fallback_conn);
                 continue;
             }
@@ -155,7 +156,7 @@ int try_send_message_with_fallback(client_connection_t* conn, const char* protoc
         int result = try_send_message_current_connection(fallback_conn, fallback_message);
         
         if (result >= 0) {
-            printf("✓ Fallback başarılı: %s\n", get_connection_type_name(fallback_type));
+            PRINTF_LOG("✓ Fallback başarılı: %s\n", get_connection_type_name(fallback_type));
             
             // Ana bağlantıyı güncelle
             close(conn->socket);
@@ -184,7 +185,7 @@ int try_send_message_with_fallback(client_connection_t* conn, const char* protoc
             return result;
         }
         
-        printf("✗ Fallback başarısız: %s\n", get_connection_type_name(fallback_type));
+        PRINTF_LOG("✗ Fallback başarısız: %s\n", get_connection_type_name(fallback_type));
         
         // Fallback bağlantısını temizle
         close_connection(fallback_conn);
@@ -224,7 +225,7 @@ int try_send_message_with_fallback(client_connection_t* conn, const char* protoc
 client_connection_t* create_fallback_connection(client_connection_t* original_conn, connection_type_t target_type) {
     client_connection_t* fallback_conn = malloc(sizeof(client_connection_t));
     if (fallback_conn == NULL) {
-        printf("Fallback connection için bellek tahsis hatası\n");
+        PRINTF_LOG("Fallback connection için bellek tahsis hatası\n");
         return NULL;
     }
     
@@ -253,7 +254,7 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
             sock_type = SOCK_STREAM;
             break;
         default:
-            printf("Geçersiz fallback connection tipi\n");
+            PRINTF_LOG("Geçersiz fallback connection tipi\n");
             free(fallback_conn);
             return NULL;
     }
@@ -264,7 +265,7 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
     // Socket oluştur
     fallback_conn->socket = socket(AF_INET, sock_type, 0);
     if (fallback_conn->socket < 0) {
-        printf("Fallback socket oluşturulamadı\n");
+        PRINTF_LOG("Fallback socket oluşturulamadı\n");
         free(fallback_conn);
         return NULL;
     }
@@ -274,7 +275,7 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
         // TCP/P2P için connect
         if (connect(fallback_conn->socket, (struct sockaddr*)&fallback_conn->server_addr, 
                    sizeof(fallback_conn->server_addr)) < 0) {
-            printf("Fallback %s bağlantısı kurulamadı\n", get_connection_type_name(target_type));
+            PRINTF_LOG("Fallback %s bağlantısı kurulamadı\n", get_connection_type_name(target_type));
             close(fallback_conn->socket);
             free(fallback_conn);
             return NULL;
@@ -282,7 +283,7 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
         
         // ECDH key exchange (TCP ve P2P için)
         if (!setup_ecdh_for_fallback(fallback_conn)) {
-            printf("Fallback ECDH kurulumu başarısız\n");
+            PRINTF_LOG("Fallback ECDH kurulumu başarısız\n");
             close(fallback_conn->socket);
             free(fallback_conn);
             return NULL;
@@ -293,7 +294,7 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
         const char* test_msg = "PING";
         if (sendto(fallback_conn->socket, test_msg, strlen(test_msg), 0,
                    (struct sockaddr*)&fallback_conn->server_addr, sizeof(fallback_conn->server_addr)) <= 0) {
-            printf("Fallback UDP test ping gönderilemedi\n");
+            PRINTF_LOG("Fallback UDP test ping gönderilemedi\n");
             close(fallback_conn->socket);
             free(fallback_conn);
             return NULL;
@@ -307,7 +308,7 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
         
         char test_buffer[64];
         if (recvfrom(fallback_conn->socket, test_buffer, sizeof(test_buffer) - 1, 0, NULL, 0) <= 0) {
-            printf("Fallback UDP test response alınamadı\n");
+            PRINTF_LOG("Fallback UDP test response alınamadı\n");
             close(fallback_conn->socket);
             free(fallback_conn);
             return NULL;
@@ -315,14 +316,14 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
         
         // UDP ECDH setup
         if (!setup_udp_ecdh_for_fallback(fallback_conn)) {
-            printf("Fallback UDP ECDH kurulumu başarısız\n");
+            PRINTF_LOG("Fallback UDP ECDH kurulumu başarısız\n");
             close(fallback_conn->socket);
             free(fallback_conn);
             return NULL;
         }
     }
     
-    printf("✓ Fallback bağlantı kuruldu: %s (Port: %d)\n", 
+    PRINTF_LOG("✓ Fallback bağlantı kuruldu: %s (Port: %d)\n", 
            get_connection_type_name(target_type), port);
     
     return fallback_conn;
@@ -351,12 +352,12 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
  */
 bool setup_ecdh_for_fallback(client_connection_t* conn) {
     if (!ecdh_init_context(&conn->ecdh_ctx)) {
-        printf("Fallback ECDH context başlatılamadı\n");
+        PRINTF_LOG("Fallback ECDH context başlatılamadı\n");
         return false;
     }
     
     if (!ecdh_generate_keypair(&conn->ecdh_ctx)) {
-        printf("Fallback ECDH anahtar çifti üretilemedi\n");
+        PRINTF_LOG("Fallback ECDH anahtar çifti üretilemedi\n");
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
     }
@@ -365,7 +366,7 @@ bool setup_ecdh_for_fallback(client_connection_t* conn) {
     uint8_t server_public_key[ECC_PUB_KEY_SIZE];
     ssize_t received = recv(conn->socket, server_public_key, ECC_PUB_KEY_SIZE, 0);
     if (received != ECC_PUB_KEY_SIZE) {
-        printf("Fallback Server public key alınamadı\n");
+        PRINTF_LOG("Fallback Server public key alınamadı\n");
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
     }
@@ -373,27 +374,27 @@ bool setup_ecdh_for_fallback(client_connection_t* conn) {
     // Kendi public key'imizi gönder
     ssize_t sent = send(conn->socket, conn->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
     if (sent != ECC_PUB_KEY_SIZE) {
-        printf("Fallback Public key gönderilemedi\n");
+        PRINTF_LOG("Fallback Public key gönderilemedi\n");
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
     }
     
     // Shared secret hesapla
     if (!ecdh_compute_shared_secret(&conn->ecdh_ctx, server_public_key)) {
-        printf("Fallback Shared secret hesaplanamadı\n");
+        PRINTF_LOG("Fallback Shared secret hesaplanamadı\n");
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
     }
     
     // AES anahtarını türet
     if (!ecdh_derive_aes_key(&conn->ecdh_ctx)) {
-        printf("Fallback AES anahtarı türetilemedi\n");
+        PRINTF_LOG("Fallback AES anahtarı türetilemedi\n");
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
     }
     
     conn->ecdh_initialized = true;
-    printf("✓ Fallback ECDH anahtar değişimi tamamlandı\n");
+    PRINTF_LOG("✓ Fallback ECDH anahtar değişimi tamamlandı\n");
     return true;
 }
 
@@ -425,12 +426,12 @@ bool setup_ecdh_for_fallback(client_connection_t* conn) {
  */
 bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
     if (!ecdh_init_context(&conn->ecdh_ctx)) {
-        printf("Fallback UDP ECDH context başlatılamadı\n");
+        PRINTF_LOG("Fallback UDP ECDH context başlatılamadı\n");
         return false;
     }
     
     if (!ecdh_generate_keypair(&conn->ecdh_ctx)) {
-        printf("Fallback UDP ECDH anahtar çifti üretilemedi\n");
+        PRINTF_LOG("Fallback UDP ECDH anahtar çifti üretilemedi\n");
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
     }
@@ -439,7 +440,7 @@ bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
     const char* ecdh_init = "ECDH_INIT";
     if (sendto(conn->socket, ecdh_init, strlen(ecdh_init), 0,
               (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) < 0) {
-        printf("Fallback UDP ECDH init mesajı gönderilemedi\n");
+        PRINTF_LOG("Fallback UDP ECDH init mesajı gönderilemedi\n");
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
     }
@@ -448,7 +449,7 @@ bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
     char server_response[1024];
     ssize_t received = recvfrom(conn->socket, server_response, sizeof(server_response) - 1, 0, NULL, 0);
     if (received < 0) {
-        printf("Fallback UDP Server public key alınamadı\n");
+        PRINTF_LOG("Fallback UDP Server public key alınamadı\n");
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
     }
@@ -457,7 +458,7 @@ bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
     
     // "ECDH_PUB:" prefix'ini kontrol et
     if (strncmp(server_response, "ECDH_PUB:", 9) != 0) {
-        printf("Fallback UDP Geçersiz server response: %s\n", server_response);
+        PRINTF_LOG("Fallback UDP Geçersiz server response: %s\n", server_response);
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
     }
@@ -466,7 +467,7 @@ bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
     size_t server_key_len;
     uint8_t* server_public_key = hex_to_bytes(server_response + 9, &server_key_len);
     if (server_public_key == NULL || server_key_len != ECC_PUB_KEY_SIZE) {
-        printf("Fallback UDP Server public key decode hatası\n");
+        PRINTF_LOG("Fallback UDP Server public key decode hatası\n");
         if (server_public_key) free(server_public_key);
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
@@ -483,7 +484,7 @@ bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
     
     if (sendto(conn->socket, client_pub_msg, strlen(client_pub_msg), 0,
               (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) < 0) {
-        printf("Fallback UDP Client public key gönderilemedi\n");
+        PRINTF_LOG("Fallback UDP Client public key gönderilemedi\n");
         free(server_public_key);
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
@@ -491,7 +492,7 @@ bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
     
     // Shared secret hesapla
     if (!ecdh_compute_shared_secret(&conn->ecdh_ctx, server_public_key)) {
-        printf("Fallback UDP Shared secret hesaplanamadı\n");
+        PRINTF_LOG("Fallback UDP Shared secret hesaplanamadı\n");
         free(server_public_key);
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
@@ -499,7 +500,7 @@ bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
     
     // AES anahtarını türet
     if (!ecdh_derive_aes_key(&conn->ecdh_ctx)) {
-        printf("Fallback UDP AES anahtarı türetilemedi\n");
+        PRINTF_LOG("Fallback UDP AES anahtarı türetilemedi\n");
         free(server_public_key);
         ecdh_cleanup_context(&conn->ecdh_ctx);
         return false;
@@ -514,12 +515,12 @@ bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
         ack_buffer[ack_received] = '\0';
         if (strcmp(ack_buffer, "ECDH_OK") == 0) {
             conn->ecdh_initialized = true;
-            printf("✓ Fallback UDP ECDH anahtar değişimi tamamlandı\n");
+            PRINTF_LOG("✓ Fallback UDP ECDH anahtar değişimi tamamlandı\n");
             return true;
         }
     }
     
-    printf("Fallback UDP ECDH onay mesajı alınamadı\n");
+    PRINTF_LOG("Fallback UDP ECDH onay mesajı alınamadı\n");
     ecdh_cleanup_context(&conn->ecdh_ctx);
     return false;
 }
