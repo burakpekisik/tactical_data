@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <time.h>
+#include <signal.h>
 #include "tcp_connection.h"
 #include "config.h"
 #include "thread_monitor.h"
@@ -109,6 +110,9 @@ int tcp_server_stop(connection_manager_t* manager) {
     printf("TCP Server durduruluyor...\n");
     manager->status = CONN_STATUS_STOPPING;
     
+    // Önce tüm TCP client bağlantılarını sonlandır
+    terminate_all_tcp_clients();
+    
     // Server socket'ını kapat
     if (manager->server_fd >= 0) {
         shutdown(manager->server_fd, SHUT_RDWR);
@@ -116,10 +120,14 @@ int tcp_server_stop(connection_manager_t* manager) {
         manager->server_fd = -1;
     }
     
+    // Ana TCP server thread'inin durması için bekle
+    sleep(1); // 1 saniye bekle
+    
     manager->status = CONN_STATUS_STOPPED;
     manager->is_active = false;
     
     printf("✓ TCP Server durduruldu (Port: %d)\n", manager->port);
+    printf("server> TCP Server thread sonlandırıldı\n");
     return 0;
 }
 

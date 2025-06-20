@@ -28,6 +28,7 @@ typedef struct queue_client {
 void log_thread_stats(void);
 void add_thread_info(pthread_t thread_id, int client_socket, const char* client_ip, int client_port);
 void remove_thread_info(pthread_t thread_id);
+void terminate_all_tcp_clients(void);
 void* thread_monitor(void* arg);
 int get_active_thread_count(void);
 int get_total_connections(void);

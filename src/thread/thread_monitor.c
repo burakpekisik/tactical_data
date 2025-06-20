@@ -352,3 +352,35 @@ void clear_queue(void) {
     
     pthread_mutex_unlock(&queue_mutex);
 }
+
+// Tüm TCP client thread'lerini sonlandır
+void terminate_all_tcp_clients(void) {
+    pthread_mutex_lock(&thread_mutex);
+    
+    printf("Tüm TCP client bağlantıları sonlandırılıyor...\n");
+    
+    for (int i = 0; i < CONFIG_MAX_CLIENTS; i++) {
+        if (active_threads[i].is_active) {
+            printf("TCP client sonlandırılıyor: %s (Socket: %d)\n", 
+                   active_threads[i].thread_name, active_threads[i].client_socket);
+            
+            // Client socket'ını kapat
+            if (active_threads[i].client_socket >= 0) {
+                shutdown(active_threads[i].client_socket, SHUT_RDWR);
+                close(active_threads[i].client_socket);
+                active_threads[i].client_socket = -1;
+            }
+            
+            // Thread'i cancel et
+            pthread_cancel(active_threads[i].thread_id);
+            
+            // Thread bilgilerini temizle
+            memset(&active_threads[i], 0, sizeof(thread_info_t));
+            thread_count--;
+        }
+    }
+    
+    printf("✓ Tüm TCP client bağlantıları sonlandırıldı\n");
+    
+    pthread_mutex_unlock(&thread_mutex);
+}
