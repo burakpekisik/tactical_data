@@ -17,5 +17,6 @@ void* handle_client(void* arg);
 char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key);
 void* queue_processor(void* arg);
 void handle_signal(int sig);
+void* periodic_backup_thread();
 
 #endif /* ENCRYPTED_SERVER_H */

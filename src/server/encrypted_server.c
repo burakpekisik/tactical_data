@@ -42,6 +42,7 @@
 #include <time.h>
 #include <cjson/cJSON.h>
 #include <pthread.h>
+#include <sys/wait.h>
 #include "crypto_utils.h"
 #include "json_utils.h"
 #include "database.h"
@@ -51,9 +52,14 @@
 #include "control_interface.h"
 #include "encrypted_server.h"
 #include "logger.h"
+#include "../backup/backup_manager.c"
 
 /// @brief Sunucu çalışma durumu için global flag - signal handling için
 static volatile sig_atomic_t server_running = 1;
+
+// Backup kontrol değişkenleri
+volatile int backup_enabled = 1;
+volatile int backup_period_seconds = 7200; // Varsayılan: 2 saat
 
 /**
  * @brief Graceful shutdown için signal handler
@@ -186,6 +192,11 @@ int main() {
     pthread_t queue_thread;
     pthread_create(&queue_thread, NULL, queue_processor, NULL);
     pthread_detach(queue_thread);
+
+    // Backup thread'ini başlat
+    pthread_t backup_thread;
+    pthread_create(&backup_thread, NULL, periodic_backup_thread, NULL);
+    pthread_detach(backup_thread);
     
     LOG_SERVER_INFO("Thread monitoring system activated");
     LOG_SERVER_INFO("Queue processing system activated");
@@ -258,7 +269,7 @@ int main() {
     PRINTF_SERVER("  PARSE:filename:{json_data}      - Normal JSON parse\n");
     PRINTF_SERVER("  ENCRYPTED:filename:{hex_data}   - Sifreli JSON parse\n");
     PRINTF_SERVER("  CONTROL:command                 - Server control\n");
-    PRINTF_SERVER("Control komutları: start_tcp, stop_tcp, list, stats\n");
+    PRINTF_SERVER("Control komutları: start_tcp, stop_tcp, list, stats, backup_on, backup_off, backup_period <saniye>, backup_status, help, quit\n");
     PRINTF_SERVER("Çıkış için Ctrl+C'ye basın\n\n");
     fflush(stdout);
     
@@ -289,11 +300,26 @@ int main() {
                 } else if (strcmp(command, "stats") == 0) {
                     list_active_connections();
                     log_thread_stats();
-                } else {
-                    if (process_connection_command(command) != 0) {
-                        PRINTF_LOG("Bilinmeyen komut: %s\n", command);
-                        PRINTF_LOG("'help' yazın veya 'quit' ile çıkın\n");
+                } else if (strcmp(command, "backup_on") == 0) {
+                    backup_enabled = 1;
+                    PRINTF_LOG("✓ Backup periyodik yedekleme AKTİF\n");
+                } else if (strcmp(command, "backup_off") == 0) {
+                    backup_enabled = 0;
+                    PRINTF_LOG("✓ Backup periyodik yedekleme PASİF\n");
+                } else if (strncmp(command, "backup_period ", 14) == 0) {
+                    int new_period = atoi(command + 14);
+                    if (new_period > 0) {
+                        backup_period_seconds = new_period;
+                        PRINTF_LOG("✓ Backup periyodu güncellendi: %d saniye\n", new_period);
+                    } else {
+                        PRINTF_LOG("✗ Geçersiz periyot!\n");
                     }
+                } else if (strcmp(command, "backup_status") == 0) {
+                    PRINTF_LOG("=== BACKUP STATUS ===\nAktif: %s\nPeriyot: %d saniye\n====================\n",
+                        backup_enabled ? "EVET" : "HAYIR", backup_period_seconds);
+                } else {
+                    PRINTF_LOG("Bilinmeyen komut: %s\n", command);
+                    PRINTF_LOG("'help' yazın veya 'quit' ile çıkın\n");
                 }
             } else {
                 break;
@@ -742,7 +768,7 @@ int parse_protocol_message(const char* message, char** command, char** filename,
  * - Maksimum thread limiti: CONFIG_MAX_CLIENTS
  * - Kontrol aralığı: CONFIG_QUEUE_CHECK_INTERVAL
  * 
- * @param arg Kullanılmayan thread parametresi (NULL)
+ * @param arg Kullanılmıyor.
  * 
  * @return NULL (pthread için void* dönüş)
  * 
@@ -789,4 +815,26 @@ void* queue_processor(void* arg) {
     return NULL;
 }
 
-
+/**
+ * @brief Her iki saatte bir veritabanı yedeği alan thread fonksiyonu.
+ *
+ * Bu thread, sunucu çalıştığı sürece her iki saatte bir backup_database() fonksiyonunu çağırır.
+ * Yedekleme işlemi tamamlandığında veya hata oluştuğunda log mesajı basar.
+ *
+ * @param arg Kullanılmıyor.
+ * @return NULL
+ */
+void* periodic_backup_thread() {
+    while (server_running) {
+        if (backup_enabled) {
+            int status = backup_database();
+            if (status != 0) {
+                PRINTF_LOG("Yedekleme başlatılamadı!\n");
+            } else {
+                PRINTF_LOG("Yedekleme tamamlandı (backup_manager).\n");
+            }
+        }
+        for (int i = 0; i < backup_period_seconds && server_running; ++i) sleep(1);
+    }
+    return NULL;
+}

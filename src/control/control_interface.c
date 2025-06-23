@@ -237,6 +237,10 @@ void handle_control_command(const char* command, int response_socket) {
                 "start_p2p    - Start P2P node\n"
                 "stop_p2p     - Stop P2P node\n"
                 "stats        - Show statistics\n"
+                "backup_on    - Enable periodic backup\n"
+                "backup_off   - Disable periodic backup\n"
+                "backup_period <seconds> - Set backup period\n"
+                "backup_status- Show backup status\n"
                 "healthcheck  - Health check (Docker)\n"
                 "help         - Show this help\n"
                 "quit         - Close connection\n"
@@ -250,6 +254,33 @@ void handle_control_command(const char* command, int response_socket) {
         increment_healthcheck_count();
         snprintf(response, sizeof(response), "HEALTHY\n");
         PRINTF_LOG(" HEALTHCHECK: Docker health check received\n");
+    }
+    else if (strcmp(command, "backup_on") == 0) {
+        extern volatile int backup_enabled;
+        backup_enabled = 1;
+        snprintf(response, sizeof(response), "✓ Backup periyodik yedekleme AKTİF\n");
+    }
+    else if (strcmp(command, "backup_off") == 0) {
+        extern volatile int backup_enabled;
+        backup_enabled = 0;
+        snprintf(response, sizeof(response), "✓ Backup periyodik yedekleme PASİF\n");
+    }
+    else if (strncmp(command, "backup_period ", 14) == 0) {
+        extern volatile int backup_period_seconds;
+        int new_period = atoi(command + 14);
+        if (new_period > 0) {
+            backup_period_seconds = new_period;
+            snprintf(response, sizeof(response), "✓ Backup periyodu güncellendi: %d saniye\n", new_period);
+        } else {
+            snprintf(response, sizeof(response), "✗ Geçersiz periyot!\n");
+        }
+    }
+    else if (strcmp(command, "backup_status") == 0) {
+        extern volatile int backup_enabled;
+        extern volatile int backup_period_seconds;
+        snprintf(response, sizeof(response),
+            "=== BACKUP STATUS ===\nAktif: %s\nPeriyot: %d saniye\n====================\n",
+            backup_enabled ? "EVET" : "HAYIR", backup_period_seconds);
     }
     else {
         snprintf(response, sizeof(response), 
