@@ -12,7 +12,10 @@
 #include <QSpinBox>
 #include <QGroupBox>
 #include <QSplitter>
+#include <QCheckBox>
+#include <QProgressBar>
 #include "mapwidget.h"
+#include "client_wrapper.h"
 
 class MainWindow : public QMainWindow
 {
@@ -27,6 +30,12 @@ private slots:
     void onSendData();
     void onConnectToServer();
     void onDisconnectFromServer();
+    
+    // Client wrapper slots
+    void onConnectionStatusChanged(ClientWrapper::ConnectionStatus status, const QString& message);
+    void onDataSendResult(ClientWrapper::SendResult result, const QString& message);
+    void onDataReceived(const QString& data);
+    void onLogMessage(const QString& message);
 
 private:
     void setupUI();
@@ -64,17 +73,23 @@ private:
     QLineEdit *messageEdit;
     QPushButton *sendButton;
     QLabel *selectedPointLabel;
+    QCheckBox *encryptionCheckBox;
+    QProgressBar *progressBar;
     
     // Log
     QTextEdit *logTextEdit;
+    
+    // Client wrapper
+    ClientWrapper *clientWrapper;
     
     // Seçili nokta
     double selectedLatitude;
     double selectedLongitude;
     bool pointSelected;
     
-    // Bağlantı durumu
-    bool connected;
+    // Yardımcı fonksiyonlar
+    void updateUIState();
+    void showStatusMessage(const QString& message, int timeout = 5000);
 };
 
 #endif // MAINWINDOW_H

@@ -199,10 +199,8 @@ void logger_log(logger_type_t type, log_level_t level, const char *format, ...) 
     vfprintf(logger->file, format, args);
     fprintf(logger->file, "\n");
     
-    // Buffer'ı flush et (önemli loglar için)
-    if (level >= LOG_WARN) {
-        fflush(logger->file);
-    }
+    // Her log yazımından sonra buffer'ı flush et (Qt uyumluluğu için)
+    fflush(logger->file);
     
     // Debug modda console'a da yazdır
     if (level >= LOG_WARN) {

@@ -13,6 +13,9 @@
 #include <QApplication>
 #include <QMessageBox>
 #include <QDateTime>
+#include <QStatusBar>
+#include <QCheckBox>
+#include <QProgressBar>
 
 /**
  * @brief MainWindow sınıfının constructor'ı
@@ -30,12 +33,28 @@ MainWindow::MainWindow(QWidget *parent)
     , selectedLatitude(0.0)
     , selectedLongitude(0.0)
     , pointSelected(false)
-    , connected(false)
+    , clientWrapper(nullptr)
 {
+    // Client wrapper oluştur
+    clientWrapper = new ClientWrapper(this);
+    
+    // Client wrapper signals bağla
+    connect(clientWrapper, &ClientWrapper::connectionStatusChanged,
+            this, &MainWindow::onConnectionStatusChanged);
+    connect(clientWrapper, &ClientWrapper::dataSendResult,
+            this, &MainWindow::onDataSendResult);
+    connect(clientWrapper, &ClientWrapper::dataReceived,
+            this, &MainWindow::onDataReceived);
+    connect(clientWrapper, &ClientWrapper::logMessage,
+            this, &MainWindow::onLogMessage);
+    
     setupUI();
     setWindowTitle("Tactical Data Client - Harita Arayüzü");
     setMinimumSize(1200, 800);
     resize(1400, 900);
+    
+    // Status bar ekle
+    statusBar()->showMessage("Hazır");
 }
 
 /**
@@ -125,6 +144,8 @@ void MainWindow::setupControlPanel()
     controlLayout->addWidget(dataGroup);
     controlLayout->addWidget(logGroup);
     controlLayout->setContentsMargins(5, 5, 5, 5);
+    
+    updateUIState();
 }
 
 /**
@@ -160,12 +181,24 @@ void MainWindow::setupDataPanel()
     sendButton->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }");
     sendButton->setEnabled(false);
     
+    // Şifreleme checkbox
+    encryptionCheckBox = new QCheckBox("Şifreli Gönderim");
+    encryptionCheckBox->setChecked(true);
+    encryptionCheckBox->setToolTip("Veriyi AES256 ile şifreler");
+    
+    // Progress bar
+    progressBar = new QProgressBar();
+    progressBar->setVisible(false);
+    progressBar->setRange(0, 0); // Belirsiz ilerleme
+    
     connect(sendButton, &QPushButton::clicked, this, &MainWindow::onSendData);
     
     dataLayout->addWidget(selectedPointLabel);
     dataLayout->addLayout(typeLayout);
     dataLayout->addLayout(messageLayout);
+    dataLayout->addWidget(encryptionCheckBox);
     dataLayout->addWidget(sendButton);
+    dataLayout->addWidget(progressBar);
 }
 
 /**
@@ -253,8 +286,8 @@ void MainWindow::onMapClicked(double latitude, double longitude)
     selectedPointLabel->setText(coordText);
     coordinatesLabel->setText(QString("Koordinat: %1, %2").arg(latitude, 0, 'f', 6).arg(longitude, 0, 'f', 6));
     
-    // Gönder butonunu etkinleştir (eğer bağlıysa)
-    sendButton->setEnabled(connected && pointSelected);
+    // UI durumunu güncelle
+    updateUIState();
     
     logTextEdit->append(QString("Nokta seçildi: %1, %2 - %3")
                        .arg(latitude, 0, 'f', 6)
@@ -271,7 +304,7 @@ void MainWindow::onMapClicked(double latitude, double longitude)
  */
 void MainWindow::onSendData()
 {
-    if (!connected) {
+    if (!clientWrapper->isConnected()) {
         QMessageBox::warning(this, "Uyarı", "Sunucuya bağlı değilsiniz!");
         return;
     }
@@ -283,19 +316,15 @@ void MainWindow::onSendData()
     
     QString dataType = dataTypeCombo->currentText();
     QString message = messageEdit->text();
+    bool encrypted = encryptionCheckBox->isChecked();
     
-    // Bu noktada gerçek veri gönderimi yapılacak
-    // Şimdilik sadece log'a yazıyoruz
-    QString logMessage = QString("Veri gönderildi - Tip: %1, Koordinat: %2,%3, Mesaj: %4 - %5")
-                        .arg(dataType)
-                        .arg(selectedLatitude, 0, 'f', 6)
-                        .arg(selectedLongitude, 0, 'f', 6)
-                        .arg(message)
-                        .arg(QDateTime::currentDateTime().toString());
+    // Progress bar göster
+    progressBar->setVisible(true);
+    sendButton->setEnabled(false);
     
-    logTextEdit->append(logMessage);
-    
-    QMessageBox::information(this, "Başarılı", "Veri başarıyla gönderildi!");
+    // Veriyi gönder
+    clientWrapper->sendTacticalData(selectedLatitude, selectedLongitude, 
+                                   dataType, message, encrypted);
 }
 
 /**
@@ -310,17 +339,12 @@ void MainWindow::onConnectToServer()
     QString address = serverAddressEdit->text();
     int port = serverPortSpin->value();
     
-    // Bu noktada gerçek bağlantı kurulacak
-    // Şimdilik simüle ediyoruz
-    connected = true;
-    updateConnectionStatus();
+    if (address.isEmpty()) {
+        QMessageBox::warning(this, "Uyarı", "Sunucu adresi boş olamaz!");
+        return;
+    }
     
-    logTextEdit->append(QString("Sunucuya bağlanıldı: %1:%2 - %3")
-                       .arg(address)
-                       .arg(port)
-                       .arg(QDateTime::currentDateTime().toString()));
-    
-    sendButton->setEnabled(connected && pointSelected);
+    clientWrapper->connectToServer(address, port);
 }
 
 /**
@@ -331,13 +355,7 @@ void MainWindow::onConnectToServer()
  */
 void MainWindow::onDisconnectFromServer()
 {
-    connected = false;
-    updateConnectionStatus();
-    
-    logTextEdit->append(QString("Sunucu bağlantısı kesildi - %1")
-                       .arg(QDateTime::currentDateTime().toString()));
-    
-    sendButton->setEnabled(false);
+    clientWrapper->disconnectFromServer();
 }
 
 /**
@@ -349,19 +367,108 @@ void MainWindow::onDisconnectFromServer()
  */
 void MainWindow::updateConnectionStatus()
 {
-    if (connected) {
-        connectionStatusLabel->setText("Bağlantı Durumu: Bağlı");
-        connectionStatusLabel->setStyleSheet("QLabel { color: green; font-weight: bold; }");
-        connectButton->setEnabled(false);
-        disconnectButton->setEnabled(true);
-        serverAddressEdit->setEnabled(false);
-        serverPortSpin->setEnabled(false);
-    } else {
-        connectionStatusLabel->setText("Bağlantı Durumu: Bağlı Değil");
-        connectionStatusLabel->setStyleSheet("QLabel { color: red; font-weight: bold; }");
-        connectButton->setEnabled(true);
-        disconnectButton->setEnabled(false);
-        serverAddressEdit->setEnabled(true);
-        serverPortSpin->setEnabled(true);
+    // Bu fonksiyon artık kullanılmıyor, updateUIState() kullanılıyor
+}
+
+/**
+ * @brief Bağlantı durumu değiştiğinde çağrılır
+ */
+void MainWindow::onConnectionStatusChanged(ClientWrapper::ConnectionStatus status, const QString& message)
+{
+    switch (status) {
+        case ClientWrapper::Disconnected:
+            connectionStatusLabel->setText("Bağlantı Durumu: Bağlı Değil");
+            connectionStatusLabel->setStyleSheet("QLabel { color: red; font-weight: bold; }");
+            break;
+        case ClientWrapper::Connecting:
+            connectionStatusLabel->setText("Bağlantı Durumu: Bağlanıyor...");
+            connectionStatusLabel->setStyleSheet("QLabel { color: orange; font-weight: bold; }");
+            break;
+        case ClientWrapper::Connected:
+            connectionStatusLabel->setText("Bağlantı Durumu: Bağlı");
+            connectionStatusLabel->setStyleSheet("QLabel { color: green; font-weight: bold; }");
+            break;
+        case ClientWrapper::Error:
+            connectionStatusLabel->setText("Bağlantı Durumu: Hata");
+            connectionStatusLabel->setStyleSheet("QLabel { color: red; font-weight: bold; }");
+            break;
     }
+    
+    updateUIState();
+    showStatusMessage(message);
+    // Sadece GUI mesajını ekle, log formatı zaten client_wrapper'da yapılıyor
+    logTextEdit->append(message);
+}
+
+/**
+ * @brief Veri gönderim sonucunda çağrılır
+ */
+void MainWindow::onDataSendResult(ClientWrapper::SendResult result, const QString& message)
+{
+    // Progress bar gizle
+    progressBar->setVisible(false);
+    updateUIState();
+    
+    switch (result) {
+        case ClientWrapper::SendSuccess:
+            QMessageBox::information(this, "Başarılı", message);
+            showStatusMessage(message, 3000);
+            break;
+        case ClientWrapper::SendError:
+        case ClientWrapper::NotConnected:
+        case ClientWrapper::InvalidData:
+            QMessageBox::warning(this, "Hata", message);
+            showStatusMessage(message, 5000);
+            break;
+    }
+    
+    // Sadece GUI mesajını ekle, log formatı zaten client_wrapper'da yapılıyor
+    logTextEdit->append(message);
+}
+
+/**
+ * @brief Sunucudan veri alındığında çağrılır
+ */
+void MainWindow::onDataReceived(const QString& data)
+{
+    logTextEdit->append(QString("Sunucudan veri: %1").arg(data));
+    showStatusMessage("Sunucudan veri alındı");
+}
+
+/**
+ * @brief Log mesajı alındığında çağrılır
+ */
+void MainWindow::onLogMessage(const QString& message)
+{
+    // Qt GUI'de sadece mesajı göster, log formatlama zaten C kodunda yapılıyor
+    logTextEdit->append(message);
+}
+
+/**
+ * @brief UI durumunu günceller
+ */
+void MainWindow::updateUIState()
+{
+    bool connected = clientWrapper->isConnected();
+    bool connecting = (clientWrapper->getConnectionStatus() == ClientWrapper::Connecting);
+    
+    // Bağlantı kontrolleri
+    connectButton->setEnabled(!connected && !connecting);
+    disconnectButton->setEnabled(connected);
+    serverAddressEdit->setEnabled(!connected && !connecting);
+    serverPortSpin->setEnabled(!connected && !connecting);
+    
+    // Veri gönderim kontrolleri
+    sendButton->setEnabled(connected && pointSelected && !progressBar->isVisible());
+    dataTypeCombo->setEnabled(connected);
+    messageEdit->setEnabled(connected);
+    encryptionCheckBox->setEnabled(connected);
+}
+
+/**
+ * @brief Status bar'da mesaj gösterir
+ */
+void MainWindow::showStatusMessage(const QString& message, int timeout)
+{
+    statusBar()->showMessage(message, timeout);
 }

@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include "ecdh.h"
+#include "crypto_utils.h"
 #include "config.h"
 
 // Connection types
