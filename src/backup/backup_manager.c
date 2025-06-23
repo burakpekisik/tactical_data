@@ -3,6 +3,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include "config.h"
 
 /**
  * @brief Veritabanı dosyasını zaman damgalı olarak yedekler.
@@ -15,8 +16,8 @@
  */
 int backup_database() {
     FILE *fptr1, *fptr2;
-    char src_file[100] = "data/tactical_data.db";
-    char backup_dir[100] = "data/backup";
+    char src_file[100] = CONFIG_DB_PATH;
+    char backup_dir[100] = BACKUP_DIR;
     char backup_file[200];
     int c;
     time_t now = time(NULL);

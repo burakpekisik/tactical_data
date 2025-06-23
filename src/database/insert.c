@@ -99,9 +99,9 @@ int db_insert_report(const report_t *report) {
     }
 
     snprintf(sql, sizeof(sql),
-        "INSERT INTO REPORTS (UNIT_ID, STATUS, LATITUDE, LONGITUDE, DESCRIPTION, TIMESTAMP) "
+        "INSERT INTO REPORTS (USER_ID, STATUS, LATITUDE, LONGITUDE, DESCRIPTION, TIMESTAMP) "
         "VALUES (%d, '%s', %.6f, %.6f, '%s', %ld);",
-        report->unit_id, report->status, report->latitude, report->longitude,
+        report->user_id, report->status, report->latitude, report->longitude,
         report->description, report->timestamp);
 
     rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
@@ -111,7 +111,7 @@ int db_insert_report(const report_t *report) {
         sqlite3_free(zErrMsg);
         return -1;
     } else {
-        PRINTF_LOG("Report for unit ID %d inserted successfully\n", report->unit_id);
+        PRINTF_LOG("Report for user ID %d inserted successfully\n", report->user_id);
         return sqlite3_last_insert_rowid(g_db);
     }
 }
@@ -144,18 +144,18 @@ int db_insert_tactical_data_from_json(const tactical_data_t *tactical_data) {
         return -1;
     }
 
-    // 1. Önce unit_id'nin database'de olup olmadığını kontrol et
-    int unit_db_id = db_find_or_create_unit_by_id(tactical_data->unit_id);
-    if (unit_db_id <= 0) {
-        fprintf(stderr, "Failed to find or create unit: %s\n", tactical_data->unit_id);
+    // 1. Önce user_id'nin database'de olup olmadığını kontrol et
+    // (Burada kullanıcıyı bulmak veya oluşturmak için uygun fonksiyon eklenmeli)
+    int user_db_id = db_find_or_create_user_by_id(tactical_data->user_id); // Bu fonksiyon eklenmeli
+    if (user_db_id <= 0) {
+        fprintf(stderr, "Failed to find or create user: %s\n", tactical_data->user_id);
         return -1;
     }
 
     // 2. Report verilerini hazırla
     report_t report;
     memset(&report, 0, sizeof(report_t));
-    
-    report.unit_id = unit_db_id;
+    report.user_id = user_db_id;
     strncpy(report.status, tactical_data->status, sizeof(report.status) - 1);
     report.latitude = tactical_data->latitude;
     report.longitude = tactical_data->longitude;
@@ -169,8 +169,8 @@ int db_insert_tactical_data_from_json(const tactical_data_t *tactical_data) {
         return -1;
     }
 
-    PRINTF_LOG("Tactical data saved: Unit=%s, Status=%s, Location=(%.6f,%.6f)\n",
-           tactical_data->unit_id, tactical_data->status, 
+    PRINTF_LOG("Tactical data saved: User=%s, Status=%s, Location=(%.6f,%.6f)\n",
+           tactical_data->user_id, tactical_data->status, 
            tactical_data->latitude, tactical_data->longitude);
 
     return report_id;
@@ -250,6 +250,67 @@ int db_find_or_create_unit_by_id(const char* unit_id) {
 }
 
 /**
+ * @brief USERS tablosuna yeni kullanıcı ekler
+ * @details Kullanıcı bilgilerini USERS tablosuna INSERT eder. Auto-increment ID döner.
+ *          UNIQUE constraint violation durumunda hata verir.
+ *
+ * @param user_id Bağlı olduğu unit'in ID'si (veya NULL)
+ * @param username Kullanıcı adı (benzersiz)
+ * @param name Kullanıcı adı
+ * @param surname Kullanıcı soyadı
+ * @param password Şifre (hashlenmiş olarak kaydedilmeli)
+ * @param privilege Yetki seviyesi
+ * @return int İşlem sonucu
+ * @retval >0 Başarılı ekleme, yeni record'un ID'si
+ * @retval -1 Ekleme hatası (SQL error, database not initialized)
+ *
+ * @note USERNAME alanı UNIQUE constraint'e sahiptir
+ * @warning String alanlarında SQL injection koruması yok
+ *
+ */
+int db_insert_user(int unit_id, const char* username, const char* name, const char* surname, const char* password, int privilege) {
+    char *zErrMsg = 0;
+    char sql[1024];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql),
+        "INSERT INTO USERS (UNIT_ID, USERNAME, NAME, SURNAME, PASSWORD, PRIVILEGE) "
+        "VALUES (%s, '%s', '%s', '%s', '%s', %d);",
+        unit_id > 0 ? "?" : "NULL", username, name, surname, password, privilege);
+
+    if (unit_id > 0) {
+        sqlite3_stmt *stmt;
+        rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            fprintf(stderr, "SQL error preparing user insert: %s\n", sqlite3_errmsg(g_db));
+            return -1;
+        }
+        sqlite3_bind_int(stmt, 1, unit_id);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            fprintf(stderr, "SQL error inserting user: %s\n", sqlite3_errmsg(g_db));
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+        sqlite3_finalize(stmt);
+    } else {
+        rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+        if(rc != SQLITE_OK) {
+            fprintf(stderr, "SQL error inserting user: %s\n", zErrMsg);
+            sqlite3_free(zErrMsg);
+            return -1;
+        }
+    }
+    PRINTF_LOG("User '%s' inserted successfully\n", username);
+    return sqlite3_last_insert_rowid(g_db);
+}
+
+/**
  * @brief Tactical data'yı kaydeder ve formatlanmış response döndürür
  * @details Tactical data'yı database'e kaydeder ve client'a gönderilecek
  *          detaylı response mesajı oluşturur. İşlem sonucu ve detayları içerir.
@@ -295,12 +356,12 @@ char* db_save_tactical_data_and_get_response(const tactical_data_t *tactical_dat
     // Tactical data bilgilerini ekle
     char temp[2048]; // Buffer boyutunu artırdık
     snprintf(temp, sizeof(temp),
-             "Unit ID: %s\n"
+             "User ID: %s\n"
              "Status: %s\n"
              "Location: %.6f, %.6f\n"
              "Description: %.50s%s\n" // Description'ı kısaltıyoruz
              "Timestamp: %ld\n\n",
-             tactical_data->unit_id,
+             tactical_data->user_id,
              tactical_data->status,
              tactical_data->latitude,
              tactical_data->longitude,

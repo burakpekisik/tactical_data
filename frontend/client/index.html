@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tactical Data Client - Harita Arayüzü</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="main-container">
+        <!-- Map Container -->
+        <div class="map-container">
+            <div id="map"></div>
+            <div class="coordinates-bar">
+                <span id="current-coords">Koordinat: 39.591070, 33.029794</span>
+            </div>
+        </div>
+        
+        <!-- Control Panel -->
+        <div class="control-panel">
+            <!-- Server Connection Section -->
+            <div class="mb-4">
+                <div class="section-title">Sunucu Bağlantısı</div>
+                
+                <div class="form-group">
+                    <label class="form-label">Adres:</label>
+                    <input type="text" class="form-control" id="server-address" value="127.0.0.1">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Port:</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="server-port" value="8080">
+                        <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                        </button>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="#" onclick="setPort('8080')">8080</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="setPort('3000')">3000</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="setPort('9000')">9000</a></li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="d-flex gap-2 mb-3">
+                    <button class="btn btn-connect" id="connect-btn" onclick="toggleConnection()">Bağlan</button>
+                    <button class="btn btn-disconnect" id="disconnect-btn" onclick="toggleConnection()" disabled>Bağlantıyı Kes</button>
+                </div>
+                
+                <div id="connection-status" class="status-disconnected">Bağlantı Durumu: Bağlı Değil</div>
+            </div>
+            
+            <!-- Data Transmission Section -->
+            <div class="mb-4">
+                <div class="section-title">Veri Gönderimi</div>
+                
+                <div class="selected-coords" id="selected-coords">
+                    Seçili Nokta: 39.591070, 33.029794
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Veri Tipi:</label>
+                    <select class="form-select" id="data-type">
+                        <option value="tactical-position">Tactical Position</option>
+                        <option value="observation-point">Observation Point</option>
+                        <option value="target-location">Target Location</option>
+                        <option value="waypoint">Waypoint</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Mesaj:</label>
+                    <input type="text" class="form-control" id="message" value="Tactical data from client">
+                </div>
+                
+                <button class="btn btn-send" onclick="sendData()">Veri Gönder</button>
+            </div>
+            
+            <!-- Operation History Section -->
+            <div>
+                <div class="section-title">İşlem Geçmişi</div>
+                <div class="history-log" id="history-log">
+                    <div class="log-entry">Uygulama başlatıldı - Thu Jun 19 17:00:02 2025</div>
+                    <div class="log-entry">Nokta seçildi: 37.620008, 32.616949 - Thu Jun 19 17:00:06 2025</div>
+                    <div class="log-entry">Nokta seçildi: 38.899381, 33.810425 - Thu Jun 19 17:00:06 2025</div>
+                    <div class="log-entry">Nokta seçildi: 39.823829, 34.253826 - Thu Jun 19 17:00:07 2025</div>
+                    <div class="log-entry">Nokta seçildi: 39.591070, 33.029794 - Thu Jun 19 17:00:07 2025</div>
+                    <div class="log-entry">Sunucuya bağlanıldı: 127.0.0.1:8080 - Thu Jun 19 17:00:09 2025</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Custom JavaScript -->
+    <script src="script.js"></script>
+</body>
+</html>

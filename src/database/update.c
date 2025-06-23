@@ -124,9 +124,9 @@ int db_update_report(int id, const report_t *report) {
     }
 
     snprintf(sql, sizeof(sql),
-        "UPDATE REPORTS SET UNIT_ID=%d, STATUS='%s', LATITUDE=%.6f, "
+        "UPDATE REPORTS SET USER_ID=%d, STATUS='%s', LATITUDE=%.6f, "
         "LONGITUDE=%.6f, DESCRIPTION='%s', TIMESTAMP=%ld WHERE ID=%d;",
-        report->unit_id, report->status, report->latitude, report->longitude,
+        report->user_id, report->status, report->latitude, report->longitude,
         report->description, report->timestamp, id);
 
     rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
@@ -145,6 +145,41 @@ int db_update_report(int id, const report_t *report) {
             return -1;
         }
     }
+}
+
+// USERS tablosunda kullanıcıyı günceller
+int db_update_user(int id, int unit_id, const char* username, const char* name, const char* surname, const char* password, const char* salt, int privilege) {
+    char sql[1024];
+    char *zErrMsg = 0;
+    int rc;
+    snprintf(sql, sizeof(sql),
+        "UPDATE USERS SET UNIT_ID=%s, USERNAME='%s', NAME='%s', SURNAME='%s', PASSWORD='%s', SALT='%s', PRIVILEGE=%d WHERE ID=%d;",
+        unit_id > 0 ? "?" : "NULL", username, name, surname, password, salt, privilege, id);
+    if (unit_id > 0) {
+        sqlite3_stmt *stmt;
+        rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            fprintf(stderr, "SQL error preparing user update: %s\n", sqlite3_errmsg(g_db));
+            return -1;
+        }
+        sqlite3_bind_int(stmt, 1, unit_id);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            fprintf(stderr, "SQL error updating user: %s\n", sqlite3_errmsg(g_db));
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+        sqlite3_finalize(stmt);
+    } else {
+        rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+        if(rc != SQLITE_OK) {
+            fprintf(stderr, "SQL error updating user: %s\n", zErrMsg);
+            sqlite3_free(zErrMsg);
+            return -1;
+        }
+    }
+    PRINTF_LOG("User ID %d updated successfully\n", id);
+    return 0;
 }
 
 /**
@@ -266,7 +301,7 @@ int db_get_report_by_id(int id, report_t *report) {
     if (rc == SQLITE_ROW) {
         memset(report, 0, sizeof(report_t));
         report->id = sqlite3_column_int(stmt, 0);
-        report->unit_id = sqlite3_column_int(stmt, 1);
+        report->user_id = sqlite3_column_int(stmt, 1);
         strncpy(report->status, (char*)sqlite3_column_text(stmt, 2), sizeof(report->status) - 1);
         report->latitude = sqlite3_column_double(stmt, 3);
         report->longitude = sqlite3_column_double(stmt, 4);
@@ -274,9 +309,6 @@ int db_get_report_by_id(int id, report_t *report) {
             strncpy(report->description, (char*)sqlite3_column_text(stmt, 5), sizeof(report->description) - 1);
         }
         report->timestamp = sqlite3_column_int64(stmt, 6);
-        if (sqlite3_column_text(stmt, 7)) {
-            strncpy(report->created_at, (char*)sqlite3_column_text(stmt, 7), sizeof(report->created_at) - 1);
-        }
         
         sqlite3_finalize(stmt);
         return 0;

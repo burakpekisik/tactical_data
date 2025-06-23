@@ -23,7 +23,7 @@ typedef struct {
 // Report structure
 typedef struct {
     int id;
-    int unit_id;
+    int user_id;
     char status[50];
     double latitude;
     double longitude;
@@ -34,7 +34,7 @@ typedef struct {
 
 // Tactical Data Structure (matching data.json format)
 typedef struct {
-    char unit_id[64];
+    char user_id[64];
     char status[64];
     double latitude;
     double longitude;
@@ -67,6 +67,13 @@ int db_get_report_by_id(int id, report_t *report);
 int db_insert_tactical_data_from_json(const tactical_data_t *tactical_data);
 int db_find_or_create_unit_by_id(const char* unit_id);
 char* db_save_tactical_data_and_get_response(const tactical_data_t *tactical_data, const char* filename);
+
+// USERS tablosu için fonksiyon prototipleri
+int db_insert_user(int unit_id, const char* username, const char* name, const char* surname, const char* password, int privilege);
+int db_select_user_by_id(int id, int *unit_id, char *username, char *name, char *surname, char *password, int *privilege, char *created_at);
+int db_select_user_by_username(const char *username, int *id, int *unit_id, char *name, char *surname, char *password, int *privilege, char *created_at);
+int db_update_user(int id, int unit_id, const char* username, const char* name, const char* surname, const char* password, int privilege);
+int db_delete_user(int id);
 
 // Utility functions
 void db_free_units(unit_t *units, int count);

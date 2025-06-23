@@ -138,6 +138,36 @@ int db_delete_report(int id) {
 }
 
 /**
+ * @brief USERS tablosundan kullanıcıyı siler
+ * @details Verilen ID'ye sahip kullanıcıyı USERS tablosundan siler.
+ *
+ * @param id Silinecek kullanıcının database ID'si
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı silme
+ * @retval -1 Silme hatası (database not initialized, SQL error, ID not found)
+ *
+ * @note sqlite3_changes() ile etkilenen kayıt sayısı kontrol edilir
+ * @warning id geçerli bir database ID olmalıdır
+ * @warning Silme işlemi geri alınamaz
+ *
+ * @see db_delete_unit(), db_delete_report()
+ */
+int db_delete_user(int id) {
+    char sql[256];
+    char *zErrMsg = 0;
+    int rc;
+    snprintf(sql, sizeof(sql), "DELETE FROM USERS WHERE ID = %d;", id);
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error deleting user: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    }
+    PRINTF_LOG("User ID %d deleted successfully\n", id);
+    return 0;
+}
+
+/**
  * @brief Units dynamic array'inin belleğini serbest bırakır
  * @details db_select_units() fonksiyonu tarafından tahsis edilen unit array'inin
  *          belleğini güvenli şekilde serbest bırakır.

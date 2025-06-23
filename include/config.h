@@ -34,7 +34,12 @@
 #define CONFIG_ECDH_PUBLIC_KEY_SIZE ECC_PUB_KEY_SIZE
 #define CONFIG_ECDH_SHARED_SECRET_SIZE ECC_PUB_KEY_SIZE
 
+// Argon2 konfigürasyonu
+#define SALT_LENGTH 16
+#define HASH_LENGTH 128
+
 // Veritabanı konfigürasyonu
 #define CONFIG_DB_PATH "data/tactical_data.db"
+#define BACKUP_DIR "data/backup"
 
 #endif // _CONFIG_H_

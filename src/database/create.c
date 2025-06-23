@@ -55,9 +55,9 @@ int db_init(const char *db_path) {
 
 /**
  * @brief Veritabanı tablolarını oluşturur
- * @details Tactical data transfer sistemi için gerekli UNITS ve REPORTS
+ * @details Tactical data transfer sistemi için gerekli UNITS, USERS ve REPORTS
  *          tablolarını oluşturur. Foreign key kısıtlamalarını etkinleştirir.
- * 
+ *
  * Oluşturulan Tablolar:
  * 
  * **UNITS Tablosu:**
@@ -69,9 +69,20 @@ int db_init(const char *db_path) {
  * - ACTIVE: Aktiflik durumu (INTEGER, default 1)
  * - CREATED_AT: Oluşturulma zamanı (DATETIME, auto)
  * 
- * **REPORTS Tablosu:**
+ * **USERS Tablosu:**
  * - ID: Primary key (auto-increment)
  * - UNIT_ID: Unit referansı (FOREIGN KEY -> UNITS.ID)
+ * - USERNAME: Kullanıcı adı (TEXT, NOT NULL, UNIQUE)
+ * - NAME: Adı (TEXT, NOT NULL)
+ * - SURNAME: Soyadı (TEXT, NOT NULL)
+ * - PASSWORD: Şifre (TEXT, NOT NULL)
+ * - SALT: Tuz (şifreleme için) (TEXT, NOT NULL)
+ * - PRIVILEGE: Kullanıcı yetkisi (INTEGER, NOT NULL)
+ * - CREATED_AT: Oluşturulma zamanı (DATETIME, auto)
+ * 
+ * **REPORTS Tablosu:**
+ * - ID: Primary key (auto-increment)
+ * - USER_ID: Kullanıcı referansı (FOREIGN KEY -> USERS.ID)
  * - STATUS: Rapor durumu (TEXT, NOT NULL)
  * - LATITUDE: Enlem koordinatı (REAL, NOT NULL)
  * - LONGITUDE: Boylam koordinatı (REAL, NOT NULL)
@@ -120,21 +131,43 @@ int db_create_tables(void) {
         PRINTF_LOG("UNITS table created successfully\n");
     }
 
-    // Create REPORTS table with foreign key
-    sql = "CREATE TABLE IF NOT EXISTS REPORTS("
+    // Create USERS table
+    sql = "CREATE TABLE IF NOT EXISTS USERS(" 
           "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
-          "UNIT_ID INTEGER NOT NULL,"
+          "UNIT_ID INTEGER,"
+          "USERNAME TEXT NOT NULL UNIQUE,"
+          "NAME TEXT NOT NULL,"
+          "SURNAME TEXT NOT NULL,"
+          "PASSWORD TEXT NOT NULL,"
+          "SALT TEXT NOT NULL,"
+          "PRIVILEGE INTEGER NOT NULL,"
+          "CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,"
+          "FOREIGN KEY (UNIT_ID) REFERENCES UNITS(ID) ON DELETE SET NULL"
+          ");";
+
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error creating USERS table: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else {
+        PRINTF_LOG("USERS table created successfully\n");
+    }
+
+    // Create REPORTS table with USER_ID foreign key
+    sql = "CREATE TABLE IF NOT EXISTS REPORTS(" 
+          "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "USER_ID INTEGER NOT NULL,"
           "STATUS TEXT NOT NULL,"
           "LATITUDE REAL NOT NULL,"
           "LONGITUDE REAL NOT NULL,"
           "DESCRIPTION TEXT,"
           "TIMESTAMP INTEGER NOT NULL,"
           "CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,"
-          "FOREIGN KEY (UNIT_ID) REFERENCES UNITS(ID) ON DELETE CASCADE"
+          "FOREIGN KEY (USER_ID) REFERENCES USERS(ID) ON DELETE CASCADE"
           ");";
 
     rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
-    
     if(rc != SQLITE_OK) {
         fprintf(stderr, "SQL error creating REPORTS table: %s\n", zErrMsg);
         sqlite3_free(zErrMsg);

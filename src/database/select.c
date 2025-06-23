@@ -88,7 +88,7 @@ static int unit_callback(void *data, int argc, char **argv, char **azColName) {
  * Callback Data Formatı:
  * - data[0]: report_t** (reports array pointer)
  * - data[1]: int* (current count)
- * - data[2]: int* (array capacity)
+ * - data[2: int* (array capacity)
  * 
  * @param data Callback veri paketi (report array, count, capacity)
  * @param argc Column sayısı
@@ -119,8 +119,8 @@ static int report_callback(void *data, int argc, char **argv, char **azColName) 
     for(int i = 0; i < argc; i++) {
         if (strcmp(azColName[i], "ID") == 0 && argv[i]) {
             report->id = atoi(argv[i]);
-        } else if (strcmp(azColName[i], "UNIT_ID") == 0 && argv[i]) {
-            report->unit_id = atoi(argv[i]);
+        } else if (strcmp(azColName[i], "USER_ID") == 0 && argv[i]) {
+            report->user_id = atoi(argv[i]);
         } else if (strcmp(azColName[i], "STATUS") == 0 && argv[i]) {
             strncpy(report->status, argv[i], sizeof(report->status) - 1);
         } else if (strcmp(azColName[i], "LATITUDE") == 0 && argv[i]) {
@@ -266,7 +266,7 @@ int db_select_reports(report_t **reports, int *count) {
  * 
  * @see report_callback(), report_t, db_select_reports()
  */
-int db_select_reports_by_unit(int unit_id, report_t **reports, int *count) {
+int db_select_reports_by_user(int user_id, report_t **reports, int *count) {
     char *zErrMsg = 0;
     char sql[256];
     int rc;
@@ -277,7 +277,7 @@ int db_select_reports_by_unit(int unit_id, report_t **reports, int *count) {
     }
 
     snprintf(sql, sizeof(sql), 
-        "SELECT * FROM REPORTS WHERE UNIT_ID = %d ORDER BY TIMESTAMP DESC", unit_id);
+        "SELECT * FROM REPORTS WHERE USER_ID = %d ORDER BY TIMESTAMP DESC", user_id);
 
     *count = 0;
     int capacity = 10;
@@ -288,11 +288,95 @@ int db_select_reports_by_unit(int unit_id, report_t **reports, int *count) {
     rc = sqlite3_exec(g_db, sql, report_callback, callback_data, &zErrMsg);
     
     if(rc != SQLITE_OK) {
-        fprintf(stderr, "SQL error selecting reports by unit: %s\n", zErrMsg);
+        fprintf(stderr, "SQL error selecting reports by user: %s\n", zErrMsg);
         sqlite3_free(zErrMsg);
         free(*reports);
         return -1;
     }
 
     return 0;
+}
+
+/**
+ * @brief USERS tablosundan kullanıcıyı ID ile seçer
+ * @details Verilen ID'ye sahip kullanıcıyı USERS tablosundan çeker.
+ *
+ * @param id Kullanıcı ID'si
+ * @param unit_id [OUT] Bağlı olduğu unit'in ID'si
+ * @param username [OUT] Kullanıcı adı
+ * @param name [OUT] Adı
+ * @param surname [OUT] Soyadı
+ * @param password [OUT] Hashlenmiş şifre
+ * @param salt [OUT] Kullanıcıya ait salt
+ * @param privilege [OUT] Yetki seviyesi
+ * @param created_at [OUT] Oluşturulma zamanı
+ * @return int 0: Başarılı, -1: Hata veya kullanıcı yok
+ */
+int db_select_user_by_id(int id, int *unit_id, char *username, char *name, char *surname, char *password, char *salt, int *privilege, char *created_at) {
+    char sql[256];
+    sqlite3_stmt *stmt;
+    int rc;
+    snprintf(sql, sizeof(sql), "SELECT UNIT_ID, USERNAME, NAME, SURNAME, PASSWORD, SALT, PRIVILEGE, CREATED_AT FROM USERS WHERE ID = ?;");
+    rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error preparing select user: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+    sqlite3_bind_int(stmt, 1, id);
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        if (unit_id) *unit_id = sqlite3_column_int(stmt, 0);
+        if (username) strcpy(username, (const char*)sqlite3_column_text(stmt, 1));
+        if (name) strcpy(name, (const char*)sqlite3_column_text(stmt, 2));
+        if (surname) strcpy(surname, (const char*)sqlite3_column_text(stmt, 3));
+        if (password) strcpy(password, (const char*)sqlite3_column_text(stmt, 4));
+        if (salt) strcpy(salt, (const char*)sqlite3_column_text(stmt, 5));
+        if (privilege) *privilege = sqlite3_column_int(stmt, 6);
+        if (created_at) strcpy(created_at, (const char*)sqlite3_column_text(stmt, 7));
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+    sqlite3_finalize(stmt);
+    return -1;
+}
+
+/**
+ * @brief USERS tablosunda kullanıcıyı username ile seçer
+ * @details Verilen kullanıcı adı ile USERS tablosundan kullanıcıyı çeker.
+ *
+ * @param username Kullanıcı adı
+ * @param id [OUT] Kullanıcı ID'si
+ * @param unit_id [OUT] Bağlı olduğu unit'in ID'si
+ * @param name [OUT] Adı
+ * @param surname [OUT] Soyadı
+ * @param password [OUT] Hashlenmiş şifre
+ * @param privilege [OUT] Yetki seviyesi
+ * @param created_at [OUT] Oluşturulma zamanı
+ * @return int 0: Başarılı, -1: Hata veya kullanıcı yok
+ */
+int db_select_user_by_username(const char *username, int *id, int *unit_id, char *name, char *surname, char *password, int *privilege, char *created_at) {
+    char sql[256];
+    sqlite3_stmt *stmt;
+    int rc;
+    snprintf(sql, sizeof(sql), "SELECT ID, UNIT_ID, NAME, SURNAME, PASSWORD, PRIVILEGE, CREATED_AT FROM USERS WHERE USERNAME = ?;");
+    rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error preparing select user: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        if (id) *id = sqlite3_column_int(stmt, 0);
+        if (unit_id) *unit_id = sqlite3_column_int(stmt, 1);
+        if (name) strcpy(name, (const char*)sqlite3_column_text(stmt, 2));
+        if (surname) strcpy(surname, (const char*)sqlite3_column_text(stmt, 3));
+        if (password) strcpy(password, (const char*)sqlite3_column_text(stmt, 4));
+        if (privilege) *privilege = sqlite3_column_int(stmt, 5);
+        if (created_at) strcpy(created_at, (const char*)sqlite3_column_text(stmt, 6));
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+    sqlite3_finalize(stmt);
+    return -1;
 }
