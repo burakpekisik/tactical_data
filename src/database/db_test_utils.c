@@ -91,6 +91,66 @@ int db_insert_test_data(void) {
         }
     }
     
+    // Test kullanıcıları oluştur
+    // (Her birim için bir kullanıcı, salt ve hash örnekleriyle)
+    char default_salt[17] = "testsalt12345678";
+    char default_hash[129] = "$argon2id$v=19$m=65536,t=3,p=1$testsalt12345678$hashhashhashhashhashhashhashhashhashhashhashhashhashhashhashhash";
+    struct {
+        int unit_id;
+        char username[32];
+        char name[32];
+        char surname[32];
+        char password[129];
+        char salt[17];
+        int privilege;
+    } users[] = {
+        {0, "", "", "", "", "", 1},
+        {0, "", "", "", "", "", 1},
+        {0, "", "", "", "", "", 1},
+        {0, "", "", "", "", "", 1}
+    };
+    // Bilgileri strcpy ile ata
+    strcpy(users[0].username, "birim01user");
+    strcpy(users[0].name, "Ali");
+    strcpy(users[0].surname, "Yılmaz");
+    strcpy(users[0].password, default_hash);
+    strcpy(users[0].salt, default_salt);
+    
+    strcpy(users[1].username, "birim02user");
+    strcpy(users[1].name, "Veli");
+    strcpy(users[1].surname, "Demir");
+    strcpy(users[1].password, default_hash);
+    strcpy(users[1].salt, default_salt);
+    
+    strcpy(users[2].username, "birim03user");
+    strcpy(users[2].name, "Ayşe");
+    strcpy(users[2].surname, "Kaya");
+    strcpy(users[2].password, default_hash);
+    strcpy(users[2].salt, default_salt);
+    
+    strcpy(users[3].username, "birim04user");
+    strcpy(users[3].name, "Fatma");
+    strcpy(users[3].surname, "Çelik");
+    strcpy(users[3].password, default_hash);
+    strcpy(users[3].salt, default_salt);
+    
+    int user_ids[4];
+    int users_inserted = 0;
+    for (int i = 0; i < 4; i++) {
+        users[i].unit_id = unit_ids[i];
+        int user_id = db_insert_user(users[i].unit_id, users[i].username, users[i].name, users[i].surname, users[i].password, users[i].salt, users[i].privilege);
+        if (user_id > 0) {
+            user_ids[i] = user_id;
+            users_inserted++;
+            printf("  ✓ Kullanıcı eklendi: %s (ID: %d)\n", users[i].username, user_id);
+            fflush(stdout);
+        } else {
+            printf("  ✗ Kullanıcı eklenemedi: %s\n", users[i].username);
+            fflush(stdout);
+            user_ids[i] = -1;
+        }
+    }
+    
     // Test raporları oluştur
     long current_time = time(NULL);
     
@@ -126,32 +186,30 @@ int db_insert_test_data(void) {
     
     // Raporları ekle
     for (int i = 0; i < 6; i++) {
-        int unit_index;
-        if (i < 2) unit_index = 0;      // BIRIM-01
-        else if (i < 4) unit_index = 1; // BIRIM-02  
-        else if (i < 5) unit_index = 2; // BIRIM-03
-        else unit_index = 3;            // BIRIM-04
-        
-        if (unit_ids[unit_index] > 0) {
-            reports[i].unit_id = unit_ids[unit_index];
+        int user_index;
+        if (i < 2) user_index = 0;      // BIRIM-01
+        else if (i < 4) user_index = 1; // BIRIM-02  
+        else if (i < 5) user_index = 2; // BIRIM-03
+        else user_index = 3;            // BIRIM-04
+        if (user_ids[user_index] > 0) {
+            reports[i].user_id = user_ids[user_index];
             int report_id = db_insert_report(&reports[i]);
             if (report_id > 0) {
                 reports_inserted++;
                 printf("  ✓ Rapor eklendi: %s - %s (ID: %d)\n", 
-                       units[unit_index].unit_id, reports[i].status, report_id);
+                       users[user_index].username, reports[i].status, report_id);
                 fflush(stdout);
             } else {
                 printf("  ✗ Rapor eklenemedi: %s - %s\n", 
-                       units[unit_index].unit_id, reports[i].status);
+                       users[user_index].username, reports[i].status);
                 fflush(stdout);
             }
         }
     }
-    
     printf("Test verileri ekleme tamamlandi:\n");
     printf("  - %d birim eklendi\n", units_inserted);
+    printf("  - %d kullanıcı eklendi\n", users_inserted);
     printf("  - %d rapor eklendi\n", reports_inserted);
     fflush(stdout);
-    
-    return (units_inserted > 0 && reports_inserted > 0) ? 0 : -1;
+    return (units_inserted > 0 && users_inserted > 0 && reports_inserted > 0) ? 0 : -1;
 }

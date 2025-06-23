@@ -20,6 +20,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include "database.h"
 
@@ -87,20 +88,51 @@ int insert_test_data_standalone(void) {
         }
     }
     
+    // Test kullanıcıları oluştur
+    char default_salt[17] = "testsalt12345678";
+    char default_hash[129] = "$argon2id$v=19$m=65536,t=3,p=1$testsalt12345678$hashhashhashhashhashhashhashhashhashhashhashhashhashhashhashhash";
+    struct {
+        int unit_id;
+        char username[32];
+        char name[32];
+        char surname[32];
+        char password[129];
+        char salt[17];
+        int privilege;
+    } users[] = {
+        {0, "test01user", "Test1", "Kullanici", "", "", 1},
+        {0, "test02user", "Test2", "Kullanici", "", "", 1}
+    };
+    // String alanları strcpy ile ata
+    strcpy(users[0].password, default_hash);
+    strcpy(users[0].salt, default_salt);
+    strcpy(users[1].password, default_hash);
+    strcpy(users[1].salt, default_salt);
+    int user_ids[2];
+    int users_inserted = 0;
+    for (int i = 0; i < 2; i++) {
+        users[i].unit_id = unit_ids[i];
+        int user_id = db_insert_user(users[i].unit_id, users[i].username, users[i].name, users[i].surname, users[i].password, users[i].salt, users[i].privilege);
+        if (user_id > 0) {
+            user_ids[i] = user_id;
+            users_inserted++;
+            printf("  ✓ Kullanıcı eklendi: %s (ID: %d)\n", users[i].username, user_id);
+        } else {
+            printf("  ✗ Kullanıcı eklenemedi: %s\n", users[i].username);
+            user_ids[i] = -1;
+        }
+    }
     // Test raporları oluştur
     long current_time = time(NULL);
-    
     report_t reports[] = {
         {0, -1, "Test-Durum-1", 40.0000, 30.0000, "Test raporu 1", current_time - 1000, ""},
         {0, -1, "Test-Durum-2", 40.0001, 30.0001, "Test raporu 2", current_time - 500, ""},
     };
-    
     int reports_inserted = 0;
-    
-    // Raporları ekle
+    // Raporları ekle (her rapor ilgili kullanıcının user_id'si ile)
     for (int i = 0; i < 2; i++) {
-        if (unit_ids[i] > 0) {
-            reports[i].unit_id = unit_ids[i];
+        if (user_ids[i] > 0) {
+            reports[i].user_id = user_ids[i];
             int report_id = db_insert_report(&reports[i]);
             if (report_id > 0) {
                 reports_inserted++;
@@ -108,9 +140,8 @@ int insert_test_data_standalone(void) {
             }
         }
     }
-    
-    printf("Test veri ekleme tamamlandı: %d birim, %d rapor\n", units_inserted, reports_inserted);
-    return (units_inserted > 0 && reports_inserted > 0) ? 0 : -1;
+    printf("Test veri ekleme tamamlandı: %d birim, %d kullanıcı, %d rapor\n", units_inserted, users_inserted, reports_inserted);
+    return (units_inserted > 0 && users_inserted > 0 && reports_inserted > 0) ? 0 : -1;
 }
 
 /**

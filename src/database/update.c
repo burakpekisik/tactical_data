@@ -178,7 +178,6 @@ int db_update_user(int id, int unit_id, const char* username, const char* name, 
             return -1;
         }
     }
-    PRINTF_LOG("User ID %d updated successfully\n", id);
     return 0;
 }
 

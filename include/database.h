@@ -59,6 +59,7 @@ int db_get_unit_by_id(int id, unit_t *unit);
 int db_insert_report(const report_t *report);
 int db_select_reports(report_t **reports, int *count);
 int db_select_reports_by_unit(int unit_id, report_t **reports, int *count);
+int db_select_reports_by_user(int user_id, report_t **reports, int *count);
 int db_update_report(int id, const report_t *report);
 int db_delete_report(int id);
 int db_get_report_by_id(int id, report_t *report);
@@ -69,11 +70,13 @@ int db_find_or_create_unit_by_id(const char* unit_id);
 char* db_save_tactical_data_and_get_response(const tactical_data_t *tactical_data, const char* filename);
 
 // USERS tablosu için fonksiyon prototipleri
-int db_insert_user(int unit_id, const char* username, const char* name, const char* surname, const char* password, int privilege);
-int db_select_user_by_id(int id, int *unit_id, char *username, char *name, char *surname, char *password, int *privilege, char *created_at);
-int db_select_user_by_username(const char *username, int *id, int *unit_id, char *name, char *surname, char *password, int *privilege, char *created_at);
-int db_update_user(int id, int unit_id, const char* username, const char* name, const char* surname, const char* password, int privilege);
+int db_insert_user(int unit_id, const char* username, const char* name, const char* surname, const char* password, const char* salt, int privilege);
+int db_select_user_by_id(int id, int *unit_id, char *username, char *name, char *surname, char *password, char *salt, int *privilege, char *created_at);
+int db_select_user_by_username(const char *username, int *id, int *unit_id, char *name, char *surname, char *password, char *salt, int *privilege, char *created_at);
+int db_update_user(int id, int unit_id, const char* username, const char* name, const char* surname, const char* password, const char* salt, int privilege);
 int db_delete_user(int id);
+int db_find_or_create_user_by_id(int id, int unit_id, const char* username, const char* name, const char* surname, const char* password, const char* salt, int privilege);
+int db_find_or_create_user_by_username(const char* username, int unit_id, const char* name, const char* surname, const char* password, const char* salt, int privilege);
 
 // Utility functions
 void db_free_units(unit_t *units, int count);

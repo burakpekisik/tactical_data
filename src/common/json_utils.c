@@ -395,14 +395,14 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
         return NULL;
     }
     
-    // unit_id field'ını parse et
-    cJSON *unit_id = cJSON_GetObjectItemCaseSensitive(json, "unit_id");
-    if (cJSON_IsString(unit_id) && (unit_id->valuestring != NULL)) {
-        strncpy(data->unit_id, unit_id->valuestring, sizeof(data->unit_id) - 1);
-        data->unit_id[sizeof(data->unit_id) - 1] = '\0';
+    // user_id field'ını parse et
+    cJSON *user_id = cJSON_GetObjectItemCaseSensitive(json, "user_id");
+    if (cJSON_IsString(user_id) && (user_id->valuestring != NULL)) {
+        strncpy(data->user_id, user_id->valuestring, sizeof(data->user_id) - 1);
+        data->user_id[sizeof(data->user_id) - 1] = '\0';
     } else {
-        PRINTF_LOG("UYARI: unit_id field'ı bulunamadı veya geçersiz\n");
-        strcpy(data->unit_id, "UNKNOWN");
+        PRINTF_LOG("UYARI: user_id field'ı bulunamadı veya geçersiz\n");
+        strcpy(data->user_id, "UNKNOWN");
     }
     
     // status field'ını parse et
@@ -456,7 +456,7 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
     cJSON_Delete(json);
     
     PRINTF_LOG("JSON başarıyla tactical_data_t'ye parse edildi:\n");
-    PRINTF_LOG("  - Unit ID: %s\n", data->unit_id);
+    PRINTF_LOG("  - Unit ID: %s\n", data->user_id);
     PRINTF_LOG("  - Status: %s\n", data->status);
     PRINTF_LOG("  - Konum: %.6f, %.6f\n", data->latitude, data->longitude);
     PRINTF_LOG("  - Açıklama: %.50s%s\n", data->description, 
@@ -577,7 +577,7 @@ char* tactical_data_to_string(const tactical_data_t* data, const char* filename)
              "==========================\n",
              filename,
              current_time,
-             data->unit_id,
+             data->user_id,
              data->status,
              data->latitude,
              data->longitude,

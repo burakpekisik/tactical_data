@@ -146,9 +146,23 @@ int db_insert_tactical_data_from_json(const tactical_data_t *tactical_data) {
 
     // 1. Önce user_id'nin database'de olup olmadığını kontrol et
     // (Burada kullanıcıyı bulmak veya oluşturmak için uygun fonksiyon eklenmeli)
-    int user_db_id = db_find_or_create_user_by_id(tactical_data->user_id); // Bu fonksiyon eklenmeli
+    int user_db_id = atoi(tactical_data->user_id);
     if (user_db_id <= 0) {
-        fprintf(stderr, "Failed to find or create user: %s\n", tactical_data->user_id);
+        fprintf(stderr, "Geçersiz user_id: %s\n", tactical_data->user_id);
+        return -1;
+    }
+    // Kullanıcı gerçekten var mı kontrol et
+    char dummy_username[32];
+    char dummy_name[32];
+    char dummy_surname[32];
+    char dummy_password[129];
+    char dummy_salt[17];
+    int dummy_privilege;
+    char dummy_created_at[32];
+    int dummy_unit_id;
+    int rc = db_select_user_by_id(user_db_id, &dummy_unit_id, dummy_username, dummy_name, dummy_surname, dummy_password, dummy_salt, &dummy_privilege, dummy_created_at);
+    if (rc != 0) {
+        fprintf(stderr, "user_id %d bulunamadı!\n", user_db_id);
         return -1;
     }
 
@@ -259,6 +273,7 @@ int db_find_or_create_unit_by_id(const char* unit_id) {
  * @param name Kullanıcı adı
  * @param surname Kullanıcı soyadı
  * @param password Şifre (hashlenmiş olarak kaydedilmeli)
+ * @param salt Şifre için tuz (salt) değeri
  * @param privilege Yetki seviyesi
  * @return int İşlem sonucu
  * @retval >0 Başarılı ekleme, yeni record'un ID'si
@@ -268,7 +283,7 @@ int db_find_or_create_unit_by_id(const char* unit_id) {
  * @warning String alanlarında SQL injection koruması yok
  *
  */
-int db_insert_user(int unit_id, const char* username, const char* name, const char* surname, const char* password, int privilege) {
+int db_insert_user(int unit_id, const char* username, const char* name, const char* surname, const char* password, const char* salt, int privilege) {
     char *zErrMsg = 0;
     char sql[1024];
     int rc;
@@ -279,9 +294,9 @@ int db_insert_user(int unit_id, const char* username, const char* name, const ch
     }
 
     snprintf(sql, sizeof(sql),
-        "INSERT INTO USERS (UNIT_ID, USERNAME, NAME, SURNAME, PASSWORD, PRIVILEGE) "
-        "VALUES (%s, '%s', '%s', '%s', '%s', %d);",
-        unit_id > 0 ? "?" : "NULL", username, name, surname, password, privilege);
+        "INSERT INTO USERS (UNIT_ID, USERNAME, NAME, SURNAME, PASSWORD, SALT, PRIVILEGE) "
+        "VALUES (%s, '%s', '%s', '%s', '%s', '%s', %d);",
+        unit_id > 0 ? "?" : "NULL", username, name, surname, password, salt, privilege);
 
     if (unit_id > 0) {
         sqlite3_stmt *stmt;
@@ -297,7 +312,9 @@ int db_insert_user(int unit_id, const char* username, const char* name, const ch
             sqlite3_finalize(stmt);
             return -1;
         }
+        int user_id = (int)sqlite3_last_insert_rowid(g_db);
         sqlite3_finalize(stmt);
+        return user_id;
     } else {
         rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
         if(rc != SQLITE_OK) {
@@ -305,9 +322,8 @@ int db_insert_user(int unit_id, const char* username, const char* name, const ch
             sqlite3_free(zErrMsg);
             return -1;
         }
+        return (int)sqlite3_last_insert_rowid(g_db);
     }
-    PRINTF_LOG("User '%s' inserted successfully\n", username);
-    return sqlite3_last_insert_rowid(g_db);
 }
 
 /**

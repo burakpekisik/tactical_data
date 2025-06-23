@@ -90,8 +90,8 @@ void test_select_operations(void) {
     if (db_select_reports(&reports, &report_count) == 0) {
         printf("\nToplam %d rapor bulundu:\n", report_count);
         for (int i = 0; i < report_count; i++) {
-            printf("  %d. Birim ID %d - %s (%.4f, %.4f) - %ld\n", 
-                   i+1, reports[i].unit_id, reports[i].status,
+            printf("  %d. Kullanıcı ID %d - %s (%.4f, %.4f) - %ld\n", 
+                   i+1, reports[i].user_id, reports[i].status,
                    reports[i].latitude, reports[i].longitude, reports[i].timestamp);
             if (strlen(reports[i].description) > 0) {
                 printf("     Açıklama: %.50s%s\n", 
@@ -168,20 +168,20 @@ void test_update_operations(void) {
 }
 
 /**
- * @brief Birime göre rapor listeleme işlemlerini test eder - ilişkisel sorgular
+ * @brief Kullanıcıya göre rapor listeleme işlemlerini test eder - ilişkisel sorgular
  * @ingroup database_tests
  * 
- * Bu fonksiyon birim-spesifik rapor sorgularını test eder:
- * - Her birim için ayrı ayrı raporları listeler
+ * Bu fonksiyon kullanıcı-spesifik rapor sorgularını test eder:
+ * - Her kullanıcı için ayrı ayrı raporları listeler
  * - İlişkisel sorgu performansını test eder
  * - Rapor sayısı ve içerik doğrulaması yapar
  * 
  * Test edilen fonksiyon:
- * - db_select_reports_by_unit(): Belirli bir birime ait raporları getirir
+ * - db_select_reports_by_user(): Belirli bir kullanıcıya ait raporları getirir
  * 
  * Test senaryosu:
- * 1. Birim ID 1-4 arası döngü yapar
- * 2. Her birim için ayrı rapor sorgular
+ * 1. Kullanıcı ID 1-4 arası döngü yapar
+ * 2. Her kullanıcı için ayrı rapor sorgular
  * 3. Bulunan rapor sayısını gösterir
  * 4. Her raporun durumunu ve açıklamasını listeler
  * 5. Bellek yönetimi yapar (free)
@@ -189,36 +189,37 @@ void test_update_operations(void) {
  * @note Bu fonksiyon sadece okuma işlemi yapar, veri değiştirmez.
  *       Mevcut test verilerini güvenli şekilde analiz eder.
  * 
- * @warning Sabit birim ID aralığı (1-4) kullanır.
- *          Veritabanında bu ID'lere sahip birim yoksa boş sonuç alınır.
+ * @warning Sabit kullanıcı ID aralığı (1-4) kullanır.
+ *          Veritabanında bu ID'lere sahip kullanıcı yoksa boş sonuç alınır.
  * 
- * @see db_select_reports_by_unit()
+ * @see db_select_reports_by_user()
  * 
  * Örnek çıktı:
  * @code
- * === Birime Göre Rapor Listeleme Test ===
- * Birim ID 1 için 2 rapor bulundu:
+ * === Kullanıcıya Göre Rapor Listeleme Test ===
+ * Kullanıcı ID 1 için 2 rapor bulundu:
  *   - Tehlike: Dusman temasi tespit edildi...
  *   - Guvenli: Tehdit bertaraf edildi...
- * Birim ID 2 için 1 rapor bulundu:
+ * Kullanıcı ID 2 için 1 rapor bulundu:
  *   - Devriye: Rutin devriye gorevi devam ediyor...
  * @endcode
  */
 
-void test_reports_by_unit(void) {
-    printf("\n=== Birime Göre Rapor Listeleme Test ===\n");
-    
-    for (int unit_id = 1; unit_id <= 4; unit_id++) {
+void test_reports_by_user(void) {
+    printf("\n=== Kullanıcıya Göre Rapor Listeleme Test ===\n");
+    // Örnek olarak ilk 4 kullanıcıyı test et
+    for (int user_id = 1; user_id <= 4; user_id++) {
         report_t *reports;
         int report_count;
-        
-        if (db_select_reports_by_unit(unit_id, &reports, &report_count) == 0) {
-            printf("Birim ID %d için %d rapor bulundu:\n", unit_id, report_count);
+        if (db_select_reports_by_user(user_id, &reports, &report_count) == 0) {
+            printf("Kullanıcı ID %d için %d rapor bulundu:\n", user_id, report_count);
             for (int i = 0; i < report_count; i++) {
                 printf("  - %s: %s\n", reports[i].status, 
                        strlen(reports[i].description) > 0 ? reports[i].description : "Açıklama yok");
             }
             free(reports);
+        } else {
+            printf("Kullanıcı ID %d için rapor bulunamadı!\n", user_id);
         }
     }
 }
@@ -253,7 +254,7 @@ void test_reports_by_unit(void) {
  * Test sırası:
  * 1. test_select_operations() - Veri okuma testleri
  * 2. test_update_operations() - Veri güncelleme testleri  
- * 3. test_reports_by_unit() - İlişkisel sorgu testleri
+ * 3. test_reports_by_user() - İlişkisel sorgu testleri
  * 
  * Kullanım örnekleri:
  * @code
@@ -269,7 +270,7 @@ void test_reports_by_unit(void) {
  * 
  * @see test_select_operations()
  * @see test_update_operations()
- * @see test_reports_by_unit()
+ * @see test_reports_by_user()
  * @see db_init()
  * @see db_close()
  */
@@ -286,7 +287,7 @@ int main(int argc, char* argv[]) {
     
     test_select_operations();
     test_update_operations();
-    test_reports_by_unit();
+    test_reports_by_user();
     
     printf("\n=== Testler tamamlandı ===\n");
     db_close();

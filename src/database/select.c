@@ -350,15 +350,16 @@ int db_select_user_by_id(int id, int *unit_id, char *username, char *name, char 
  * @param name [OUT] Adı
  * @param surname [OUT] Soyadı
  * @param password [OUT] Hashlenmiş şifre
+ * @param salt [OUT] Kullanıcıya ait salt
  * @param privilege [OUT] Yetki seviyesi
  * @param created_at [OUT] Oluşturulma zamanı
  * @return int 0: Başarılı, -1: Hata veya kullanıcı yok
  */
-int db_select_user_by_username(const char *username, int *id, int *unit_id, char *name, char *surname, char *password, int *privilege, char *created_at) {
+int db_select_user_by_username(const char *username, int *id, int *unit_id, char *name, char *surname, char *password, char *salt, int *privilege, char *created_at) {
     char sql[256];
     sqlite3_stmt *stmt;
     int rc;
-    snprintf(sql, sizeof(sql), "SELECT ID, UNIT_ID, NAME, SURNAME, PASSWORD, PRIVILEGE, CREATED_AT FROM USERS WHERE USERNAME = ?;");
+    snprintf(sql, sizeof(sql), "SELECT ID, UNIT_ID, NAME, SURNAME, PASSWORD, SALT, PRIVILEGE, CREATED_AT FROM USERS WHERE USERNAME = ?;");
     rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "SQL error preparing select user: %s\n", sqlite3_errmsg(g_db));
@@ -372,11 +373,69 @@ int db_select_user_by_username(const char *username, int *id, int *unit_id, char
         if (name) strcpy(name, (const char*)sqlite3_column_text(stmt, 2));
         if (surname) strcpy(surname, (const char*)sqlite3_column_text(stmt, 3));
         if (password) strcpy(password, (const char*)sqlite3_column_text(stmt, 4));
-        if (privilege) *privilege = sqlite3_column_int(stmt, 5);
-        if (created_at) strcpy(created_at, (const char*)sqlite3_column_text(stmt, 6));
+        if (salt) strcpy(salt, (const char*)sqlite3_column_text(stmt, 5));
+        if (privilege) *privilege = sqlite3_column_int(stmt, 6);
+        if (created_at) strcpy(created_at, (const char*)sqlite3_column_text(stmt, 7));
         sqlite3_finalize(stmt);
         return 0;
     }
     sqlite3_finalize(stmt);
     return -1;
+}
+
+/**
+ * @brief USERS tablosunda id ile kullanıcıyı bulur, yoksa oluşturur
+ * @param id Kullanıcı ID'si
+ * @param unit_id Birim ID
+ * @param username Kullanıcı adı
+ * @param name Adı
+ * @param surname Soyadı
+ * @param password Hashlenmiş şifre
+ * @param salt Salt
+ * @param privilege Yetki seviyesi
+ * @return int Kullanıcı ID'si veya hata (-1)
+ */
+int db_find_or_create_user_by_id(int id, int unit_id, const char* username, const char* name, const char* surname, const char* password, const char* salt, int privilege) {
+    char dummy_username[32] = "";
+    char dummy_name[32] = "";
+    char dummy_surname[32] = "";
+    char dummy_password[129] = "";
+    char dummy_salt[17] = "";
+    int dummy_privilege = 0;
+    char dummy_created_at[32] = "";
+    int dummy_unit_id = 0;
+    int rc = db_select_user_by_id(id, &dummy_unit_id, dummy_username, dummy_name, dummy_surname, dummy_password, dummy_salt, &dummy_privilege, dummy_created_at);
+    if (rc == 0) {
+        return id;
+    } else {
+        return db_insert_user(unit_id, username, name, surname, password, salt, privilege);
+    }
+}
+
+/**
+ * @brief USERS tablosunda username ile kullanıcıyı bulur, yoksa oluşturur
+ * @param username Kullanıcı adı
+ * @param unit_id Birim ID
+ * @param name Adı
+ * @param surname Soyadı
+ * @param password Hashlenmiş şifre
+ * @param salt Salt
+ * @param privilege Yetki seviyesi
+ * @return int Kullanıcı ID'si veya hata (-1)
+ */
+int db_find_or_create_user_by_username(const char* username, int unit_id, const char* name, const char* surname, const char* password, const char* salt, int privilege) {
+    int id = -1;
+    int dummy_unit_id = 0;
+    char dummy_name[32] = "";
+    char dummy_surname[32] = "";
+    char dummy_password[129] = "";
+    char dummy_salt[17] = "";
+    int dummy_privilege = 0;
+    char dummy_created_at[32] = "";
+    int rc = db_select_user_by_username(username, &id, &dummy_unit_id, dummy_name, dummy_surname, dummy_password, dummy_salt, &dummy_privilege, dummy_created_at);
+    if (rc == 0 && id > 0) {
+        return id;
+    } else {
+        return db_insert_user(unit_id, username, name, surname, password, salt, privilege);
+    }
 }
