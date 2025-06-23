@@ -17,7 +17,9 @@
 #include <string.h>
 #include "../../include/database.h"
 #include "../../include/json_utils.h"
-#include "logger.h"
+#include "../../include/logger.h"
+#include "../../include/argon2.h"
+#include "../../include/config.h"
 
 /**
  * @brief External global veritabanı bağlantısı
@@ -405,4 +407,39 @@ char* db_save_tactical_data_and_get_response(const tactical_data_t *tactical_dat
     strncat(response, temp, response_size - strlen(response) - 1);
 
     return response;
+}
+
+/**
+ * @brief Argon2 ile şifre hash'leyerek yeni kullanıcı kaydeder
+ * @details Verilen kullanıcı bilgileri ile yeni bir kullanıcı oluşturur.
+ *          Şifre Argon2 algoritması ile hash'lenir ve sonuç veritabanına kaydedilir.
+ *          Varsayılan yetki seviyesi 0'dır.
+ * 
+ * @param unit_id Bağlı olduğu unit'in ID'si (veya NULL)
+ * @param username Kullanıcı adı (benzersiz)
+ * @param name Kullanıcı adı
+ * @param surname Kullanıcı soyadı
+ * @param password Şifre (düz metin olarak, hash'lenmeden önce)
+ * @return int İşlem sonucu
+ * @retval 1 Başarılı ekleme
+ * @retval -1 Ekleme hatası
+ * 
+ * @see db_insert_user()
+ */
+int register_user_with_argon2(int unit_id, const char* username, const char* name, const char* surname, const char* password) {
+    char salt[SALT_LENGTH];
+    char hash[HASH_LENGTH];
+    int result = hash_password_with_salt(password, salt, hash);
+    if (result != 0) {
+        fprintf(stderr, "Argon2 hash hatası: %d\n", result);
+        return -1;
+    }
+    int privilege = 0; // Default yetki
+    int rc = db_insert_user(unit_id, username, name, surname, hash, salt, privilege);
+    if (rc < 0) {
+        fprintf(stderr, "Kullanıcı ekleme hatası!\n");
+        return -1;
+    }
+    PRINTF_LOG("Kullanıcı '%s' başarıyla kaydedildi.\n", username);
+    return 1;
 }
