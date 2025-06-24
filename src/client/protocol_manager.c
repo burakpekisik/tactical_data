@@ -46,16 +46,14 @@
  * // Sonuç: "PARSE:data.json:{\"test\":\"value\"}"
  * @endcode
  */
-char* create_normal_protocol_message(const char* filename, const char* content) {
-    size_t total_size = strlen("PARSE:") + strlen(filename) + strlen(content) + 2;
+char* create_normal_protocol_message(const char* filename, const char* content, const char* jwt_token) {
+    size_t total_size = strlen("PARSE:") + strlen(filename) + 1 + strlen(content) + 1 + strlen(jwt_token) + 4;
     char *message = malloc(total_size);
-    
     if (message == NULL) {
         PRINTF_LOG("Bellek tahsis hatasi\n");
         return NULL;
     }
-    
-    snprintf(message, total_size, "PARSE:%s:%s", filename, content);
+    snprintf(message, total_size, "PARSE:%s:%s:%s", filename, content, jwt_token);
     return message;
 }
 
@@ -89,7 +87,7 @@ char* create_normal_protocol_message(const char* filename, const char* content) 
  * // Sonuç: "ENCRYPTED:data.json:1a2b3c4d..."
  * @endcode
  */
-char* create_encrypted_protocol_message(const char* filename, const char* content, const uint8_t* session_key) {
+char* create_encrypted_protocol_message(const char* filename, const char* content, const uint8_t* session_key, const char* jwt_token) {
     if (session_key == NULL) {
         PRINTF_LOG("Session key NULL - şifreleme yapılamaz\n");
         return NULL;
@@ -136,7 +134,7 @@ char* create_encrypted_protocol_message(const char* filename, const char* conten
     PRINTF_LOG("Hex encoding tamamlandi (%zu karakter)\n", strlen(hex_data));
     
     // Protokol mesajini olustur
-    size_t total_size = strlen("ENCRYPTED:") + strlen(filename) + strlen(hex_data) + 3;
+    size_t total_size = strlen("ENCRYPTED:") + strlen(filename) + 1 + strlen(hex_data) + 1 + strlen(jwt_token) + 4;
     char *message = malloc(total_size);
     
     if (message == NULL) {
@@ -145,7 +143,7 @@ char* create_encrypted_protocol_message(const char* filename, const char* conten
         return NULL;
     }
     
-    snprintf(message, total_size, "ENCRYPTED:%s:%s", filename, hex_data);
+    snprintf(message, total_size, "ENCRYPTED:%s:%s:%s", filename, hex_data, jwt_token);
     free(hex_data);
     
     return message;
@@ -444,7 +442,7 @@ int receive_udp_response(client_connection_t* conn, char* buffer, size_t buffer_
  * 2. Alınan veri boyutunu kontrol et
  * 3. P2P format kontrolü (opsiyonel)
  * 4. Buffer'ı null-terminate et
- * 5. Alınan byte sayısını döندür
+ * 5. Alınan byte sayısını döndür
  * 
  * @param conn P2P bağlantısı
  * @param buffer Yanıtın yazılacağı buffer

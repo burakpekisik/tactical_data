@@ -16,6 +16,8 @@
 #include <string.h>
 #include "../../include/database.h"
 #include "logger.h"
+#include "jwt_manager.h"
+#include "argon2.h"
 
 /**
  * @brief External global veritabanı bağlantısı
@@ -438,4 +440,28 @@ int db_find_or_create_user_by_username(const char* username, int unit_id, const 
     } else {
         return db_insert_user(unit_id, username, name, surname, password, salt, privilege);
     }
+}
+
+char* login_user_with_argon2(const char *username, const char *password) {
+    int id = -1;
+    int unit_id = 0;
+    char name[32] = "";
+    char surname[32] = "";
+    char stored_password[129] = "";
+    char salt[17] = "";
+    int privilege = 0;
+    char created_at[32] = "";
+
+    // Kullanıcıyı username ile bul
+    int rc = db_select_user_by_username(username, &id, &unit_id, name, surname, stored_password, salt, &privilege, created_at);
+    if (rc != 0 || id <= 0) {
+        return NULL; // Kullanıcı bulunamadı
+    }
+
+    // Şifreyi Argon2 ile doğrula
+    if (verify_password_with_salt(password, salt, stored_password) != 0) {
+        return NULL; // Şifre yanlış
+    }
+
+    return generate_jwt(); // JWT token'ı döner
 }

@@ -409,6 +409,35 @@ void* handle_client(void* arg) {
            current_thread, client_socket);
     fflush(stdout);
 
+    char buffer[CONFIG_BUFFER_SIZE];
+    // İlk mesajı oku
+    ssize_t bytes_received = read(client_socket, buffer, CONFIG_BUFFER_SIZE - 1);
+    if (bytes_received <= 0) {
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return NULL;
+    }
+    buffer[bytes_received] = '\0';
+
+    // LOGIN isteği mi?
+    if (strncmp(buffer, "LOGIN:", 6) == 0) {
+        char username[128] = "", password[128] = "";
+        sscanf(buffer + 6, "%127[^:]:%127s", username, password);
+        char* jwt = login_user_with_argon2(username, password);
+        if (jwt) {
+            char response[2048];
+            snprintf(response, sizeof(response), "JWT:%s", jwt);
+            send(client_socket, response, strlen(response), 0);
+            free(jwt);
+        } else {
+            char* fail = "FAIL";
+            send(client_socket, fail, strlen(fail), 0);
+        }
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return NULL;
+    }
+    
     // ECDH için anahtar değişimi yap
     connection_manager_t client_manager;
     memset(&client_manager, 0, sizeof(connection_manager_t));
@@ -422,27 +451,59 @@ void* handle_client(void* arg) {
     }
     
     // Anahtar değişimi yap
-    if (!exchange_keys_with_peer(&client_manager, client_socket)) {
-        PRINTF_LOG("Anahtar değişimi başarısız (Thread: %lu)\n", current_thread);
+    PRINTF_LOG("Client public key bekleniyor...\n");
+    uint8_t client_public_key[ECC_PUB_KEY_SIZE];
+    ssize_t received = 0;
+    if (bytes_received > 0) {
+        size_t to_copy = (bytes_received > ECC_PUB_KEY_SIZE) ? ECC_PUB_KEY_SIZE : bytes_received;
+        memcpy(client_public_key, buffer, to_copy);
+        received = to_copy;
+        while (received < ECC_PUB_KEY_SIZE) {
+            ssize_t r = recv(client_socket, client_public_key + received, ECC_PUB_KEY_SIZE - received, 0);
+            if (r <= 0) break;
+            received += r;
+        }
+    } else {
+        received = recv(client_socket, client_public_key, ECC_PUB_KEY_SIZE, 0);
+    }
+    PRINTF_LOG("Client public key alındı, received=%zd\n", received);
+    if (received != ECC_PUB_KEY_SIZE) {
+        perror("Server public key recv hatası");
+        PRINTF_LOG("Client public key alınamadı, received=%zd\n", received);
         cleanup_ecdh_for_connection(&client_manager);
         close(client_socket);
         remove_thread_info(current_thread);
         return NULL;
     }
-    
-    // AES256 oturum anahtarını al
-    const uint8_t* session_key = get_session_key(&client_manager);
-    if (session_key == NULL) {
-        PRINTF_LOG("Oturum anahtarı alınamadı (Thread: %lu)\n", current_thread);
+    PRINTF_LOG("Server public key gönderiliyor...\n");
+    ssize_t sent = send(client_socket, client_manager.ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
+    PRINTF_LOG("Server public key gönderildi, sent=%zd\n", sent);
+    if (sent != ECC_PUB_KEY_SIZE) {
+        PRINTF_LOG("Public key gönderilemedi (Thread: %lu)\n", current_thread);
         cleanup_ecdh_for_connection(&client_manager);
         close(client_socket);
         remove_thread_info(current_thread);
         return NULL;
     }
-    
+    // Shared secret hesapla
+    if (!ecdh_compute_shared_secret(&client_manager.ecdh_ctx, client_public_key)) {
+        PRINTF_LOG("Shared secret hesaplanamadı (Thread: %lu)\n", current_thread);
+        cleanup_ecdh_for_connection(&client_manager);
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return NULL;
+    }
+    // AES anahtarını türet
+    if (!ecdh_derive_aes_key(&client_manager.ecdh_ctx)) {
+        PRINTF_LOG("AES anahtarı türetilemedi (Thread: %lu)\n", current_thread);
+        cleanup_ecdh_for_connection(&client_manager);
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return NULL;
+    }
     PRINTF_LOG("✓ ECDH anahtar değişimi tamamlandı (Thread: %lu)\n", current_thread);
+    PRINTF_LOG("✓ AES256 oturum anahtarı hazır\n", current_thread);
 
-    char buffer[CONFIG_BUFFER_SIZE];
     int request_count = 0;
     
     while (1) {
@@ -493,28 +554,32 @@ void* handle_client(void* arg) {
         char *command = NULL;
         char *filename = NULL;
         char *content = NULL;
-        
-        if (parse_protocol_message(buffer, &command, &filename, &content) != 0) {
-            char *error_response = "HATA: Gecersiz protokol formati. Format: COMMAND:FILENAME:CONTENT";
-            send(client_socket, error_response, strlen(error_response), 0);
-            continue;
+        char *jwt_token = NULL;
+        int is_encrypted = 0;
+        // ENCRYPTED mesajı için özel parse
+        if (strncmp(buffer, "ENCRYPTED:", 10) == 0) {
+            if (parse_encrypted_protocol_message(buffer, &command, &filename, &content, &jwt_token) != 0) {
+                char *error_response = "HATA: Gecersiz ENCRYPTED protokol formati. Format: ENCRYPTED:FILENAME:HEXDATA:JWT";
+                send(client_socket, error_response, strlen(error_response), 0);
+                continue;
+            }
+            is_encrypted = 1;
+        } else {
+            if (parse_protocol_message(buffer, &command, &filename, &content) != 0) {
+                char *error_response = "HATA: Gecersiz protokol formati. Format: COMMAND:FILENAME:CONTENT";
+                send(client_socket, error_response, strlen(error_response), 0);
+                continue;
+            }
         }
-        
         PRINTF_LOG("Komut: %s\n", command);
         PRINTF_LOG("Dosya: %s\n", filename);
         fflush(stdout);
-        
         char *parsed_result = NULL;
-        
-        // Komut tipine gore islem yap
         if (strcmp(command, "PARSE") == 0) {
             PRINTF_LOG("Normal JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
-            
-            // JSON'u tactical data struct'ına parse et
             tactical_data_t* tactical_data = parse_json_to_tactical_data(content, filename);
             if (tactical_data != NULL && tactical_data->is_valid) {
-                // Tactical data'yı database'e kaydet ve response al
                 parsed_result = db_save_tactical_data_and_get_response(tactical_data, filename);
                 free_tactical_data(tactical_data);
             } else {
@@ -522,27 +587,24 @@ void* handle_client(void* arg) {
                 strcpy(parsed_result, "HATA: JSON tactical data formatına uygun değil");
                 if (tactical_data) free_tactical_data(tactical_data);
             }
-        } else if (strcmp(command, "ENCRYPTED") == 0) {
+        } else if (strcmp(command, "ENCRYPTED") == 0 && is_encrypted) {
             PRINTF_LOG("Sifreli JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
-            parsed_result = handle_encrypted_request(filename, content, session_key);
+            parsed_result = handle_encrypted_request(filename, content, get_session_key(&client_manager), jwt_token);
         } else {
             parsed_result = malloc(256);
             snprintf(parsed_result, 256, "HATA: Bilinmeyen komut: %s", command);
         }
-        
-        // Sonucu client'a gonder
         if (parsed_result != NULL) {
             send(client_socket, parsed_result, strlen(parsed_result), 0);
             PRINTF_LOG("Parse sonucu gonderildi\n");
             fflush(stdout);
             free(parsed_result);
         }
-        
-        // Bellek temizligi
-        free(command);
-        free(filename);
-        free(content);
+        if (command) free(command);
+        if (filename) free(filename);
+        if (content) free(content);
+        if (jwt_token) free(jwt_token);
     }
 
     close(client_socket);
@@ -604,7 +666,8 @@ void* handle_client(void* arg) {
  * @see db_save_tactical_data_and_get_response()
  */
 // Sifreli istek ile bas et
-char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key) {
+char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key, const char* jwt_token) {
+    // jwt_token parametresi ileride doğrulama için kullanılabilir
     if (session_key == NULL) {
         char *error_msg = malloc(256);
         strcpy(error_msg, "HATA: Session key NULL");
@@ -745,6 +808,29 @@ int parse_protocol_message(const char* message, char** command, char** filename,
     
     strcpy(*content, second_colon + 1);
     
+    return 0;
+}
+
+// Yeni yardımcı fonksiyon: ENCRYPTED mesajı için 4 alanı ayır
+int parse_encrypted_protocol_message(const char* message, char** command, char** filename, char** hex_data, char** jwt_token) {
+    char* first_colon = strchr(message, ':');
+    if (!first_colon) return -1;
+    char* second_colon = strchr(first_colon + 1, ':');
+    if (!second_colon) return -1;
+    char* third_colon = strchr(second_colon + 1, ':');
+    if (!third_colon) return -1;
+    size_t command_length = first_colon - message;
+    size_t filename_length = second_colon - first_colon - 1;
+    size_t hex_length = third_colon - second_colon - 1;
+    size_t jwt_length = strlen(third_colon + 1);
+    *command = malloc(command_length + 1);
+    *filename = malloc(filename_length + 1);
+    *hex_data = malloc(hex_length + 1);
+    *jwt_token = malloc(jwt_length + 1);
+    strncpy(*command, message, command_length); (*command)[command_length] = '\0';
+    strncpy(*filename, first_colon + 1, filename_length); (*filename)[filename_length] = '\0';
+    strncpy(*hex_data, second_colon + 1, hex_length); (*hex_data)[hex_length] = '\0';
+    strcpy(*jwt_token, third_colon + 1);
     return 0;
 }
 

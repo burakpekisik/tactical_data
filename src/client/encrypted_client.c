@@ -24,6 +24,19 @@
 #include "fallback_manager.h"
 #include "protocol_manager.h"
 #include "logger.h"
+#include "../user/login_user.h" // login_user_with_argon2 prototipi burada olmalı
+
+char jwt_token[1024] = ""; // Global JWT token
+
+/**
+ * ÖNEMLİ NOT:
+ * Bu istemci uygulamasında login (JWT alma) işlemi ve ECDH anahtar değişimi/veri iletimi
+ * kesinlikle FARKLI bağlantılar (socket) üzerinden yapılmalıdır.
+ * Sunucu, login mesajı sonrası bağlantıyı kapatır ve ECDH için yeni bağlantı bekler.
+ * Eğer login sonrası aynı socket ile devam edilirse, ECDH anahtar değişimi sırasında takılma olur.
+ *
+ * Bu akış bozulursa, client ve server arasında ECDH handshake asla tamamlanamaz!
+ */
 
 /**
  * @brief Ana program fonksiyonu
@@ -34,19 +47,36 @@
 int main() {
     char filename[CONFIG_MAX_FILENAME];
     int choice;
-    
+    char username[128];
+    char password[128];
+
     // Logger'ı başlat
     if (logger_init(LOGGER_CLIENT, LOG_DEBUG) != 0) {
         fprintf(stderr, "Logger başlatılamadı!\n");
         return -1;
     }
-    
-    LOG_CLIENT_INFO("Starting Encrypted JSON Client...");
-    PRINTF_CLIENT("Encrypted JSON Client - Sifreli dosya gonderme istemcisi\n");
-    PRINTF_CLIENT("=======================================================\n");
-    
-    // Server'a baglan
-    LOG_CLIENT_DEBUG("Attempting to connect to server...");
+
+    // Kullanıcıdan login bilgisi al
+    PRINTF_CLIENT("Kullanıcı adı: ");
+    fgets(username, sizeof(username), stdin);
+    username[strcspn(username, "\n")] = 0;
+    PRINTF_CLIENT("Şifre: ");
+    fgets(password, sizeof(password), stdin);
+    password[strcspn(password, "\n")] = 0;
+
+    // Sunucuya login isteği gönder
+    char *token = client_login_to_server(username, password);
+    if (token == NULL) {
+        PRINTF_CLIENT("Giriş başarısız!\n");
+        logger_cleanup(LOGGER_CLIENT);
+        return -1;
+    }
+    strncpy(jwt_token, token, sizeof(jwt_token)-1);
+    jwt_token[sizeof(jwt_token)-1] = '\0';
+    PRINTF_CLIENT("Giriş başarılı! JWT alındı.\n");
+    free(token);
+    LOG_CLIENT_INFO("Login sonrası yeni bağlantı açılıyor (ECDH için)");
+    // Server'a baglan (login sonrası YENİ bağlantı!)
     client_connection_t* conn = connect_to_server(getenv("SERVER_HOST"));
     if (conn == NULL) {
         LOG_CLIENT_ERROR("Failed to connect to server");
@@ -75,7 +105,7 @@ int main() {
                 if (fgets(filename, CONFIG_MAX_FILENAME, stdin) != NULL) {
                     filename[strcspn(filename, "\n")] = 0; // Newline kaldir
                     if (strlen(filename) > 0) {
-                        send_json_file(conn, filename, 0);
+                        send_json_file(conn, filename, 0, jwt_token);
                     }
                 }
                 break;
@@ -85,7 +115,7 @@ int main() {
                 if (fgets(filename, CONFIG_MAX_FILENAME, stdin) != NULL) {
                     filename[strcspn(filename, "\n")] = 0;
                     if (strlen(filename) > 0) {
-                        send_json_file(conn, filename, 1);
+                        send_json_file(conn, filename, 1, jwt_token);
                     }
                 }
                 break;
@@ -175,7 +205,7 @@ char* read_file_content(const char* filename, size_t* file_size) {
  * @return int İşlem sonucu (0: başarılı, -1: hata)
  * @note Şifreli gönderim için ECDH anahtar değişiminin tamamlanmış olması gerekir
  */
-int send_json_file(client_connection_t* conn, const char* filename, int encrypt) {
+int send_json_file(client_connection_t* conn, const char* filename, int encrypt, const char* jwt_token) {
     size_t file_size;
     char *content = read_file_content(filename, &file_size);
     
@@ -193,10 +223,10 @@ int send_json_file(client_connection_t* conn, const char* filename, int encrypt)
             free(content);
             return -1;
         }
-        protocol_message = create_encrypted_protocol_message(filename, content, conn->ecdh_ctx.aes_key);
+        protocol_message = create_encrypted_protocol_message(filename, content, conn->ecdh_ctx.aes_key, jwt_token);
     } else {
         PRINTF_LOG("Normal gonderim hazırlaniyor...\n");
-        protocol_message = create_normal_protocol_message(filename, content);
+        protocol_message = create_normal_protocol_message(filename, content, jwt_token);
     }
     
     if (protocol_message == NULL) {
@@ -213,8 +243,8 @@ int send_json_file(client_connection_t* conn, const char* filename, int encrypt)
         PRINTF_LOG("Mevcut bağlantı türü (%s) ile gönderim başarısız, fallback deneniyor...\n", 
                get_connection_type_name(conn->type));
         
-        // Fallback metodlarını dene
-        result = try_send_message_with_fallback(conn, protocol_message, filename, content, encrypt);
+        // Fallback metodlarını dene (jwt_token parametresi eklendi)
+        result = try_send_message_with_fallback(conn, protocol_message, filename, content, encrypt, jwt_token);
     }
     
     if (result < 0) {
@@ -301,6 +331,10 @@ client_connection_t* connect_to_server(const char* server_host) {
     PRINTF_CLIENT("TCP baglantisi deneniyor (Port: %d)...\n", CONFIG_PORT);
     conn->socket = socket(AF_INET, SOCK_STREAM, 0);
     if (conn->socket >= 0) {
+        // SO_LINGER ayarı: bağlantı kapatılırken veri hemen gönderilsin
+        struct linger so_linger = {1, 0};
+        setsockopt(conn->socket, SOL_SOCKET, SO_LINGER, &so_linger, sizeof(so_linger));
+        
         conn->server_addr.sin_family = AF_INET;
         conn->server_addr.sin_port = htons(CONFIG_PORT);
         conn->port = CONFIG_PORT;
@@ -341,21 +375,24 @@ client_connection_t* connect_to_server(const char* server_host) {
             // Server ile anahtar değişimi
             PRINTF_LOG("Server ile anahtar değişimi yapılıyor...\n");
             
-            // Server'in public key'ini al
-            uint8_t server_public_key[ECC_PUB_KEY_SIZE];
-            ssize_t received = recv(conn->socket, server_public_key, ECC_PUB_KEY_SIZE, 0);
-            if (received != ECC_PUB_KEY_SIZE) {
-                PRINTF_LOG("Server public key alınamadı\n");
+            // Kendi public key'imizi gönder
+            PRINTF_LOG("Kendi public key gönderiliyor...\n");
+            ssize_t sent = send(conn->socket, conn->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
+            if (sent != ECC_PUB_KEY_SIZE) {
+                perror("Client public key send hatası");
+                PRINTF_LOG("Public key gönderilemedi, sent=%zd\n", sent);
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
                 return NULL;
             }
-            
-            // Kendi public key'imizi gönder
-            ssize_t sent = send(conn->socket, conn->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
-            if (sent != ECC_PUB_KEY_SIZE) {
-                PRINTF_LOG("Public key gönderilemedi\n");
+            PRINTF_LOG("Kendi public key gönderildi, sent=%zd\n", sent);
+            PRINTF_LOG("Server public key bekleniyor...\n");
+            uint8_t server_public_key[ECC_PUB_KEY_SIZE];
+            ssize_t received = recv(conn->socket, server_public_key, ECC_PUB_KEY_SIZE, 0);
+            PRINTF_LOG("Server public key alındı, received=%zd\n", received);
+            if (received != ECC_PUB_KEY_SIZE) {
+                PRINTF_LOG("Server public key alınamadı\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
@@ -607,21 +644,24 @@ try_p2p:
             // Server ile P2P ECDH anahtar değişimi
             PRINTF_LOG("P2P Server ile anahtar değişimi yapılıyor...\n");
             
-            // Server'in public key'ini al
-            uint8_t server_public_key[ECC_PUB_KEY_SIZE];
-            ssize_t received = recv(conn->socket, server_public_key, ECC_PUB_KEY_SIZE, 0);
-            if (received != ECC_PUB_KEY_SIZE) {
-                PRINTF_LOG("P2P Server public key alınamadı\n");
+            // Kendi public key'imizi gönder
+            PRINTF_LOG("Kendi public key gönderiliyor...\n");
+            ssize_t sent = send(conn->socket, conn->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
+            if (sent != ECC_PUB_KEY_SIZE) {
+                perror("Client public key send hatası");
+                PRINTF_LOG("Public key gönderilemedi, sent=%zd\n", sent);
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);
                 return NULL;
             }
-            
-            // Kendi public key'imizi gönder
-            ssize_t sent = send(conn->socket, conn->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
-            if (sent != ECC_PUB_KEY_SIZE) {
-                PRINTF_LOG("P2P Public key gönderilemedi\n");
+            PRINTF_LOG("Kendi public key gönderildi, sent=%zd\n", sent);
+            PRINTF_LOG("Server public key bekleniyor...\n");
+            uint8_t server_public_key[ECC_PUB_KEY_SIZE];
+            ssize_t received = recv(conn->socket, server_public_key, ECC_PUB_KEY_SIZE, 0);
+            PRINTF_LOG("Server public key alındı, received=%zd\n", received);
+            if (received != ECC_PUB_KEY_SIZE) {
+                PRINTF_LOG("Server public key alınamadı\n");
                 ecdh_cleanup_context(&conn->ecdh_ctx);
                 close(conn->socket);
                 free(conn);

@@ -7,25 +7,25 @@ DATA_DIR = data
 
 # Compiler settings
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -I$(INCLUDE_DIR)
-LIBS = -lcjson -lsqlite3 -lcrypto -lssl -lpthread -largon2
+CFLAGS = -Wall -Wextra -std=c99 -D_GNU_SOURCE -I$(INCLUDE_DIR)
+LIBS = -lcjson -lsqlite3 -lcrypto -lssl -lpthread -largon2 -ljwt
 
 # Source files
 SERVER_SOURCES = $(SRC_DIR)/server/server.c
 JSON_SERVER_SOURCES = $(SRC_DIR)/server/json_server.c $(SRC_DIR)/common/json_utils.c
-ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/client/fallback_manager.c $(SRC_DIR)/client/protocol_manager.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/thread/thread_monitor.c $(SRC_DIR)/connection/connection_manager.c $(SRC_DIR)/connection/tcp_connection.c $(SRC_DIR)/connection/udp_connection.c $(SRC_DIR)/connection/p2p_connection.c $(SRC_DIR)/control/control_interface.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/db_test_utils.c $(SRC_DIR)/common/logger.c $(SRC_DIR)/argon/argon2.c
+ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/client/fallback_manager.c $(SRC_DIR)/client/protocol_manager.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/thread/thread_monitor.c $(SRC_DIR)/connection/connection_manager.c $(SRC_DIR)/connection/tcp_connection.c $(SRC_DIR)/connection/udp_connection.c $(SRC_DIR)/connection/p2p_connection.c $(SRC_DIR)/control/control_interface.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/db_test_utils.c $(SRC_DIR)/common/logger.c ${SRC_DIR}/argon/argon2.c ${SRC_DIR}/jwt/jwt_manager.c
 
 CLIENT_SOURCES = $(SRC_DIR)/client/client.c
 JSON_CLIENT_SOURCES = $(SRC_DIR)/client/json_client.c $(SRC_DIR)/common/json_utils.c
-ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/client/fallback_manager.c $(SRC_DIR)/client/protocol_manager.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/common/logger.c $(SRC_DIR)/argon/argon2.c
+ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/client/fallback_manager.c $(SRC_DIR)/client/protocol_manager.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/common/logger.c $(SRC_DIR)/argon/argon2.c $(SRC_DIR)/user/login_user_client.c
 
 PARSER_SOURCES = $(SRC_DIR)/common/json_parser.c
 
 # Database tools
-DATABASE_SOURCES = $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/open.c
+DATABASE_SOURCES = $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/open.c ${SRC_DIR}/argon/argon2.c ${SRC_DIR}/jwt/jwt_manager.c
 
 # Targets
-all: directories encrypted-server encrypted-client db-tools ecdh-test register-user
+all: directories encrypted-server encrypted-client db-tools ecdh-test register-user login-user
 
 directories:
 	mkdir -p $(BIN_DIR) $(BUILD_DIR) $(SRC_DIR)/test
@@ -38,10 +38,30 @@ encrypted-client:
 
 # Database tools
 db-test-standalone:
-	$(CC) $(CFLAGS) -o $(BUILD_DIR)/db_test_standalone $(SRC_DIR)/database/tests/test_data_standalone.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/logger.c $(SRC_DIR)/argon/argon2.c $(LIBS)
+	$(CC) $(CFLAGS) -o $(BUILD_DIR)/db_test_standalone \
+	$(SRC_DIR)/database/tests/test_data_standalone.c \
+	$(SRC_DIR)/database/create.c \
+	$(SRC_DIR)/database/insert.c \
+	$(SRC_DIR)/database/select.c \
+	$(SRC_DIR)/common/json_utils.c \
+	$(SRC_DIR)/common/logger.c \
+	$(SRC_DIR)/argon/argon2.c \
+	$(SRC_DIR)/jwt/jwt_manager.c \
+	$(LIBS)
 
 db-test-operations:
-	$(CC) $(CFLAGS) -o $(BUILD_DIR)/db_test_operations $(SRC_DIR)/database/tests/test_operations.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/logger.c $(SRC_DIR)/argon/argon2.c $(LIBS)
+	$(CC) $(CFLAGS) -o $(BUILD_DIR)/db_test_operations \
+	$(SRC_DIR)/database/tests/test_operations.c \
+	$(SRC_DIR)/database/create.c \
+	$(SRC_DIR)/database/insert.c \
+	$(SRC_DIR)/database/select.c \
+	$(SRC_DIR)/database/update.c \
+	$(SRC_DIR)/database/delete.c \
+	$(SRC_DIR)/common/json_utils.c \
+	$(SRC_DIR)/common/logger.c \
+	$(SRC_DIR)/argon/argon2.c \
+	$(SRC_DIR)/jwt/jwt_manager.c \
+	$(LIBS)
 
 db-tools: db-test-standalone db-test-operations
 
@@ -59,6 +79,20 @@ register-user:
 	$(SRC_DIR)/common/logger.c \
 	$(SRC_DIR)/argon/argon2.c \
 	$(SRC_DIR)/common/json_utils.c \
+	$(SRC_DIR)/jwt/jwt_manager.c \
+	$(LIBS)
+
+# Login user tool
+login-user:
+	$(CC) $(CFLAGS) -o $(BUILD_DIR)/login_user \
+	$(SRC_DIR)/user/login_user.c \
+	$(SRC_DIR)/database/select.c \
+	$(SRC_DIR)/database/insert.c \
+	$(SRC_DIR)/database/create.c \
+	$(SRC_DIR)/common/logger.c \
+	$(SRC_DIR)/argon/argon2.c \
+	$(SRC_DIR)/common/json_utils.c \
+	$(SRC_DIR)/jwt/jwt_manager.c \
 	$(LIBS)
 
 # Run targets

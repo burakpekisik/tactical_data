@@ -28,7 +28,7 @@ typedef struct {
 // Function prototypes
 char* read_file_content(const char* filename, size_t* file_size);
 
-int send_json_file(client_connection_t* conn, const char* filename, int encrypt);
+int send_json_file(client_connection_t* conn, const char* filename, int encrypt, const char* jwt_token);
 void handle_server_response(client_connection_t* conn);
 void show_menu(void);
 client_connection_t* connect_to_server(const char* server_host);

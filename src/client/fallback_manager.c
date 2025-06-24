@@ -95,7 +95,7 @@ int try_send_message_current_connection(client_connection_t* conn, const char* m
  * @warning Şifreli mesajlar her fallback için yeni ECDH anahtarı ile yeniden şifrelenir
  */
 int try_send_message_with_fallback(client_connection_t* conn, const char* protocol_message, 
-                                   const char* filename, const char* content, int encrypt) {
+                                   const char* filename, const char* content, int encrypt, const char* jwt_token) {
     // Fallback sırası: mevcut tip haricinde diğerlerini dene
     connection_type_t fallback_order[3];
     int fallback_count = 0;
@@ -137,8 +137,8 @@ int try_send_message_with_fallback(client_connection_t* conn, const char* protoc
                 continue;
             }
             
-            // Yeni anahtar ile yeniden şifrele
-            fallback_message = create_encrypted_protocol_message(filename, content, fallback_conn->ecdh_ctx.aes_key);
+            // Yeni anahtar ile yeniden şifrele (jwt_token eklendi)
+            fallback_message = create_encrypted_protocol_message(filename, content, fallback_conn->ecdh_ctx.aes_key, jwt_token);
             if (fallback_message == NULL) {
                 PRINTF_LOG("Fallback şifreleme başarısız\n");
                 close_connection(fallback_conn);
@@ -159,44 +159,16 @@ int try_send_message_with_fallback(client_connection_t* conn, const char* protoc
             PRINTF_LOG("✓ Fallback başarılı: %s\n", get_connection_type_name(fallback_type));
             
             // Ana bağlantıyı güncelle
-            close(conn->socket);
-            conn->socket = fallback_conn->socket;
-            conn->type = fallback_conn->type;
-            conn->port = fallback_conn->port;
-            conn->server_addr = fallback_conn->server_addr;
-            
-            // ECDH context'i güncelle (eğer yeni bağlantıda varsa)
-            if (fallback_conn->ecdh_initialized) {
-                if (conn->ecdh_initialized) {
-                    ecdh_cleanup_context(&conn->ecdh_ctx);
-                }
-                conn->ecdh_ctx = fallback_conn->ecdh_ctx;
-                conn->ecdh_initialized = true;
-            }
-            
-            // Fallback connection wrapper'ı temizle (socket'i almadığımız için)
-            free(fallback_conn);
-            
-            // Mesajı temizle (eğer yeniden oluşturulmuşsa)
-            if (fallback_message != protocol_message && fallback_message != NULL) {
-                free(fallback_message);
-            }
-            
+            update_main_connection_from_fallback(conn, fallback_conn);
+            free(fallback_message);
+            close_connection(fallback_conn);
             return result;
         }
         
-        PRINTF_LOG("✗ Fallback başarısız: %s\n", get_connection_type_name(fallback_type));
-        
-        // Fallback bağlantısını temizle
+        free(fallback_message);
         close_connection(fallback_conn);
-        
-        // Mesajı temizle (eğer yeniden oluşturulmuşsa)
-        if (fallback_message != protocol_message && fallback_message != NULL) {
-            free(fallback_message);
-        }
     }
-    
-    return -1; // Tüm fallback'ler başarısız
+    return -1;
 }
 
 /**
@@ -575,4 +547,23 @@ char* adapt_message_for_protocol(const char* original_message, connection_type_t
     
     // TCP ve UDP için orijinal mesajı kullan
     return NULL; // NULL dönerse orijinal mesaj kullanılır
+}
+
+/**
+ * @brief Ana bağlantıyı fallback bağlantıdan günceller
+ * @details Fallback mekanizması sonrası ana bağlantının, yeni bağlantı bilgileriyle
+ *          güncellenmesini sağlar. Bu, socket, tür, port ve ECDH context güncellemelerini
+ *          içerir.
+ * 
+ * @param main_conn Ana bağlantı yapısı (güncellenecek)
+ * @param fallback_conn Başarılı fallback sonrası elde edilen yeni bağlantı
+ * @note Bu fonksiyon, fallback_manager.c dosyasına eklendi
+ */
+void update_main_connection_from_fallback(client_connection_t* main_conn, client_connection_t* fallback_conn) {
+    if (!main_conn || !fallback_conn) return;
+    main_conn->socket = fallback_conn->socket;
+    main_conn->type = fallback_conn->type;
+    main_conn->ecdh_initialized = fallback_conn->ecdh_initialized;
+    memcpy(&main_conn->ecdh_ctx, &fallback_conn->ecdh_ctx, sizeof(ecdh_context_t));
+    // Gerekirse diğer alanlar da kopyalanabilir
 }

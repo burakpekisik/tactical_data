@@ -78,6 +78,7 @@ int db_delete_user(int id);
 int db_find_or_create_user_by_id(int id, int unit_id, const char* username, const char* name, const char* surname, const char* password, const char* salt, int privilege);
 int db_find_or_create_user_by_username(const char* username, int unit_id, const char* name, const char* surname, const char* password, const char* salt, int privilege);
 int register_user_with_argon2(int unit_id, const char* username, const char* name, const char* surname, const char* password);
+char* login_user_with_argon2(const char *username, const char *password);
 
 // Utility functions
 void db_free_units(unit_t *units, int count);

@@ -5,15 +5,48 @@ let isConnected = false
 let selectedCoords = { lat: 39.59107, lng: 33.029794 }
 const L = window.L // Declare the L variable
 
+// Check if user is authenticated
+function checkAuthentication() {
+  const isAuthenticated = sessionStorage.getItem("isAuthenticated")
+  if (!isAuthenticated || isAuthenticated !== "true") {
+    window.location.href = "login.html"
+    return false
+  }
+  return true
+}
+
+// Add logout functionality
+function logout() {
+  sessionStorage.clear()
+  localStorage.removeItem("rememberedUsername")
+  window.location.href = "login.html"
+}
+
 // Initialize the application
 function initializeApp() {
+  // Check authentication first
+  if (!checkAuthentication()) {
+    return
+  }
+
   initializeMap()
   setupEventListeners()
+  displayUserInfo()
 
   // Simulate initial connection after 1 second
   setTimeout(() => {
     toggleConnection()
   }, 1000)
+}
+
+// Add user info display
+function displayUserInfo() {
+  const username = sessionStorage.getItem("username")
+  const loginTime = sessionStorage.getItem("loginTime")
+
+  if (username) {
+    addToHistory(`Kullanıcı girişi: ${username}`)
+  }
 }
 
 // Initialize the map
