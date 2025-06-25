@@ -9,7 +9,7 @@
 
 // Function prototypes
 char* parse_json_to_string(const char* json_content, const char* filename);
-tactical_data_t* parse_json_to_tactical_data(const char* json_content, const char* filename);
+tactical_data_t* parse_json_to_tactical_data(const char* json_content, const char* filename, const char* user_id);
 char* tactical_data_to_string(const tactical_data_t* data, const char* filename);
 void print_json_recursive(cJSON *json, char* result, int depth, size_t max_size);
 void add_indent(char* result, int depth, size_t max_size);

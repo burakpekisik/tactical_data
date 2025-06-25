@@ -41,7 +41,7 @@ void udp_log_packet(const char* client_ip, int client_port, size_t packet_size);
 // UDP Mesaj işleme
 int udp_parse_message(const char* message, const char* client_ip, int client_port, connection_manager_t* manager);
 int udp_process_json_data(const char* json_data, const char* filename, const char* client_ip, int client_port);
-int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port, const uint8_t* session_key);
+int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port, const uint8_t* session_key, const char* jwt_token);
 
 // UDP ECDH session yönetimi
 udp_session_t* udp_find_session(const char* client_ip, int client_port);

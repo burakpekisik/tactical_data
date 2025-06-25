@@ -42,4 +42,7 @@
 #define CONFIG_DB_PATH "data/tactical_data.db"
 #define BACKUP_DIR "data/backup"
 
+// JWT konfigürasyonu
+#define CONFIG_JWT_SECRET "my_super_secret_key"
+
 #endif // _CONFIG_H_

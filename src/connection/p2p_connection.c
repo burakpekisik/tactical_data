@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <cjson/cJSON.h>
+#include <jwt.h>
 #include "p2p_connection.h"
 #include "config.h"
 #include "thread_monitor.h"
@@ -455,25 +456,38 @@ void p2p_handle_peer_message(int socket, connection_manager_t* manager) {
             // Şifreli tactical data mesajı
             char* encrypted_part = buffer + 14;
             PRINTF_LOG("P2P Şifreli tactical data işleniyor...\n");
-            
-            // ENCRYPTED:filename:hexdata formatını parse et
+            // ENCRYPTED:filename:hexdata[:jwt_token] formatını parse et
             if (strncmp(encrypted_part, "ENCRYPTED:", 10) == 0) {
                 char* data_start = encrypted_part + 10;
-                
-                // Filename ve hex data'yı ayır
+                // 1. filename
                 char* first_colon = strchr(data_start, ':');
                 if (first_colon != NULL) {
                     size_t filename_len = first_colon - data_start;
                     char filename[256];
                     strncpy(filename, data_start, filename_len);
                     filename[filename_len] = '\0';
-                    
-                    char* hex_data = first_colon + 1;
-                    
+                    // 2. hexdata (ve varsa jwt_token)
+                    char* hex_and_jwt = first_colon + 1;
+                    char* second_colon = strchr(hex_and_jwt, ':');
+                    char* hex_data = NULL;
+                    char* jwt_token = NULL;
+                    if (second_colon != NULL) {
+                        // jwt_token da var
+                        size_t hex_len = second_colon - hex_and_jwt;
+                        hex_data = (char*)malloc(hex_len + 1);
+                        strncpy(hex_data, hex_and_jwt, hex_len);
+                        hex_data[hex_len] = '\0';
+                        jwt_token = second_colon + 1;
+                    } else {
+                        // jwt_token yok
+                        hex_data = strdup(hex_and_jwt);
+                        jwt_token = NULL;
+                    }
                     PRINTF_LOG("P2P: Parsing - File: %s, Hex length: %zu\n", filename, strlen(hex_data));
-                    
-                    // Şifreli veriyi işle
-                    if (p2p_process_encrypted_data(hex_data, filename, &temp_peer) == 0) {
+                    // Şifreli veriyi işle (jwt_token parametresi ile)
+                    int process_result = p2p_process_encrypted_data(hex_data, filename, &temp_peer, jwt_token);
+                    free(hex_data);
+                    if (process_result == 0) {
                         const char* response = "P2P_ACK:Encrypted data processed successfully";
                         send(socket, response, strlen(response), 0);
                         PRINTF_LOG("P2P Şifreli tactical data başarıyla işlendi\n");
@@ -489,6 +503,49 @@ void p2p_handle_peer_message(int socket, connection_manager_t* manager) {
                 }
             } else {
                 PRINTF_LOG("P2P: Geçersiz şifreli veri formatı - ENCRYPTED prefix yok\n");
+                const char* response = "P2P_NACK:Invalid encrypted data format";
+                send(socket, response, strlen(response), 0);
+            }
+        } else if (strncmp(buffer, "ENCRYPTED:", 10) == 0) {
+            // Şifreli tactical data mesajı (P2P_ENCRYPTED olmadan)
+            char* data_start = buffer + 10;
+            char* first_colon = strchr(data_start, ':');
+            if (first_colon != NULL) {
+                size_t filename_len = first_colon - data_start;
+                char filename[256];
+                strncpy(filename, data_start, filename_len);
+                filename[filename_len] = '\0';
+                // 2. hexdata (ve varsa jwt_token)
+                char* hex_and_jwt = first_colon + 1;
+                char* second_colon = strchr(hex_and_jwt, ':');
+                char* hex_data = NULL;
+                char* jwt_token = NULL;
+                if (second_colon != NULL) {
+                    // jwt_token da var
+                    size_t hex_len = second_colon - hex_and_jwt;
+                    hex_data = (char*)malloc(hex_len + 1);
+                    strncpy(hex_data, hex_and_jwt, hex_len);
+                    hex_data[hex_len] = '\0';
+                    jwt_token = second_colon + 1;
+                } else {
+                    // jwt_token yok
+                    hex_data = strdup(hex_and_jwt);
+                    jwt_token = NULL;
+                }
+                PRINTF_LOG("P2P: Parsing - File: %s, Hex length: %zu\n", filename, strlen(hex_data));
+                int process_result = p2p_process_encrypted_data(hex_data, filename, &temp_peer, jwt_token);
+                free(hex_data);
+                if (process_result == 0) {
+                    const char* response = "P2P_ACK:Encrypted data processed successfully";
+                    send(socket, response, strlen(response), 0);
+                    PRINTF_LOG("P2P Şifreli tactical data başarıyla işlendi\n");
+                } else {
+                    const char* response = "P2P_NACK:Encrypted data processing failed";
+                    send(socket, response, strlen(response), 0);
+                    PRINTF_LOG("P2P Şifreli tactical data işleme hatası\n");
+                }
+            } else {
+                PRINTF_LOG("P2P: Geçersiz şifreli veri formatı - colon bulunamadı\n");
                 const char* response = "P2P_NACK:Invalid encrypted data format";
                 send(socket, response, strlen(response), 0);
             }
@@ -680,12 +737,12 @@ int process_tactical_data(const char* data) {
         PRINTF_LOG("P2P: Data decrypted successfully\n");
         
         // Şifrelenmiş JSON'u çöz
-        tactical_data = parse_json_to_tactical_data(decrypted_json, "p2p_data");
+        tactical_data = parse_json_to_tactical_data(decrypted_json, "p2p_data", "UNKNOWN");
         free(decrypted_json);
     } else {
         PRINTF_LOG("P2P Normal data processing\n");
         // Normal JSON processing
-        tactical_data = parse_json_to_tactical_data(data, "p2p_data");
+        tactical_data = parse_json_to_tactical_data(data, "p2p_data", "UNKNOWN");
     }
     
     if (tactical_data != NULL && tactical_data->is_valid) {
@@ -914,33 +971,27 @@ void p2p_cleanup_ecdh_for_peer(p2p_peer_t* peer) {
  * @return 0 başarı, -1 hata
  * @ingroup p2p_networking
  */
-int p2p_process_encrypted_data(const char* encrypted_data, const char* filename, p2p_peer_t* peer) {
+int p2p_process_encrypted_data(const char* encrypted_data, const char* filename, p2p_peer_t* peer, const char* jwt_token) {
     if (peer == NULL || !peer->ecdh_initialized) {
         PRINTF_LOG("P2P: ECDH session bulunamadı\n");
         return -1;
     }
-    
     PRINTF_LOG("P2P: Şifreli veri işleniyor: %s (Peer: %s)\n", filename, peer->node_id);
-    
     // Hex string'i bytes'a çevir
     size_t encrypted_length;
     uint8_t* encrypted_bytes = hex_to_bytes(encrypted_data, &encrypted_length);
-    
     if (encrypted_bytes == NULL) {
         PRINTF_LOG("P2P: Geçersiz hex format\n");
         return -1;
     }
-    
     // IV'yi ayıkla (ilk 16 byte)
     if (encrypted_length < CRYPTO_IV_SIZE) {
         free(encrypted_bytes);
         PRINTF_LOG("P2P: Yetersiz veri boyutu (IV eksik)\n");
         return -1;
     }
-    
     uint8_t iv[CRYPTO_IV_SIZE];
     memcpy(iv, encrypted_bytes, CRYPTO_IV_SIZE);
-    
     // Şifreli veriyi decrypt et
     char* decrypted_json = decrypt_data(
         encrypted_bytes + CRYPTO_IV_SIZE,
@@ -948,30 +999,35 @@ int p2p_process_encrypted_data(const char* encrypted_data, const char* filename,
         peer->ecdh_ctx.aes_key, // ECDH session key
         iv
     );
-    
     free(encrypted_bytes);
-    
     if (decrypted_json == NULL) {
         PRINTF_LOG("P2P: Decryption başarısız\n");
         return -1;
     }
-    
     PRINTF_LOG("P2P: Veri başarıyla decrypt edildi\n");
-    
-    // JSON'u parse et (tactical data format)
-    tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename);
+    // JWT'den user_id (sub claim) çıkarımı
+    char* user_id_from_jwt = NULL;
+    if (jwt_token && strlen(jwt_token) > 0) {
+        jwt_t *jwt_ptr = NULL;
+        int decode_result = jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
+        PRINTF_LOG("[P2P] jwt_decode sonucu: %d\n", decode_result);
+        if (decode_result == 0 && jwt_ptr) {
+            const char* sub = jwt_get_grant(jwt_ptr, "sub");
+            PRINTF_LOG("[P2P] JWT sub: %s\n", sub ? sub : "(null)");
+            if (sub) user_id_from_jwt = strdup(sub);
+            jwt_free(jwt_ptr);
+        }
+    }
+    tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename, user_id_from_jwt ? user_id_from_jwt : "UNKNOWN");
     free(decrypted_json);
-    
+    if (user_id_from_jwt) free(user_id_from_jwt);
     if (tactical_data != NULL) {
-        // Database'e kaydet
         char* response = db_save_tactical_data_and_get_response(tactical_data, filename);
         if (response) {
             PRINTF_LOG("P2P: Database save response: %s\n", response);
             free(response);
         }
-        
         free_tactical_data(tactical_data);
-        
         PRINTF_LOG("P2P: Şifreli veri başarıyla kaydedildi: %s\n", filename);
         return 0;
     } else {

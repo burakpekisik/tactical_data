@@ -463,5 +463,8 @@ char* login_user_with_argon2(const char *username, const char *password) {
         return NULL; // Şifre yanlış
     }
 
-    return generate_jwt(); // JWT token'ı döner
+    // Artık user_id olarak username'i JWT'ye ekle
+    char user_id_str[32];
+    snprintf(user_id_str, sizeof(user_id_str), "%d", id);
+    return generate_jwt(user_id_str); // JWT token'ı döner
 }

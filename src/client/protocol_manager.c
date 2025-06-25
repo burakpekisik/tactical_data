@@ -311,16 +311,16 @@ int send_udp_message(client_connection_t* conn, const char* message) {
 int send_p2p_message(client_connection_t* conn, const char* message) {
     char p2p_message[CONFIG_BUFFER_SIZE];
     
-    // Mesaj zaten P2P formatında mı kontrol et
-    if (strncmp(message, "P2P_", 4) == 0) {
+    // ENCRYPTED ile başlıyorsa, doğrudan gönder (prefix ekleme)
+    if (strncmp(message, "ENCRYPTED:", 10) == 0) {
+        strncpy(p2p_message, message, sizeof(p2p_message) - 1);
+        p2p_message[sizeof(p2p_message) - 1] = '\0';
+        PRINTF_LOG("P2P şifreli mesaj (ENCRYPTED) doğrudan gönderiliyor...\n");
+    } else if (strncmp(message, "P2P_", 4) == 0) {
         // Mesaj zaten P2P formatında - direkt gönder
         strncpy(p2p_message, message, sizeof(p2p_message) - 1);
         p2p_message[sizeof(p2p_message) - 1] = '\0';
         PRINTF_LOG("P2P formatlanmış mesaj gönderiliyor...\n");
-    } else if (strncmp(message, "ENCRYPTED:", 10) == 0) {
-        // Şifreli veri için P2P_ENCRYPTED formatında gönder
-        snprintf(p2p_message, sizeof(p2p_message), "P2P_ENCRYPTED:%s", message);
-        PRINTF_LOG("P2P şifreli mesaj gönderiliyor...\n");
     } else {
         // Normal veri için P2P_DATA formatında gönder
         snprintf(p2p_message, sizeof(p2p_message), "P2P_DATA:CLIENT_%d:%s", 

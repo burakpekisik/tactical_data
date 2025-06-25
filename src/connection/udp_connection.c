@@ -20,6 +20,7 @@
 #include <time.h>
 #include <sys/types.h>
 #include <netdb.h>
+#include <jwt.h>
 #include "udp_connection.h"
 #include "config.h"
 #include "thread_monitor.h"
@@ -27,6 +28,7 @@
 #include "crypto_utils.h"
 #include "database.h"
 #include "logger.h"
+#include "jwt_manager.h"
 
 /// @brief Global UDP session listesi (linked list)
 static udp_session_t* session_list = NULL;
@@ -395,14 +397,20 @@ int udp_parse_message(const char* message, const char* client_ip, int client_por
         result = udp_process_json_data(content, filename, client_ip, client_port);
     } else if (strcmp(command, "ENCRYPTED") == 0) {
         PRINTF_LOG("UDP Encrypted JSON parse ediliyor...\n");
-        
-        // Session bul
-        udp_session_t* session = udp_find_session(client_ip, client_port);
-        if (session == NULL || !session->ecdh_initialized) {
-            PRINTF_LOG("UDP Encrypted Error: ECDH session bulunamadı. Önce anahtar değişimi yapın.\n");
+        // content: <hex_data>:<jwt_token>
+        char* hex_data = strtok(content, ":");
+        char* jwt_token = strtok(NULL, "\0");
+        if (!hex_data || !jwt_token) {
+            PRINTF_LOG("UDP Encrypted Error: Invalid ENCRYPTED format (hex/jwt)\n");
             result = -1;
         } else {
-            result = udp_process_encrypted_data(content, filename, client_ip, client_port, session->ecdh_ctx.aes_key);
+            udp_session_t* session = udp_find_session(client_ip, client_port);
+            if (session == NULL || !session->ecdh_initialized) {
+                PRINTF_LOG("UDP Encrypted Error: ECDH session bulunamadı. Önce anahtar değişimi yapın.\n");
+                result = -1;
+            } else {
+                result = udp_process_encrypted_data(hex_data, filename, client_ip, client_port, session->ecdh_ctx.aes_key, jwt_token);
+            }
         }
     } else {
         PRINTF_LOG("UDP Parse Error: Unknown command: %s\n", command);
@@ -425,7 +433,7 @@ int udp_process_json_data(const char* json_data, const char* filename, const cha
     PRINTF_LOG("UDP JSON Processing: %s from %s:%d\n", filename, client_ip, client_port);
     
     // JSON'u tactical data struct'ına parse et (TCP'deki gibi)
-    tactical_data_t* tactical_data = parse_json_to_tactical_data(json_data, filename);
+    tactical_data_t* tactical_data = parse_json_to_tactical_data(json_data, filename, "UNKNOWN");
     if (tactical_data != NULL && tactical_data->is_valid) {
         PRINTF_LOG("UDP: Tactical data parsed successfully\n");
         
@@ -456,7 +464,7 @@ int udp_process_json_data(const char* json_data, const char* filename, const cha
  * @param session_key ECDH session anahtarı
  * @return 0 başarı, -1 hata
  */
-int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port, const uint8_t* session_key) {
+int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port, const uint8_t* session_key, const char* jwt_token) {
     PRINTF_LOG("UDP Encrypted Processing: %s from %s:%d\n", filename, client_ip, client_port);
     
     if (session_key == NULL) {
@@ -492,9 +500,24 @@ int udp_process_encrypted_data(const char* encrypted_data, const char* filename,
     }
     
     PRINTF_LOG("UDP: Data decrypted successfully\n");
-    
+
+    // JWT'den user_id (sub claim) çıkarımı
+    char* user_id_from_jwt = NULL;
+    if (jwt_token) {
+        jwt_t *jwt_ptr = NULL;
+        int decode_result = jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
+        PRINTF_LOG("[UDP][DEBUG] jwt_decode sonucu: %d\n", decode_result);
+        if (decode_result == 0 && jwt_ptr) {
+            const char* sub = jwt_get_grant(jwt_ptr, "sub");
+            PRINTF_LOG("[UDP][DEBUG] JWT sub: %s\n", sub ? sub : "(null)");
+            if (sub) user_id_from_jwt = strdup(sub);
+            jwt_free(jwt_ptr);
+        }
+    }
+
     // Parse decrypted JSON
-    tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename);
+    tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename, user_id_from_jwt ? user_id_from_jwt : "UNKNOWN");
+    if (user_id_from_jwt) free(user_id_from_jwt);
     free(decrypted_json);
     
     if (tactical_data != NULL && tactical_data->is_valid) {

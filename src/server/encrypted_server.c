@@ -53,6 +53,8 @@
 #include "encrypted_server.h"
 #include "logger.h"
 #include "../backup/backup_manager.c"
+#include <jwt.h>
+#include "jwt_manager.h"
 
 /// @brief Sunucu çalışma durumu için global flag - signal handling için
 static volatile sig_atomic_t server_running = 1;
@@ -317,6 +319,33 @@ int main() {
                 } else if (strcmp(command, "backup_status") == 0) {
                     PRINTF_LOG("=== BACKUP STATUS ===\nAktif: %s\nPeriyot: %d saniye\n====================\n",
                         backup_enabled ? "EVET" : "HAYIR", backup_period_seconds);
+                } else if (strcmp(command, "stop_tcp") == 0) {
+                    stop_tcp_server();
+                    PRINTF_LOG("✓ TCP Server stopped\n");
+                } else if (strcmp(command, "start_tcp") == 0) {
+                    if (start_tcp_server(CONFIG_PORT) == 0) {
+                        PRINTF_LOG("✓ TCP Server started\n");
+                    } else {
+                        PRINTF_LOG("✗ TCP Server start failed\n");
+                    }
+                } else if (strcmp(command, "stop_udp") == 0) {
+                    stop_udp_server();
+                    PRINTF_LOG("✓ UDP Server stopped\n");
+                } else if (strcmp(command, "start_udp") == 0) {
+                    if (start_udp_server(CONFIG_UDP_PORT) == 0) {
+                        PRINTF_LOG("✓ UDP Server started\n");
+                    } else {
+                        PRINTF_LOG("✗ UDP Server start failed\n");
+                    }
+                } else if (strcmp(command, "stop_p2p") == 0) {
+                    stop_p2p_node();
+                    PRINTF_LOG("✓ P2P Node stopped\n");
+                } else if (strcmp(command, "start_p2p") == 0) {
+                    if (start_p2p_node(CONFIG_P2P_PORT) == 0) {
+                        PRINTF_LOG("✓ P2P Node started\n");
+                    } else {
+                        PRINTF_LOG("✗ P2P Node start failed\n");
+                    }
                 } else {
                     PRINTF_LOG("Bilinmeyen komut: %s\n", command);
                     PRINTF_LOG("'help' yazın veya 'quit' ile çıkın\n");
@@ -419,6 +448,15 @@ void* handle_client(void* arg) {
     }
     buffer[bytes_received] = '\0';
 
+    // Client IP'sini al
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+    char client_ip[INET_ADDRSTRLEN] = "unknown";
+    if (getpeername(client_socket, (struct sockaddr*)&addr, &addr_len) == 0) {
+        inet_ntop(AF_INET, &addr.sin_addr, client_ip, sizeof(client_ip));
+    }
+    PRINTF_LOG("[JWT] Client IP: %s\n", client_ip);
+
     // LOGIN isteği mi?
     if (strncmp(buffer, "LOGIN:", 6) == 0) {
         char username[128] = "", password[128] = "";
@@ -508,14 +546,12 @@ void* handle_client(void* arg) {
     
     while (1) {
         memset(buffer, 0, CONFIG_BUFFER_SIZE);
-        
         ssize_t bytes_received = read(client_socket, buffer, CONFIG_BUFFER_SIZE - 1);
         if (bytes_received <= 0) {
             if (bytes_received == 0) {
                 PRINTF_LOG("Client normal olarak ayrıldı (Thread: %lu)\n", current_thread);
             } else {
-                PRINTF_LOG("Client bağlantı hatası (Thread: %lu, Hata: %s)\n", 
-                       current_thread, strerror(errno));
+                PRINTF_LOG("Client bağlantı hatası (Thread: %lu, Hata: %s)\n", current_thread, strerror(errno));
             }
             break;
         }
@@ -578,7 +614,47 @@ void* handle_client(void* arg) {
         if (strcmp(command, "PARSE") == 0) {
             PRINTF_LOG("Normal JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
-            tactical_data_t* tactical_data = parse_json_to_tactical_data(content, filename);
+            // JWT token'ı content'in son parametresi olarak ayır
+            char* json_part = NULL;
+            char* jwt_token_part = NULL;
+            char* last_colon = strrchr(content, ':');
+            if (last_colon && strlen(last_colon + 1) > 10) // JWT token uzunluğu kontrolü
+            {
+                size_t json_len = last_colon - content;
+                json_part = malloc(json_len + 1);
+                strncpy(json_part, content, json_len);
+                json_part[json_len] = '\0';
+                jwt_token_part = strdup(last_colon + 1);
+            } else {
+                json_part = strdup(content);
+                jwt_token_part = NULL;
+            }
+            char* user_id_from_jwt = NULL;
+            if (!jwt_token_part) {
+                PRINTF_LOG("HATA: PARSE mesajında JWT token yok!\n");
+                char* error_response = "HATA: PARSE mesajında JWT token yok!";
+                send(client_socket, error_response, strlen(error_response), 0);
+                free(json_part);
+                continue;
+            }
+            PRINTF_LOG("[DEBUG] Gelen JWT token: %s\n", jwt_token_part);
+            int verify_result = verify_jwt(jwt_token_part);
+            PRINTF_LOG("[DEBUG] verify_jwt sonucu: %d\n", verify_result);
+            jwt_t *jwt_ptr = NULL;
+            int decode_result = -1;
+            decode_result = jwt_decode(&jwt_ptr, jwt_token_part, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
+            PRINTF_LOG("[DEBUG] jwt_decode sonucu: %d\n", decode_result);
+            if (decode_result == 0 && jwt_ptr) {
+                const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                PRINTF_LOG("[DEBUG] JWT sub: %s\n", sub ? sub : "(null)");
+                if (sub) user_id_from_jwt = strdup(sub);
+                jwt_free(jwt_ptr);
+            }
+            // JSON'u tactical data struct'ına parse et
+            tactical_data_t* tactical_data = parse_json_to_tactical_data(json_part, filename, user_id_from_jwt);
+            if (user_id_from_jwt) free(user_id_from_jwt);
+            free(json_part);
+            free(jwt_token_part);
             if (tactical_data != NULL && tactical_data->is_valid) {
                 parsed_result = db_save_tactical_data_and_get_response(tactical_data, filename);
                 free_tactical_data(tactical_data);
@@ -711,12 +787,24 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         return error_msg;
     }
     
+    // JWT'den user_id (sub claim) çıkarımı
+    char* user_id_from_jwt = NULL;
+    if (jwt_token) {
+        jwt_t *jwt_ptr = NULL;
+        int decode_result = jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
+        PRINTF_LOG("[DEBUG] jwt_decode sonucu: %d\n", decode_result);
+        if (decode_result == 0 && jwt_ptr) {
+            const char* sub = jwt_get_grant(jwt_ptr, "sub");
+            PRINTF_LOG("[DEBUG] JWT sub: %s\n", sub ? sub : "(null)");
+            if (sub) user_id_from_jwt = strdup(sub);
+            jwt_free(jwt_ptr);
+        }
+    }
     PRINTF_LOG("Decrypted JSON: %s\n", decrypted_json);
-    
     // JSON'u tactical data struct'ına parse et
-    tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename);
+    tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename, user_id_from_jwt);
     char* result;
-    
+    if (user_id_from_jwt) free(user_id_from_jwt);
     if (tactical_data != NULL && tactical_data->is_valid) {
         // Tactical data'yı database'e kaydet ve response al
         result = db_save_tactical_data_and_get_response(tactical_data, filename);

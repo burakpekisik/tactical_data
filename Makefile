@@ -8,7 +8,7 @@ DATA_DIR = data
 # Compiler settings
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -D_GNU_SOURCE -I$(INCLUDE_DIR)
-LIBS = -lcjson -lsqlite3 -lcrypto -lssl -lpthread -largon2 -ljwt
+LIBS = -lcjson -lsqlite3 -lcrypto -lssl -lpthread -largon2 -ljwt -lgcc_s
 
 # Source files
 SERVER_SOURCES = $(SRC_DIR)/server/server.c

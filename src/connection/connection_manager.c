@@ -212,9 +212,7 @@ int start_tcp_server(int port) {
 // TCP Server durdur
 int stop_tcp_server(void) {
     pthread_mutex_lock(&conn_mutex);
-    
     int result = tcp_server_stop(&tcp_manager);
-    
     pthread_mutex_unlock(&conn_mutex);
     return result;
 }
