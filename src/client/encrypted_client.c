@@ -120,16 +120,79 @@ int main() {
                 }
                 break;
                 
-            case 3: // Cikis
+            case 3: // Sifreli rapor listesi al
+                if (!conn->ecdh_initialized) {
+                    PRINTF_LOG("ECDH başlatılmamış - şifreli rapor listesi alınamaz\n");
+                    break;
+                }
+                {
+                    char report_query[2048];
+                    snprintf(report_query, sizeof(report_query), "{\"command\":\"REPORT_QUERY\",\"jwt\":\"%s\"}", jwt_token);
+                    char *encrypted_message = create_encrypted_protocol_message("REPORT_QUERY", report_query, conn->ecdh_ctx.aes_key, jwt_token);
+                    if (!encrypted_message) {
+                        PRINTF_LOG("Şifreli rapor sorgu mesajı oluşturulamadı\n");
+                        break;
+                    }
+                    send(conn->socket, encrypted_message, strlen(encrypted_message), 0);
+                    free(encrypted_message);
+                    char recvbuf[32768];
+                    ssize_t n = recv(conn->socket, recvbuf, sizeof(recvbuf)-1, 0);
+                    if (n > 0) {
+                        recvbuf[n] = '\0';
+                        // Şifreli yanıtı çöz
+                        if (strncmp(recvbuf, "ENCRYPTED:REPORT_QUERY:", 22) == 0) {
+                            const char* hex_data = recvbuf + 22;
+                            // Eğer ilk karakter ':' ise atla
+                            if (*hex_data == ':') hex_data++;
+                            while (*hex_data == ' ' || *hex_data == '\n' || *hex_data == '\r' || *hex_data == '\t') hex_data++;
+                            size_t hex_len = strlen(hex_data);
+                            while (hex_len > 0 && (hex_data[hex_len-1] == '\n' || hex_data[hex_len-1] == '\r' || hex_data[hex_len-1] == ' ' || hex_data[hex_len-1] == '\t')) {
+                                ((char*)hex_data)[hex_len-1] = '\0';
+                                hex_len--;
+                            }
+                            PRINTF_LOG("[DEBUG] Gelen hex_data uzunluğu: %zu\n", hex_len);
+                            PRINTF_LOG("[DEBUG] İlk 32 karakter: %.32s\n", hex_data);
+                            size_t encrypted_length;
+                            uint8_t* encrypted_bytes = hex_to_bytes(hex_data, &encrypted_length);
+                            if (encrypted_bytes && encrypted_length > 16) {
+                                uint8_t iv[16];
+                                memcpy(iv, encrypted_bytes, 16);
+                                char* decrypted_json = decrypt_data(
+                                    encrypted_bytes + 16,
+                                    encrypted_length - 16,
+                                    conn->ecdh_ctx.aes_key,
+                                    iv
+                                );
+                                if (decrypted_json) {
+                                    PRINTF_CLIENT("\nRapor Listesi (Çözüldü):\n%s\n", decrypted_json);
+                                    free(decrypted_json);
+                                } else {
+                                    PRINTF_CLIENT("Rapor listesi şifresi çözülemedi!\n");
+                                }
+                                free(encrypted_bytes);
+                            } else {
+                                PRINTF_CLIENT("Rapor listesi yanıtı hatalı! (hex_data uzunluğu: %zu)\n", hex_len);
+                            }
+                        } else {
+                            PRINTF_CLIENT("Rapor listesi alınamadı veya bağlantı hatası!\n");
+                        }
+                    } else {
+                        PRINTF_CLIENT("Rapor listesi alınamadı veya bağlantı hatası!\n");
+                    }
+                }
+                break;
+                
+            case 4: // Cikis
+            {
                 LOG_CLIENT_INFO("User requested shutdown");
                 PRINTF_CLIENT("Baglanti kapatiliyor...\n");
                 close_connection(conn);
                 LOG_CLIENT_INFO("Connection closed, shutting down client");
                 logger_cleanup(LOGGER_CLIENT);
                 return 0;
-                
+            }
             default:
-                PRINTF_LOG("Gecersiz secim. Lutfen 1-3 arasi bir sayi girin.\n");
+                PRINTF_LOG("Gecersiz secim. Lutfen 1-4 arasi bir sayi girin.\n");
                 break;
         }
         
@@ -154,7 +217,8 @@ void show_menu(void) {
     PRINTF_LOG("\n=== MENU ===\n");
     PRINTF_LOG("1. Normal JSON dosyasi gonder\n");
     PRINTF_LOG("2. Sifreli JSON dosyasi gonder\n");
-    PRINTF_LOG("3. Cikis\n");
+    PRINTF_LOG("3. Rapor listesini al\n");
+    PRINTF_LOG("4. Cikis\n");
     PRINTF_LOG("============\n");
 }
 

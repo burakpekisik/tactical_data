@@ -6,15 +6,18 @@
 #include "logger.h"
 #include "config.h"
 
-char * generate_jwt(const char* user_id) {
+char * generate_jwt(const char* user_id, const char* name, const char* surname, int privilege) {
     jwt_t *jwt;
     char *out;
     time_t current_time = time(NULL);
     time_t expiration_time = current_time + 864000; // ten days
-    PRINTF_LOG("JWT encode: sub(user_id)=%s, exp=%ld\n", user_id, expiration_time);
+    PRINTF_LOG("JWT encode: sub(user_id)=%s, name=%s, surname=%s, privilege=%d, exp=%ld\n", user_id, name, surname, privilege, expiration_time);
     jwt_new(&jwt);
     jwt_add_grant_int(jwt, "exp", expiration_time);
     jwt_add_grant(jwt, "sub", user_id);
+    jwt_add_grant(jwt, "name", name);
+    jwt_add_grant(jwt, "surname", surname);
+    jwt_add_grant_int(jwt, "privilege", privilege);
     jwt_set_alg(jwt, JWT_ALG_HS256, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
     out = jwt_encode_str(jwt);
     jwt_free(jwt);

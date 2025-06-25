@@ -45,4 +45,8 @@
 // JWT konfigürasyonu
 #define CONFIG_JWT_SECRET "my_super_secret_key"
 
+// Privilege seviyeleri
+#define ADMIN_PRIVILEGE 1
+#define USER_PRIVILEGE 0
+
 #endif // _CONFIG_H_

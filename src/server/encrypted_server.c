@@ -55,6 +55,7 @@
 #include "../backup/backup_manager.c"
 #include <jwt.h>
 #include "jwt_manager.h"
+#include "report_query_handler.h"
 
 /// @brief Sunucu çalışma durumu için global flag - signal handling için
 static volatile sig_atomic_t server_running = 1;
@@ -667,6 +668,23 @@ void* handle_client(void* arg) {
             PRINTF_LOG("Sifreli JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
             parsed_result = handle_encrypted_request(filename, content, get_session_key(&client_manager), jwt_token);
+        } else if (strcmp(command, "REPORT_QUERY") == 0) {
+            PRINTF_LOG("REPORT_QUERY komutu alındı. JWT ile rapor sorgulama başlatılıyor...\n");
+            char* jwt_token_part = NULL;
+            // content doğrudan JWT token ise
+            if (content && strlen(content) > 10) {
+                jwt_token_part = strdup(content);
+            }
+            if (!jwt_token_part) {
+                PRINTF_LOG("HATA: REPORT_QUERY mesajında JWT token yok!\n");
+                char* error_response = "HATA: REPORT_QUERY mesajında JWT token yok!";
+                send(client_socket, error_response, strlen(error_response), 0);
+                continue;
+            }
+            char json_result[32768];
+            handle_report_query(jwt_token_part, json_result, sizeof(json_result));
+            send(client_socket, json_result, strlen(json_result), 0);
+            free(jwt_token_part);
         } else {
             parsed_result = malloc(256);
             snprintf(parsed_result, 256, "HATA: Bilinmeyen komut: %s", command);
@@ -743,51 +761,84 @@ void* handle_client(void* arg) {
  */
 // Sifreli istek ile bas et
 char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key, const char* jwt_token) {
-    // jwt_token parametresi ileride doğrulama için kullanılabilir
     if (session_key == NULL) {
         char *error_msg = malloc(256);
         strcpy(error_msg, "HATA: Session key NULL");
         return error_msg;
     }
-    
-    // Hex string'i bytes'a cevir
     size_t encrypted_length;
     uint8_t* encrypted_bytes = hex_to_bytes(encrypted_content, &encrypted_length);
-    
     if (encrypted_bytes == NULL) {
         char *error_msg = malloc(256);
         strcpy(error_msg, "HATA: Gecersiz hex format");
         return error_msg;
     }
-    
-    // IV'yi ayikla (ilk 16 byte)
     if (encrypted_length < CRYPTO_IV_SIZE) {
         free(encrypted_bytes);
         char *error_msg = malloc(256);
         strcpy(error_msg, "HATA: Yetersiz veri boyutu (IV eksik)");
         return error_msg;
     }
-    
     uint8_t iv[CRYPTO_IV_SIZE];
     memcpy(iv, encrypted_bytes, CRYPTO_IV_SIZE);
-    
-    // Sifreli veriyi decrypt et
     char* decrypted_json = decrypt_data(
         encrypted_bytes + CRYPTO_IV_SIZE,
         encrypted_length - CRYPTO_IV_SIZE,
-        session_key, // ECDH ile üretilen session key
+        session_key,
         iv
     );
-    
     free(encrypted_bytes);
-    
     if (decrypted_json == NULL) {
         char *error_msg = malloc(256);
         strcpy(error_msg, "HATA: Decryption basarisiz");
         return error_msg;
     }
-    
-    // JWT'den user_id (sub claim) çıkarımı
+    // Eğer dosya adı REPORT_QUERY ise, rapor sorgulama işlemi yap
+    if (strcmp(filename, "REPORT_QUERY") == 0) {
+        // decrypted_json içeriği JSON string (ör: {"command":"REPORT_QUERY","jwt":"..."})
+        cJSON* root = cJSON_Parse(decrypted_json);
+        char* jwt_from_json = NULL;
+        if (root) {
+            cJSON* jwt_item = cJSON_GetObjectItem(root, "jwt");
+            if (jwt_item && cJSON_IsString(jwt_item)) {
+                jwt_from_json = jwt_item->valuestring;
+            }
+        }
+        char* plain_result = malloc(32768);
+        if (jwt_from_json) {
+            handle_report_query(jwt_from_json, plain_result, 32768);
+        } else {
+            snprintf(plain_result, 32768, "{\"error\":\"JWT bulunamadı\"}");
+        }
+        if (root) cJSON_Delete(root);
+        // Yanıtı AES ile şifrele
+        uint8_t iv[CRYPTO_IV_SIZE];
+        generate_random_iv(iv);
+        crypto_result_t* encrypted = encrypt_data(plain_result, session_key, iv);
+        free(plain_result);
+        if (!encrypted || !encrypted->success) {
+            if (encrypted) free_crypto_result(encrypted);
+            free(decrypted_json);
+            char* error_msg = malloc(256);
+            strcpy(error_msg, "HATA: Rapor yanıtı şifrelenemedi");
+            return error_msg;
+        }
+        size_t combined_length = CRYPTO_IV_SIZE + encrypted->length;
+        uint8_t* combined_data = malloc(combined_length);
+        memcpy(combined_data, iv, CRYPTO_IV_SIZE);
+        memcpy(combined_data + CRYPTO_IV_SIZE, encrypted->data, encrypted->length);
+        char* hex_data = bytes_to_hex(combined_data, combined_length);
+        free(combined_data);
+        free_crypto_result(encrypted);
+        free(decrypted_json);
+        // ENCRYPTED:REPORT_QUERY:hex_data formatında döndür
+        size_t total_size = strlen("ENCRYPTED:REPORT_QUERY:") + strlen(hex_data) + 1;
+        char* result = malloc(total_size);
+        snprintf(result, total_size, "ENCRYPTED:REPORT_QUERY:%s", hex_data);
+        free(hex_data);
+        return result;
+    }
+    // Diğer dosya adlarında eski davranış devam ediyor
     char* user_id_from_jwt = NULL;
     if (jwt_token) {
         jwt_t *jwt_ptr = NULL;
@@ -801,12 +852,10 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         }
     }
     PRINTF_LOG("Decrypted JSON: %s\n", decrypted_json);
-    // JSON'u tactical data struct'ına parse et
     tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename, user_id_from_jwt);
     char* result;
     if (user_id_from_jwt) free(user_id_from_jwt);
     if (tactical_data != NULL && tactical_data->is_valid) {
-        // Tactical data'yı database'e kaydet ve response al
         result = db_save_tactical_data_and_get_response(tactical_data, filename);
         free_tactical_data(tactical_data);
     } else {
@@ -814,7 +863,6 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         strcpy(result, "HATA: Decrypted JSON tactical data formatına uygun değil");
         if (tactical_data) free_tactical_data(tactical_data);
     }
-    
     free(decrypted_json);
     return result;
 }

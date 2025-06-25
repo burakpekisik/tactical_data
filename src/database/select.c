@@ -217,7 +217,7 @@ int db_select_units(unit_t **units, int *count) {
 int db_select_reports(report_t **reports, int *count) {
     char *zErrMsg = 0;
     int rc;
-    char *sql = "SELECT * FROM REPORTS ORDER BY TIMESTAMP DESC";
+    char *sql = "SELECT * FROM REPORTS ORDER BY ID ASC";
 
     if (!g_db) {
         fprintf(stderr, "Database not initialized\n");
@@ -466,5 +466,5 @@ char* login_user_with_argon2(const char *username, const char *password) {
     // Artık user_id olarak username'i JWT'ye ekle
     char user_id_str[32];
     snprintf(user_id_str, sizeof(user_id_str), "%d", id);
-    return generate_jwt(user_id_str); // JWT token'ı döner
+    return generate_jwt(user_id_str, name, surname, privilege); // JWT token'ı döner
 }
