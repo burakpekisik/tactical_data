@@ -34,6 +34,8 @@ set(SOURCES
     mainwindow.cpp
     mapwidget.cpp
     client_wrapper.cpp
+    login_dialog.cpp
+    login_client.cpp
     ${C_SOURCES}
 )
 

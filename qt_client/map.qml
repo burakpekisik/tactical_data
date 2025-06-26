@@ -100,13 +100,27 @@ Rectangle {
                         console.log("Tıklanan koordinat:", coord.latitude, coord.longitude)
                         
                         // Mevcut işaretçileri temizle
-                        map.clearMapItems()
+                        // map.clearMapItems()
                         
-                        // Yeni işaretçi ekle
+                        // Önceki geçici markerları sil
+                        for (var i = markers.length - 1; i >= 0; --i) {
+                            if (markers[i].isTemporary) {
+                                markers[i].destroy();
+                                markers.splice(i, 1);
+                            }
+                        }
+                        // Yeni geçici marker ekle
                         var marker = markerComponent.createObject(map, {
-                            "coordinate": coord
+                            "coordinate": coord,
+                            "isTemporary": true,
+                            "description": "",
+                            "status": "",
+                            "id": "",
+                            "timestamp": "",
+                            "visible": true
                         })
                         map.addMapItem(marker)
+                        markers.push(marker)
                         
                         // Sinyali gönder
                         mapContainer.mapClicked(coord.latitude, coord.longitude)
@@ -272,10 +286,11 @@ Rectangle {
                 width: 16
                 height: 16
                 radius: 8
-                color: "red"
+                // Renk eşlemesi fonksiyonu
+                property string dataType: status
+                color: marker.getColorForType(dataType)
                 border.width: 3
                 border.color: "white"
-                
                 Rectangle {
                     anchors.centerIn: parent
                     width: 6
@@ -283,17 +298,63 @@ Rectangle {
                     radius: 3
                     color: "white"
                 }
-                
-                // Animasyon efekti
                 SequentialAnimation on scale {
                     loops: Animation.Infinite
                     NumberAnimation { from: 1.0; to: 1.2; duration: 800 }
                     NumberAnimation { from: 1.2; to: 1.0; duration: 800 }
                 }
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        if (marker.isTemporary) {
+                            // Geçici marker'ı kaldır
+                            for (var i = markers.length - 1; i >= 0; --i) {
+                                if (markers[i] === marker) {
+                                    markers[i].destroy();
+                                    markers.splice(i, 1);
+                                    break;
+                                }
+                            }
+                        } else {
+                            Qt.callLater(function() {
+                                marker.showDetails();
+                            });
+                        }
+                    }
+                    cursorShape: Qt.PointingHandCursor
+                }
             }
             coordinate: QtPositioning.coordinate(0, 0)
-            anchorPoint.x: sourceItem.width / 2
-            anchorPoint.y: sourceItem.height / 2
+            // --- Sadeleştirilmiş property'ler ---
+            property string id: ""
+            property string status: ""
+            property string description: ""
+            property string timestamp: ""
+            property bool isTemporary: false
+            // Renk eşlemesi fonksiyonu
+            function getColorForType(type) {
+                switch(type) {
+                    case "Tehlike": return "#e53935"; // Kırmızı
+                    case "Taktik Pozisyon": return "#3949ab"; // Mavi
+                    case "Bilgi": return "#43a047"; // Yeşil
+                    case "Uyarı": return "#fbc02d"; // Sarı
+                    case "Destek": return "#00897b"; // Turkuaz
+                    // ... diğer veri tipleri ...
+                    default: return "#757575"; // Tanımsız/gri
+                }
+            }
+            function showDetails() {
+                var details =
+                    "<b>ID:</b> " + id + "<br>" +
+                    "<b>Durum:</b> " + status + "<br>" +
+                    "<b>Açıklama:</b> " + description + "<br>" +
+                    "<b>Zaman:</b> " + timestamp;
+                Qt.createQmlObject(
+                    'import QtQuick 2.15; import QtQuick.Controls 2.15; Popup { width: 320; height: 120; modal: false; focus: true; contentItem: Text { text: "' + details.replace(/"/g, '\\"') + '"; wrapMode: Text.Wrap; anchors.centerIn: parent; font.pixelSize: 13; textFormat: Text.RichText; } }',
+                    map,
+                    "dynamicPopup"
+                ).open();
+            }
         }
     }
     
@@ -342,5 +403,45 @@ Rectangle {
                 }
             }
         }
+    }
+    
+    // Marker yönetim fonksiyonları
+    property bool visibleMarkers: true
+    property var markers: []
+
+    function setMarkersVisible(visible) {
+        visibleMarkers = visible;
+        for (var i = 0; i < markers.length; ++i) {
+            if (!markers[i].isTemporary) {
+                markers[i].visible = visible;
+            }
+        }
+        console.log("[QML] Marker görünürlüğü (sadece rapor markerları):", visible);
+    }
+
+    function addMarker(lat, lon, desc, status, id, timestamp, isTemporary) {
+        console.log("[QML] [REQ] Marker ekleme isteği: lat=", lat, "lon=", lon, "desc=", desc, "status=", status, "id=", id, "timestamp=", timestamp, "isTemporary=", isTemporary);
+        var marker = markerComponent.createObject(map, {
+            "coordinate": QtPositioning.coordinate(lat, lon),
+            "description": desc,
+            "status": status,
+            "id": id,
+            "timestamp": timestamp,
+            "isTemporary": isTemporary === true,
+            "visible": isTemporary === true ? true : visibleMarkers
+        });
+        if (marker) {
+            map.addMapItem(marker);
+            markers.push(marker);
+            console.log("[QML] [RESP] Marker eklendi:", lat, lon, desc, status, id, timestamp, isTemporary);
+        }
+    }
+    function clearMapItems() {
+        console.log("[QML] [REQ] Tüm markerları temizle isteği");
+        for (var i = 0; i < markers.length; ++i) {
+            markers[i].destroy();
+        }
+        markers = [];
+        console.log("[QML] [RESP] Tüm markerlar temizlendi");
     }
 }

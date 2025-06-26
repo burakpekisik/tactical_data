@@ -67,5 +67,37 @@ void MapWidget::setupQmlMap()
 void MapWidget::onQmlPointClicked(double latitude, double longitude)
 {
     qDebug() << "Harita tıklandı:" << latitude << longitude;
+    logToConsole(QString("Harita tıklandı: %1 %2").arg(latitude).arg(longitude));
     emit pointClicked(latitude, longitude);
+}
+
+void MapWidget::addMarker(double latitude, double longitude, const QString& description, const QString& status, int id, qint64 timestamp, bool isTemporary)
+{
+    if (!qmlWidget) return;
+    QVariant returnedValue;
+    QMetaObject::invokeMethod(qmlWidget->rootObject(), "addMarker",
+        Q_ARG(QVariant, latitude),
+        Q_ARG(QVariant, longitude),
+        Q_ARG(QVariant, description),
+        Q_ARG(QVariant, status),
+        Q_ARG(QVariant, id),
+        Q_ARG(QVariant, timestamp),
+        Q_ARG(QVariant, isTemporary)
+    );
+    logToConsole(QString("addMarker çağrıldı: %1, %2, %3, %4, %5, %6, %7")
+        .arg(latitude).arg(longitude).arg(description).arg(status).arg(id).arg(timestamp).arg(isTemporary));
+}
+
+void MapWidget::clearMapItems()
+{
+    if (!qmlWidget) return;
+    QMetaObject::invokeMethod(qmlWidget->rootObject(), "clearMapItems");
+    logToConsole("clearMapItems çağrıldı");
+}
+
+void MapWidget::setMarkersVisible(bool visible)
+{
+    if (!qmlWidget) return;
+    QMetaObject::invokeMethod(qmlWidget->rootObject(), "setMarkersVisible", Q_ARG(QVariant, visible));
+    logToConsole(QString("setMarkersVisible çağrıldı: %1").arg(visible));
 }

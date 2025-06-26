@@ -6,6 +6,7 @@
 #include <QVBoxLayout>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QDebug>
 
 class MapWidget : public QWidget
 {
@@ -13,6 +14,9 @@ class MapWidget : public QWidget
 
 public:
     explicit MapWidget(QWidget *parent = nullptr);
+    Q_INVOKABLE void addMarker(double latitude, double longitude, const QString& description, const QString& status, int id, qint64 timestamp, bool isTemporary = false);
+    Q_INVOKABLE void clearMapItems();
+    Q_INVOKABLE void setMarkersVisible(bool visible);
 
 signals:
     void pointClicked(double latitude, double longitude);
@@ -22,7 +26,8 @@ private slots:
 
 private:
     void setupQmlMap();
-    
+    void logToConsole(const QString& msg) const { qDebug() << "[MapWidget]" << msg; }
+
     QQuickWidget *qmlWidget;
     QVBoxLayout *layout;
 };

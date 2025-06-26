@@ -59,12 +59,18 @@ public:
         InvalidData = 3
     };
 
+    enum class ConnectionType { TCP, UDP, P2P };
+
     explicit ClientWrapper(QObject *parent = nullptr);
     ~ClientWrapper();
 
     // Bağlantı durumu
     ConnectionStatus getConnectionStatus() const;
     bool isConnected() const;
+
+    // JWT token set/get fonksiyonları
+    void setJwtToken(const QString& token) { jwtToken = token; }
+    QString getJwtToken() const { return jwtToken; }
 
 public slots:
     /**
@@ -98,6 +104,31 @@ public slots:
      */
     void sendJsonFile(const QString& filePath, bool encrypted = true);
 
+    // Fallback ve alternatif bağlantı fonksiyonları
+    bool connectUdp(const QString& host, int port);
+    bool connectP2p(const QString& host, int port);
+    bool trySendWithFallback(const QString& jsonString, bool encrypted);
+    ConnectionType getCurrentConnectionType() const { return currentType; }
+    void setCurrentConnectionType(ConnectionType type) { currentType = type; }
+
+    // --- PUBLIC ---
+    QString createTacticalDataJson(double latitude, double longitude, 
+                                  const QString& dataType, const QString& message);
+
+    // --- Fallback için UDP ECDH handshake fonksiyonu ---
+    bool udpEcdhHandshake(QByteArray& outAesKey);
+
+    // --- Fallback için P2P ECDH handshake fonksiyonu ---
+    bool p2pEcdhHandshake(QByteArray& outAesKey);
+
+    // --- Pending JSON gönderimlerini yönet ---
+    void sendAllPendingJson(bool encrypted);
+    bool trySendJsonInternal(const QString& jsonString, bool encrypted);
+    void saveJsonToPending(const QString& jsonString);
+
+    // --- Rapor sorgulama ---
+    void getReports();
+
 signals:
     /**
      * @brief Bağlantı durumu değiştiğinde emit edilir
@@ -124,6 +155,17 @@ signals:
      * @param message Log mesajı
      */
     void logMessage(const QString& message);
+
+    /**
+     * @brief Raporlar alındığında emit edilir
+     * @param reports Alınan raporlar
+     */
+    void reportsReceived(const QJsonArray& reports);
+
+    /**
+     * @brief ECDH tamamlandığında emit edilir
+     */
+    void ecdhHandshakeCompleted(); // <-- ECDH tamamlandığında tetiklenecek sinyal
 
 private slots:
     void onSocketConnected();
@@ -154,19 +196,29 @@ private:
     
     // Thread safety
     QMutex connectionMutex;
-    
+
+    // TCP'den gelen verileri biriktirmek için buffer
+    QByteArray incomingBuffer;
+
+    // JWT token'ı saklamak için ek alan
+    QString jwtToken;
+
+    ConnectionType currentType = ConnectionType::TCP;
+    QTcpSocket* p2pSocket = nullptr;
+
     // Yardımcı fonksiyonlar
     void initializeConnection();
     void cleanupConnection();
     void setupSignals();
     void initializeECDHHandshake();
     void processECDHResponse(const QByteArray& data);
-    QString createTacticalDataJson(double latitude, double longitude, 
-                                  const QString& dataType, const QString& message);
     void sendJsonString(const QString& jsonString, bool encrypted);
     void logInfo(const QString& message);
     void logError(const QString& message);
     void logDebug(const QString& message);
+
+    // AES256 CBC çözme fonksiyonu prototipi
+    QByteArray decryptAes256Cbc(const QByteArray &cipher, const QByteArray &key, const QByteArray &iv);
 };
 
 #endif // CLIENT_WRAPPER_H

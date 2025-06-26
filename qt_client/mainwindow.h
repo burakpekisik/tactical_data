@@ -25,6 +25,8 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+    ClientWrapper* getClientWrapper() { return clientWrapper; }
+
 private slots:
     void onMapClicked(double latitude, double longitude);
     void onSendData();
@@ -36,6 +38,7 @@ private slots:
     void onDataSendResult(ClientWrapper::SendResult result, const QString& message);
     void onDataReceived(const QString& data);
     void onLogMessage(const QString& message);
+    void onReportsReceived(const QJsonArray& reports); // <-- RAPOR SLOTU
 
 private:
     void setupUI();
@@ -44,7 +47,6 @@ private:
     void setupConnectionPanel();
     void setupDataPanel();
     void setupLogPanel();
-    void updateConnectionStatus();
 
     // UI bileşenleri
     QWidget *centralWidget;
@@ -90,6 +92,8 @@ private:
     // Yardımcı fonksiyonlar
     void updateUIState();
     void showStatusMessage(const QString& message, int timeout = 5000);
+
+    QPushButton *toggleMarkersButton;
 };
 
 #endif // MAINWINDOW_H

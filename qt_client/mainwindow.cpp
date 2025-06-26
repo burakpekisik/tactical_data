@@ -10,12 +10,16 @@
  */
 
 #include "mainwindow.h"
+#include "login_dialog.h"
 #include <QApplication>
 #include <QMessageBox>
 #include <QDateTime>
 #include <QStatusBar>
 #include <QCheckBox>
 #include <QProgressBar>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 
 /**
  * @brief MainWindow sınıfının constructor'ı
@@ -47,6 +51,12 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onDataReceived);
     connect(clientWrapper, &ClientWrapper::logMessage,
             this, &MainWindow::onLogMessage);
+    connect(clientWrapper, &ClientWrapper::reportsReceived,
+            this, &MainWindow::onReportsReceived);
+    connect(clientWrapper, &ClientWrapper::ecdhHandshakeCompleted, this, [this](){
+        logTextEdit->append("<b>[INFO]</b> ECDH tamamlandı, otomatik rapor sorgulanıyor...");
+        clientWrapper->getReports();
+    });
     
     setupUI();
     setWindowTitle("Tactical Data Client - Harita Arayüzü");
@@ -92,8 +102,6 @@ void MainWindow::setupUI()
     QHBoxLayout *mainLayout = new QHBoxLayout(centralWidget);
     mainLayout->addWidget(mainSplitter);
     mainLayout->setContentsMargins(5, 5, 5, 5);
-    
-    updateConnectionStatus();
 }
 
 /**
@@ -117,8 +125,21 @@ void MainWindow::setupMapPanel()
     coordinatesLabel = new QLabel("Koordinat seçmek için haritaya tıklayın");
     coordinatesLabel->setStyleSheet("QLabel { background-color: #f0f0f0; padding: 5px; border: 1px solid #ccc; }");
     
+    // Marker görünürlüğünü kontrol eden buton
+    toggleMarkersButton = new QPushButton("Rapor Markerlarını Gizle");
+    toggleMarkersButton->setCheckable(true);
+    toggleMarkersButton->setChecked(true);
+    connect(toggleMarkersButton, &QPushButton::toggled, this, [this](bool checked){
+        if (mapWidget) {
+            QMetaObject::invokeMethod(mapWidget, "setMarkersVisible", Q_ARG(bool, checked));
+        }
+        toggleMarkersButton->setText(checked ? "Rapor Markerlarını Gizle" : "Rapor Markerlarını Göster");
+        logTextEdit->append(QString("<b>[KULLANICI]</b> Markerlar %1").arg(checked ? "gösterildi" : "gizlendi"));
+    });
+    
     mapLayout->addWidget(mapWidget, 1); // Haritaya genişleme faktörü ekle
     mapLayout->addWidget(coordinatesLabel);
+    mapLayout->addWidget(toggleMarkersButton); // Butonu ekle
     mapLayout->setContentsMargins(5, 5, 5, 5);
 }
 
@@ -223,7 +244,7 @@ void MainWindow::setupLogPanel()
 /**
  * @brief Sunucu bağlantı panelini kurar
  * @details Sunucu adresi, port girişi, bağlantı butonları ve durum göstergesini
- *          içeren paneli oluşturur. Bağlantı durumuna göre bileşenleri etkinleştirir/devre dışı bırakır.
+ *          içeren paneli oluşturur. Bağlantı durumu ve mesajına göre bileşenleri etkinleştirir/devre dışı bırakır.
  * @note Bağlantı kurulduğunda adres ve port alanları düzenlenemez hale gelir
  */
 void MainWindow::setupConnectionPanel()
@@ -304,27 +325,29 @@ void MainWindow::onMapClicked(double latitude, double longitude)
  */
 void MainWindow::onSendData()
 {
-    if (!clientWrapper->isConnected()) {
-        QMessageBox::warning(this, "Uyarı", "Sunucuya bağlı değilsiniz!");
-        return;
-    }
-    
     if (!pointSelected) {
         QMessageBox::warning(this, "Uyarı", "Önce haritadan bir nokta seçin!");
         return;
     }
-    
+
     QString dataType = dataTypeCombo->currentText();
     QString message = messageEdit->text();
     bool encrypted = encryptionCheckBox->isChecked();
-    
+
     // Progress bar göster
     progressBar->setVisible(true);
     sendButton->setEnabled(false);
-    
-    // Veriyi gönder
-    clientWrapper->sendTacticalData(selectedLatitude, selectedLongitude, 
-                                   dataType, message, encrypted);
+
+    // Bağlantı varsa normal gönder, yoksa fallback dene
+    if (clientWrapper->isConnected()) {
+        clientWrapper->sendTacticalData(selectedLatitude, selectedLongitude,
+                                       dataType, message, encrypted);
+    } else {
+        // Fallback ile gönderim
+        QString jsonString = clientWrapper->createTacticalDataJson(selectedLatitude, selectedLongitude, dataType, message);
+        clientWrapper->trySendWithFallback(jsonString, encrypted);
+        logTextEdit->append("[FALLBACK] Bağlantı yok, fallback ile gönderim denendi.");
+    }
 }
 
 /**
@@ -359,18 +382,6 @@ void MainWindow::onDisconnectFromServer()
 }
 
 /**
- * @brief Bağlantı durumuna göre UI bileşenlerini günceller
- * @details Bağlantı durumuna göre butonların etkin/devre dışı durumlarını,
- *          durum etiketinin rengini ve girdi alanlarının düzenlenebilirliğini ayarlar.
- * @note Bu fonksiyon bağlantı kurulduğunda ve kesildiğinde çağrılır
- * @see onConnectToServer(), onDisconnectFromServer()
- */
-void MainWindow::updateConnectionStatus()
-{
-    // Bu fonksiyon artık kullanılmıyor, updateUIState() kullanılıyor
-}
-
-/**
  * @brief Bağlantı durumu değiştiğinde çağrılır
  */
 void MainWindow::onConnectionStatusChanged(ClientWrapper::ConnectionStatus status, const QString& message)
@@ -396,8 +407,15 @@ void MainWindow::onConnectionStatusChanged(ClientWrapper::ConnectionStatus statu
     
     updateUIState();
     showStatusMessage(message);
+    
     // Sadece GUI mesajını ekle, log formatı zaten client_wrapper'da yapılıyor
     logTextEdit->append(message);
+    
+    // Bağlantı başarılı olduğunda otomatik rapor sorgula
+    if (status == ClientWrapper::Connected) {
+        logTextEdit->append("<b>[INFO]</b> Bağlantı sonrası otomatik rapor sorgulanıyor...");
+        if (clientWrapper) clientWrapper->getReports();
+    }
 }
 
 /**
@@ -413,6 +431,8 @@ void MainWindow::onDataSendResult(ClientWrapper::SendResult result, const QStrin
         case ClientWrapper::SendSuccess:
             QMessageBox::information(this, "Başarılı", message);
             showStatusMessage(message, 3000);
+            // Veri gönderimi başarılıysa raporları tekrar sorgula
+            if (clientWrapper) clientWrapper->getReports();
             break;
         case ClientWrapper::SendError:
         case ClientWrapper::NotConnected:
@@ -445,6 +465,30 @@ void MainWindow::onLogMessage(const QString& message)
 }
 
 /**
+ * @brief Raporlar alındığında çağrılır
+ */
+void MainWindow::onReportsReceived(const QJsonArray& reports)
+{
+    logTextEdit->append("<b>[RAPOR]</b> Sunucudan rapor listesi alındı. Toplam: " + QString::number(reports.size()));
+    if (!mapWidget) return;
+    QMetaObject::invokeMethod(mapWidget, "clearMapItems");
+    for (const QJsonValue& val : reports) {
+        if (!val.isObject()) continue;
+        QJsonObject obj = val.toObject();
+        double lat = obj.value("latitude").toDouble();
+        double lon = obj.value("longitude").toDouble();
+        QString desc = obj.value("description").toString();
+        QString status = obj.value("status").toString();
+        int id = obj.value("id").toInt();
+        qint64 timestamp = obj.value("timestamp").toVariant().toLongLong();
+        QString logMsg = QString("Marker eklendi: [%1, %2] - %3").arg(lat, 0, 'f', 6).arg(lon, 0, 'f', 6).arg(desc);
+        logTextEdit->append(logMsg);
+        QMetaObject::invokeMethod(mapWidget, "addMarker",
+            Q_ARG(double, lat), Q_ARG(double, lon), Q_ARG(QString, desc), Q_ARG(QString, status), Q_ARG(int, id), Q_ARG(qint64, timestamp), Q_ARG(bool, false));
+    }
+}
+
+/**
  * @brief UI durumunu günceller
  */
 void MainWindow::updateUIState()
@@ -459,10 +503,11 @@ void MainWindow::updateUIState()
     serverPortSpin->setEnabled(!connected && !connecting);
     
     // Veri gönderim kontrolleri
-    sendButton->setEnabled(connected && pointSelected && !progressBar->isVisible());
-    dataTypeCombo->setEnabled(connected);
-    messageEdit->setEnabled(connected);
-    encryptionCheckBox->setEnabled(connected);
+    // sendButton her zaman pointSelected ve progressBar'a göre aktif olsun (bağlantı olmasa da fallback için)
+    sendButton->setEnabled(pointSelected && !progressBar->isVisible());
+    dataTypeCombo->setEnabled(true);
+    messageEdit->setEnabled(true);
+    encryptionCheckBox->setEnabled(true);
 }
 
 /**
