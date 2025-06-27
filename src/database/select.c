@@ -468,3 +468,65 @@ char* login_user_with_argon2(const char *username, const char *password) {
     snprintf(user_id_str, sizeof(user_id_str), "%d", id);
     return generate_jwt(user_id_str, name, surname, privilege); // JWT token'ı döner
 }
+
+int db_select_replies_by_user(int user_id, reply_t **replies, int *count) {
+    char *zErrMsg = 0;
+    char sql[256];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql), 
+        "SELECT * FROM REPLIES WHERE USER_ID = %d ORDER BY TIMESTAMP DESC", user_id);
+
+    *count = 0;
+    int capacity = 10;
+    *replies = malloc(capacity * sizeof(reply_t));
+
+    void *callback_data[] = {replies, count, &capacity};
+    
+    rc = sqlite3_exec(g_db, sql, report_callback, callback_data, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error selecting replies by user: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        free(*replies);
+        return -1;
+    }
+
+    return 0;
+}
+
+int db_select_replies_by_report(int report_id, reply_t **replies, int *count) {
+    char *zErrMsg = 0;
+    char sql[256];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql), 
+        "SELECT * FROM REPLIES WHERE REPORT_ID = %d ORDER BY TIMESTAMP DESC", report_id);
+
+    *count = 0;
+    int capacity = 10;
+    *replies = malloc(capacity * sizeof(reply_t));
+
+    void *callback_data[] = {replies, count, &capacity};
+    
+    rc = sqlite3_exec(g_db, sql, report_callback, callback_data, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error selecting replies by report: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        free(*replies);
+        return -1;
+    }
+
+    return 0;
+}

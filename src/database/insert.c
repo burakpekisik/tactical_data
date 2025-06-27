@@ -443,3 +443,30 @@ int register_user_with_argon2(int unit_id, const char* username, const char* nam
     PRINTF_LOG("Kullanıcı '%s' başarıyla kaydedildi.\n", username);
     return 1;
 }
+
+int db_insert_reply(const reply_t *reply) {
+    char *zErrMsg = 0;
+    char sql[1024];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql),
+        "INSERT INTO REPLIES (USER_ID, REPORT_ID, MESSAGE, TIMESTAMP) "
+        "VALUES (%d, %d, '%s', %ld);",
+        reply->user_id, reply->report_id, reply->message, reply->timestamp);
+
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error inserting report: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else {
+        PRINTF_LOG("Reply for report ID %d inserted successfully\n", reply->report_id);
+        return sqlite3_last_insert_rowid(g_db);
+    }
+}

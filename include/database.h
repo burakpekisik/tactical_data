@@ -32,6 +32,16 @@ typedef struct {
     char created_at[32];
 } report_t;
 
+// Reply structure
+typedef struct {
+    int id;
+    int user_id;
+    int report_id;
+    char message[500];
+    long timestamp;
+    char created_at[32];
+} reply_t;
+
 // Tactical Data Structure (matching data.json format)
 typedef struct {
     char user_id[64];
@@ -64,6 +74,11 @@ int db_select_reports_by_user(int user_id, report_t **reports, int *count);
 int db_update_report(int id, const report_t *report);
 int db_delete_report(int id);
 int db_get_report_by_id(int id, report_t *report);
+
+// Reply operations
+int db_select_replies_by_report(int report_id, reply_t **replies, int *count);
+int db_select_replies_by_user(int user_id, reply_t **replies, int *count);
+int db_insert_reply(const reply_t *reply);
 
 // Tactical data operations (JSON parse ve database insert)
 int db_insert_tactical_data_from_json(const tactical_data_t *tactical_data);

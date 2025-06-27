@@ -80,7 +80,14 @@ bool admin_reply_manager_send_reply(int report_id, const char* message, int admi
         }
     }
     if (user_socket == -1) {
-        printf("[ADMIN_REPLY][send_reply] user_id %d için aktif bağlantı yok (offline)\n", user_id);
+        printf("[ADMIN_REPLY][send_reply] user_id %d için aktif bağlantı yok, veri tabanına kaydedildi (offline)\n", user_id);
+        reply_t reply;
+        memset(&reply, 0, sizeof(reply));
+        reply.user_id = user_id;
+        reply.report_id = report_id;
+        strncpy(reply.message, message, sizeof(reply.message) - 1);
+        reply.timestamp = time(NULL);
+        db_insert_reply(&reply);
         return false;
     }
     // 3. Mesajı ilet
@@ -90,6 +97,13 @@ bool admin_reply_manager_send_reply(int report_id, const char* message, int admi
     printf("[ADMIN_REPLY][send_reply] send() çağrıldı: user_socket=%d, sent=%zd\n", user_socket, sent);
     if (sent > 0) {
         printf("[ADMIN_REPLY][send_reply] Report %d için kullanıcıya dönüt gönderildi (socket=%d, sent=%zd)\n", report_id, user_socket, sent);
+        reply_t reply;
+        memset(&reply, 0, sizeof(reply));
+        reply.user_id = user_id;
+        reply.report_id = report_id;
+        strncpy(reply.message, message, sizeof(reply.message) - 1);
+        reply.timestamp = time(NULL);
+        db_insert_reply(&reply);
         return true;
     } else {
         perror("[ADMIN_REPLY][send_reply] send hatası");

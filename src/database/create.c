@@ -176,6 +176,27 @@ int db_create_tables(void) {
         PRINTF_LOG("REPORTS table created successfully\n");
     }
 
+    // Create REPLIES table with USER_ID and REPORT_ID foreign key
+    sql = "CREATE TABLE IF NOT EXISTS REPLIES(" 
+          "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+          "USER_ID INTEGER NOT NULL,"
+          "REPORT_ID INTEGER NOT NULL,"
+          "MESSAGE TEXT,"
+          "TIMESTAMP INTEGER NOT NULL,"
+          "CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,"
+          "FOREIGN KEY (USER_ID) REFERENCES USERS(ID) ON DELETE CASCADE,"
+          "FOREIGN KEY (REPORT_ID) REFERENCES REPORTS(ID) ON DELETE CASCADE"
+          ");";
+
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error creating REPLIES table: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else {
+        PRINTF_LOG("REPLIES table created successfully\n");
+    }
+
     // Enable foreign key constraints
     sql = "PRAGMA foreign_keys = ON;";
     rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
