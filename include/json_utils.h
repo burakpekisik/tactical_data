@@ -15,5 +15,6 @@ void print_json_recursive(cJSON *json, char* result, int depth, size_t max_size)
 void add_indent(char* result, int depth, size_t max_size);
 char* get_current_time(void);
 void free_tactical_data(tactical_data_t* data);
+cJSON* parse_tactical_data_to_json(const tactical_data_t* data);
 
 #endif // _JSON_UTILS_H_

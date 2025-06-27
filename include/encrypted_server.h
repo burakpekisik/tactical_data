@@ -14,7 +14,7 @@
 // Function prototypes
 int parse_protocol_message(const char* message, char** command, char** filename, char** content);
 void* handle_client(void* arg);
-char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key, const char* jwt_token);
+char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key, const char* jwt_token, int client_socket);
 void* queue_processor(void* arg);
 void handle_signal(int sig);
 void* periodic_backup_thread();

@@ -616,3 +616,47 @@ void free_tactical_data(tactical_data_t* data) {
         free(data);
     }
 }
+
+#include <cjson/cJSON.h>
+
+/**
+ * @brief Tactical data struct'ını JSON objesine çevirir
+ * @ingroup json_processing
+ * 
+ * Bu fonksiyon tactical_data_t struct'ını cJSON objesine dönüştürür.
+ * JSON formatında çıktı almak için kullanılır.
+ * 
+ * @param data Çevirilecek tactical_data_t struct'ı
+ * 
+ * @return Başarıda cJSON objesi pointer'ı
+ * @return Hata durumunda NULL
+ * 
+ * @note NULL kontrolü yapar, geçersiz data için NULL döner.
+ *       Bellek tahsisi başarısızsa NULL döner.
+ * 
+ * @see parse_json_to_tactical_data()
+ * @see tactical_data_to_string()
+ * 
+ * Örnek kullanım:
+ * @code
+ * cJSON* json = parse_tactical_data_to_json(data);
+ * if (json != NULL) {
+ *     char* json_string = cJSON_Print(json);
+ *     // json_string kullanımı
+ *     cJSON_free(json_string);
+ *     cJSON_Delete(json);
+ * }
+ * @endcode
+ */
+// Tactical data'yı JSON objesine çevir
+cJSON* parse_tactical_data_to_json(const tactical_data_t* data) {
+    if (!data) return NULL;
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "user_id", data->user_id);
+    cJSON_AddStringToObject(root, "status", data->status);
+    cJSON_AddNumberToObject(root, "latitude", data->latitude);
+    cJSON_AddNumberToObject(root, "longitude", data->longitude);
+    cJSON_AddStringToObject(root, "description", data->description);
+    cJSON_AddNumberToObject(root, "timestamp", data->timestamp);
+    return root;
+}

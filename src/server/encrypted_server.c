@@ -56,6 +56,8 @@
 #include <jwt.h>
 #include "jwt_manager.h"
 #include "report_query_handler.h"
+#include "admin_notify_manager.h"
+#include "admin_reply_manager.h"
 
 /// @brief Sunucu çalışma durumu için global flag - signal handling için
 static volatile sig_atomic_t server_running = 1;
@@ -383,6 +385,7 @@ int main() {
     PRINTF_LOG("Sunucu kapatılıyor...\n");
     stop_tcp_server();
     db_close();
+    admin_notify_manager_cleanup();
     PRINTF_LOG("Server kapatıldı\n");
     return 0;
 }
@@ -391,7 +394,7 @@ int main() {
  * @brief Client bağlantısını yöneten thread fonksiyonu
  * @ingroup server
  * 
- * Her client bağlantısı için ayrı bir thread'de çalışan ana işleyici fonksiyon.
+ * Her client bağlantısı için ayrı bir thread'de çalışan ana işleyici fonksiyonu.
  * ECDH anahtar değişimi, AES şifreleme ve JSON veri işleme süreçlerini yönetir.
  * 
  * İşlem adımları:
@@ -467,6 +470,20 @@ void* handle_client(void* arg) {
             char response[2048];
             snprintf(response, sizeof(response), "JWT:%s", jwt);
             send(client_socket, response, strlen(response), 0);
+            // JWT'den privilege ve user_id çek
+            int privilege = 0;
+            int user_id = -1;
+            jwt_t *jwt_ptr = NULL;
+            if (jwt_decode(&jwt_ptr, jwt, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                privilege = jwt_get_grant_int(jwt_ptr, "privilege");
+                const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                if (sub) user_id = atoi(sub);
+                jwt_free(jwt_ptr);
+            }
+            admin_notify_manager_add_client(client_socket, privilege, username);
+            if (user_id > 0) {
+                admin_reply_manager_register_user(user_id, client_socket);
+            }
             free(jwt);
         } else {
             char* fail = "FAIL";
@@ -543,44 +560,147 @@ void* handle_client(void* arg) {
     PRINTF_LOG("✓ ECDH anahtar değişimi tamamlandı (Thread: %lu)\n", current_thread);
     PRINTF_LOG("✓ AES256 oturum anahtarı hazır\n", current_thread);
 
+    // --- Bağlantı başında JWT token ile mapping güncelle (ilk mesajdan JWT ayıkla) ---
+    // İlk mesajda JWT token varsa, user_id <-> socket mapping'i güncelle
+    char* jwt_token_init = NULL;
+    // ENCRYPTED veya PARSE mesajı ise JWT token olabilir
+    if (strncmp(buffer, "ENCRYPTED:", 10) == 0) {
+        char *command = NULL, *filename = NULL, *hex_data = NULL;
+        if (parse_encrypted_protocol_message(buffer, &command, &filename, &hex_data, &jwt_token_init) == 0 && jwt_token_init) {
+            jwt_t *jwt_ptr = NULL;
+            if (jwt_decode(&jwt_ptr, jwt_token_init, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                if (sub) {
+                    int user_id = atoi(sub);
+                    admin_reply_manager_register_user(user_id, client_socket);
+                    PRINTF_LOG("[ADMIN_REPLY] Bağlantı başında mapping güncellendi: user_id=%d, socket=%d\n", user_id, client_socket);
+                }
+                jwt_free(jwt_ptr);
+            }
+        }
+    } else if (strncmp(buffer, "PARSE:", 6) == 0) {
+        // PARSE mesajında JWT token son parametre olabilir
+        char *last_colon = strrchr(buffer, ':');
+        if (last_colon && strlen(last_colon + 1) > 10) {
+            jwt_token_init = last_colon + 1;
+            jwt_t *jwt_ptr = NULL;
+            if (jwt_decode(&jwt_ptr, jwt_token_init, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                if (sub) {
+                    int user_id = atoi(sub);
+                    admin_reply_manager_register_user(user_id, client_socket);
+                    PRINTF_LOG("[ADMIN_REPLY] Bağlantı başında mapping güncellendi: user_id=%d, socket=%d\n", user_id, client_socket);
+                }
+                jwt_free(jwt_ptr);
+            }
+        }
+    }
     int request_count = 0;
     
     while (1) {
         memset(buffer, 0, CONFIG_BUFFER_SIZE);
         ssize_t bytes_received = read(client_socket, buffer, CONFIG_BUFFER_SIZE - 1);
+        PRINTF_LOG("[DEBUG] handle_client döngüsü: thread_id=%lu, client_socket=%d, bytes_received=%zd\n", current_thread, client_socket, bytes_received);
         if (bytes_received <= 0) {
             if (bytes_received == 0) {
                 PRINTF_LOG("Client normal olarak ayrıldı (Thread: %lu)\n", current_thread);
             } else {
                 PRINTF_LOG("Client bağlantı hatası (Thread: %lu, Hata: %s)\n", current_thread, strerror(errno));
             }
+            // --- Bağlantı kopunca mapping'i sil ---
+            admin_reply_manager_remove_user(client_socket);
             break;
         }
-        
         request_count++;
         PRINTF_LOG("İstek alındı (Thread: %lu, İstek #%d, Boyut: %zd bytes)\n", 
                current_thread, request_count, bytes_received);
-        
         buffer[bytes_received] = '\0';
-        
-        // Health check detection - Docker healthcheck'i tespit et
-        if (bytes_received == 0 || (bytes_received > 0 && buffer[0] == '\0')) {
-            PRINTF_LOG("HEALTHCHECK: Docker health check tespit edildi (Thread: %lu)\n", current_thread);
-            fflush(stdout);
+        PRINTF_LOG("[DEBUG] handle_client: gelen mesaj: %s\n", buffer);
+
+        // --- ADMIN_NOTIFY_LISTEN komutu parse'dan önce kontrol edilmeli ---
+        char* bufptr = buffer;
+        while (*bufptr == '\n' || *bufptr == ' ' || *bufptr == '\t') bufptr++;
+        // --- HELLO:{jwt_token} komutu ---
+        if (strncmp(bufptr, "HELLO:", 6) == 0) {
+            char* jwt_token = bufptr + 6;
+            jwt_t *jwt_ptr = NULL;
+            if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                if (sub) {
+                    int user_id = atoi(sub);
+                    admin_reply_manager_register_user(user_id, client_socket);
+                    PRINTF_LOG("[ADMIN_REPLY] HELLO ile mapping güncellendi: user_id=%d, socket=%d\n", user_id, client_socket);
+                }
+                jwt_free(jwt_ptr);
+            }
+            continue;
+        }
+        size_t buflen = strlen(bufptr);
+        while (buflen > 0 && (bufptr[buflen-1] == '\n' || bufptr[buflen-1] == ' ' || bufptr[buflen-1] == '\t')) {
+            bufptr[buflen-1] = '\0';
+            buflen--;
+        }
+        if (strncmp(bufptr, "ADMIN_NOTIFY_LISTEN:", 20) == 0) {
+            char* jwt_token = bufptr + 20;
+            int privilege = 0;
+            char username[128] = "";
+            jwt_t *jwt_ptr = NULL;
+            if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                privilege = jwt_get_grant_int(jwt_ptr, "privilege");
+                const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                if (sub) strncpy(username, sub, sizeof(username)-1);
+                jwt_free(jwt_ptr);
+            }
+            admin_notify_manager_add_client(client_socket, privilege, username);
+            PRINTF_LOG("[ADMIN_NOTIFY] ADMIN_NOTIFY_LISTEN komutu alındı, socket %d admin olarak kaydedildi (privilege=%d, username=%s)\n", client_socket, privilege, username);
+            // Admin dinleme modunda sonsuz döngüde bekle
+            while (1) {
+                ssize_t n = recv(client_socket, buffer, sizeof(buffer)-1, 0);
+                if (n <= 0) break;
+                // Admin dinleme modunda başka veri beklenmiyor, sadece bağlantı açık tutuluyor
+            }
             close(client_socket);
+            admin_notify_manager_remove_client(client_socket);
+            PRINTF_LOG("[ADMIN_NOTIFY] Admin dinleme bağlantısı kapatıldı (socket %d)\n", client_socket);
             remove_thread_info(current_thread);
             return NULL;
         }
+        // --- ADMIN_NOTIFY_LISTEN sonu ---
         
-        // Boş veya çok kısa mesajları health check olarak değerlendir
-        if (bytes_received < 5) {
-            PRINTF_LOG("HEALTHCHECK: Kısa mesaj - muhtemelen health check (Thread: %lu, Boyut: %zd)\n", 
-                   current_thread, bytes_received);
-            fflush(stdout);
-            close(client_socket);
-            remove_thread_info(current_thread);
-            return NULL;
+        // --- ADMIN REPLY_REPORT komutu ---
+        if (strncmp(bufptr, "REPLY_REPORT:", 13) == 0) {
+            // Format: REPLY_REPORT:<report_id>:<message>:<jwt_token>
+            char* p = bufptr + 13;
+            char* msg = strchr(p, ':');
+            if (!msg) msg = "";
+            else {
+                *msg = '\0';
+                msg++;
+            }
+            int report_id = atoi(p);
+            char* jwt_token = NULL;
+            char* msg_end = strchr(msg, ':');
+            if (msg_end) {
+                *msg_end = '\0';
+                jwt_token = msg_end + 1;
+            }
+            // JWT token varsa mapping güncelle
+            if (jwt_token && strlen(jwt_token) > 10) {
+                jwt_t *jwt_ptr = NULL;
+                if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                    const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                    if (sub) {
+                        int user_id = atoi(sub);
+                        admin_reply_manager_register_user(user_id, client_socket);
+                        PRINTF_LOG("[ADMIN_REPLY] REPLY_REPORT ile mapping güncellendi: user_id=%d, socket=%d\n", user_id, client_socket);
+                    }
+                    jwt_free(jwt_ptr);
+                }
+            }
+            admin_reply_manager_send_reply(report_id, msg, client_socket);
+            continue;
         }
+        // --- ADMIN REPLY_REPORT sonu ---
         
         char *current_time = get_current_time();
         PRINTF_LOG("[%s] Mesaj alindi (%zd byte)\n", current_time, bytes_received);
@@ -606,6 +726,19 @@ void* handle_client(void* arg) {
                 char *error_response = "HATA: Gecersiz protokol formati. Format: COMMAND:FILENAME:CONTENT";
                 send(client_socket, error_response, strlen(error_response), 0);
                 continue;
+            }
+        }
+        // --- ECDH bağlantısı için user_id <-> socket mapping güncelle ---
+        if (jwt_token) {
+            jwt_t *jwt_ptr = NULL;
+            if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                if (sub) {
+                    int user_id = atoi(sub);
+                    admin_reply_manager_register_user(user_id, client_socket);
+                    PRINTF_LOG("[ADMIN_REPLY] ECDH bağlantısı için mapping güncellendi: user_id=%d, socket=%d\n", user_id, client_socket);
+                }
+                jwt_free(jwt_ptr);
             }
         }
         PRINTF_LOG("Komut: %s\n", command);
@@ -658,6 +791,21 @@ void* handle_client(void* arg) {
             free(jwt_token_part);
             if (tactical_data != NULL && tactical_data->is_valid) {
                 parsed_result = db_save_tactical_data_and_get_response(tactical_data, filename);
+                // Bildirim: adminlere gönder
+                cJSON* report_json_obj = parse_tactical_data_to_json(tactical_data);
+                char* report_json = cJSON_Print(report_json_obj);
+                int sender_privilege = 0;
+                if (jwt_token) {
+                    jwt_t *jwt_ptr = NULL;
+                    if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                        sender_privilege = jwt_get_grant_int(jwt_ptr, "privilege");
+                        jwt_free(jwt_ptr);
+                    }
+                }
+                admin_notify_manager_notify_admins(report_json, client_socket, sender_privilege);
+                // --- report_id <-> user mapping kodu kaldırıldı ---
+                cJSON_Delete(report_json_obj);
+                free(report_json);
                 free_tactical_data(tactical_data);
             } else {
                 parsed_result = malloc(256);
@@ -667,7 +815,7 @@ void* handle_client(void* arg) {
         } else if (strcmp(command, "ENCRYPTED") == 0 && is_encrypted) {
             PRINTF_LOG("Sifreli JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
-            parsed_result = handle_encrypted_request(filename, content, get_session_key(&client_manager), jwt_token);
+            parsed_result = handle_encrypted_request(filename, content, get_session_key(&client_manager), jwt_token, client_socket);
         } else if (strcmp(command, "REPORT_QUERY") == 0) {
             PRINTF_LOG("REPORT_QUERY komutu alındı. JWT ile rapor sorgulama başlatılıyor...\n");
             char* jwt_token_part = NULL;
@@ -702,6 +850,8 @@ void* handle_client(void* arg) {
     }
 
     close(client_socket);
+    admin_notify_manager_remove_client(client_socket);
+    admin_reply_manager_remove_user(client_socket);
     PRINTF_LOG("Client bağlantısı kapatıldı (Thread: %lu, Toplam istek: %d)\n", 
            current_thread, request_count);
     
@@ -760,7 +910,8 @@ void* handle_client(void* arg) {
  * @see db_save_tactical_data_and_get_response()
  */
 // Sifreli istek ile bas et
-char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key, const char* jwt_token) {
+char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key, const char* jwt_token, int client_socket) {
+    PRINTF_LOG("[DEBUG] handle_encrypted_request: filename=%s, client_socket=%d, jwt_token=%s\n", filename, client_socket, jwt_token ? jwt_token : "(null)");
     if (session_key == NULL) {
         char *error_msg = malloc(256);
         strcpy(error_msg, "HATA: Session key NULL");
@@ -793,6 +944,7 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         strcpy(error_msg, "HATA: Decryption basarisiz");
         return error_msg;
     }
+    PRINTF_LOG("[DEBUG] Decrypted JSON: %s\n", decrypted_json);
     // Eğer dosya adı REPORT_QUERY ise, rapor sorgulama işlemi yap
     if (strcmp(filename, "REPORT_QUERY") == 0) {
         // decrypted_json içeriği JSON string (ör: {"command":"REPORT_QUERY","jwt":"..."})
@@ -853,10 +1005,25 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
     }
     PRINTF_LOG("Decrypted JSON: %s\n", decrypted_json);
     tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename, user_id_from_jwt);
+    PRINTF_LOG("[DEBUG] tactical_data: report_id=%d, user_id=%s, is_valid=%d\n", tactical_data ? tactical_data->report_id : -1, tactical_data && tactical_data->user_id ? tactical_data->user_id : "(null)", tactical_data ? tactical_data->is_valid : -1);
     char* result;
     if (user_id_from_jwt) free(user_id_from_jwt);
     if (tactical_data != NULL && tactical_data->is_valid) {
         result = db_save_tactical_data_and_get_response(tactical_data, filename);
+        // Bildirim: adminlere gönder
+        cJSON* report_json_obj = parse_tactical_data_to_json(tactical_data);
+        char* report_json = cJSON_Print(report_json_obj);
+        int sender_privilege = 0;
+        if (jwt_token) {
+            jwt_t *jwt_ptr = NULL;
+            if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                sender_privilege = jwt_get_grant_int(jwt_ptr, "privilege");
+                jwt_free(jwt_ptr);
+            }
+        }
+        admin_notify_manager_notify_admins(report_json, client_socket, sender_privilege);
+        cJSON_Delete(report_json_obj);
+        free(report_json);
         free_tactical_data(tactical_data);
     } else {
         result = malloc(256);

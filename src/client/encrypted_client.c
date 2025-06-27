@@ -25,7 +25,8 @@
 #include "protocol_manager.h"
 #include "logger.h"
 #include "../user/login_user.h" // login_user_with_argon2 prototipi burada olmalı
-
+#include <pthread.h>
+ 
 char jwt_token[1024] = ""; // Global JWT token
 
 /**
@@ -83,22 +84,26 @@ int main() {
         logger_cleanup(LOGGER_CLIENT);
         return -1;
     }
-    
+    // --- Kullanıcı için report reply dinleyici thread başlat ---
+    pthread_t reply_thread;
+    pthread_create(&reply_thread, NULL, report_reply_listener_thread, conn);
+    pthread_detach(reply_thread);
+    // --- Admin için reply input thread başlat (isteğe bağlı, menüye girmeden de çalışır) ---
+    // pthread_t admin_input_thread;
+    // pthread_create(&admin_input_thread, NULL, admin_reply_input_thread, conn);
+    // pthread_detach(admin_input_thread);
     LOG_CLIENT_INFO("Successfully connected to server");
     PRINTF_CLIENT("Server'a basariyla baglandi\n");
     
     while (1) {
         show_menu();
         PRINTF_LOG("Seciminiz: ");
-        
         if (scanf("%d", &choice) != 1) {
             PRINTF_LOG("Gecersiz secim\n");
-            while (getchar() != '\n'); // Buffer temizle
+            while (getchar() != '\n');
             continue;
         }
-        
-        while (getchar() != '\n'); // Buffer temizle
-        
+        while (getchar() != '\n');
         switch (choice) {
             case 1: // Normal JSON gonder
                 PRINTF_LOG("JSON dosya adini girin: ");
@@ -191,11 +196,41 @@ int main() {
                 logger_cleanup(LOGGER_CLIENT);
                 return 0;
             }
+            case 5: // Admin bildirimlerini dinle
+                listen_for_admin_notifications(conn);
+                break;
+            case 6: // Admin rapora cevap ver
+            {
+                int report_id;
+                char msg[900];
+                printf("Rapor ID girin: ");
+                if (scanf("%d", &report_id) != 1) {
+                    printf("Geçersiz rapor ID!\n");
+                    while (getchar() != '\n');
+                    break;
+                }
+                while (getchar() != '\n'); // Temizle
+                printf("Mesajınızı girin: ");
+                if (fgets(msg, sizeof(msg), stdin)) {
+                    msg[strcspn(msg, "\n")] = 0;
+                    if (strlen(msg) > 0) {
+                        char cmd[1200];
+                        snprintf(cmd, sizeof(cmd), "REPLY_REPORT:%d:%s", report_id, msg);
+                        send(conn->socket, cmd, strlen(cmd), 0);
+                        printf("Rapor cevabı gönderildi.\n");
+                    } else {
+                        printf("Mesaj boş olamaz!\n");
+                    }
+                }
+                break;
+            }
+            case 7: // Gelen admin cevaplarını görüntüle
+                watch_report_replies();
+                break;
             default:
-                PRINTF_LOG("Gecersiz secim. Lutfen 1-4 arasi bir sayi girin.\n");
+                PRINTF_LOG("Gecersiz secim. Lutfen 1-7 arasi bir sayi girin.\n");
                 break;
         }
-        
         PRINTF_LOG("\n");
     }
     
@@ -219,6 +254,9 @@ void show_menu(void) {
     PRINTF_LOG("2. Sifreli JSON dosyasi gonder\n");
     PRINTF_LOG("3. Rapor listesini al\n");
     PRINTF_LOG("4. Cikis\n");
+    PRINTF_LOG("5. Admin bildirimlerini dinle (admin için)\n");
+    PRINTF_LOG("6. Raporlara cevap ver (admin)\n");
+    PRINTF_LOG("7. Gelen admin cevaplarını görüntüle\n");
     PRINTF_LOG("============\n");
 }
 
@@ -484,6 +522,14 @@ client_connection_t* connect_to_server(const char* server_host) {
             conn->ecdh_initialized = true;
             PRINTF_LOG("✓ ECDH anahtar değişimi tamamlandı\n");
             PRINTF_LOG("✓ AES256 oturum anahtarı hazır\n");
+            
+            // ECDH sonrası sunucuya HELLO mesajı gönder
+            if (send_hello_after_ecdh(conn, jwt_token) != 0) {
+                PRINTF_LOG("ECDH sonrası HELLO mesajı gönderilemedi!\n");
+                close(conn->socket);
+                free(conn);
+                return NULL;
+            }
             
             return conn;
         } else {
@@ -765,4 +811,138 @@ try_p2p:
     PRINTF_LOG("✗ Hicbir protokol ile baglanti kurulamadi!\n");
     free(conn);
     return NULL;
+}
+
+// Gelen admin cevaplarını saklamak için yapı
+#define MAX_REPORT_REPLIES 100
+struct report_reply_entry {
+    int report_id;
+    char msg[900];
+};
+static struct report_reply_entry report_replies[MAX_REPORT_REPLIES];
+static int report_reply_count = 0;
+static pthread_mutex_t report_reply_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void add_report_reply(int report_id, const char* msg) {
+    pthread_mutex_lock(&report_reply_mutex);
+    printf("[CLIENT][add_report_reply] Çağrıldı: report_id=%d, msg=%s\n", report_id, msg);
+    if (report_reply_count < MAX_REPORT_REPLIES) {
+        report_replies[report_reply_count].report_id = report_id;
+        strncpy(report_replies[report_reply_count].msg, msg, sizeof(report_replies[report_reply_count].msg)-1);
+        report_replies[report_reply_count].msg[sizeof(report_replies[report_reply_count].msg)-1] = '\0';
+        report_reply_count++;
+        printf("[CLIENT][add_report_reply] Eklendi. Toplam cevap: %d\n", report_reply_count);
+    } else {
+        printf("[CLIENT][add_report_reply] HATA: MAX_REPORT_REPLIES aşıldı!\n");
+    }
+    pthread_mutex_unlock(&report_reply_mutex);
+}
+
+void show_report_replies(void) {
+    pthread_mutex_lock(&report_reply_mutex);
+    printf("[CLIENT][show_report_replies] Çağrıldı. Toplam cevap: %d\n", report_reply_count);
+    if (report_reply_count == 0) {
+        printf("\nHenüz admin cevabı yok.\n");
+    } else {
+        printf("\nGelen admin cevapları:\n");
+        for (int i = 0; i < report_reply_count; ++i) {
+            printf("- Rapor #%d: %s\n", report_replies[i].report_id, report_replies[i].msg);
+        }
+    }
+    pthread_mutex_unlock(&report_reply_mutex);
+}
+
+void* report_reply_listener_thread(void* arg) {
+    client_connection_t* conn = (client_connection_t*)arg;
+    char buffer[4096];
+    printf("[CLIENT][report_reply_listener_thread] Başlatıldı.\n");
+    while (1) {
+        ssize_t n = recv(conn->socket, buffer, sizeof(buffer)-1, 0);
+        if (n > 0) {
+            buffer[n] = '\0';
+            printf("[CLIENT][report_reply_listener_thread] Mesaj alındı: %s\n", buffer);
+            if (strncmp(buffer, "REPORT_REPLY:", 13) == 0) {
+                char* p = buffer + 13;
+                int report_id = atoi(p);
+                char* msg = strchr(p, ':');
+                if (msg) msg++;
+                else msg = "";
+                add_report_reply(report_id, msg);
+            }
+        } else {
+            printf("[CLIENT][report_reply_listener_thread] recv döngüsü kırıldı. n=%zd\n", n);
+            break;
+        }
+    }
+    return NULL;
+}
+
+// Admin için: terminalden komut alıp reply gönder
+void* admin_reply_input_thread(void* arg) {
+    client_connection_t* conn = (client_connection_t*)arg;
+    while (1) {
+        printf("Admin reply için: REPLY_REPORT <report_id> <mesaj>\n> ");
+        char line[1024];
+        if (!fgets(line, sizeof(line), stdin)) break;
+        int report_id;
+        char msg[900];
+        if (sscanf(line, "REPLY_REPORT %d %[\n]", &report_id, msg) == 2) {
+            char cmd[1200];
+            snprintf(cmd, sizeof(cmd), "REPLY_REPORT:%d:%s", report_id, msg);
+            send(conn->socket, cmd, strlen(cmd), 0);
+        }
+    }
+    return NULL;
+}
+
+void listen_for_admin_notifications(client_connection_t* conn) {
+    extern char jwt_token[];
+    char notify_cmd[2048];
+    snprintf(notify_cmd, sizeof(notify_cmd), "ADMIN_NOTIFY_LISTEN:%s", jwt_token);
+    send(conn->socket, notify_cmd, strlen(notify_cmd), 0);
+
+    char buffer[4096];
+    printf("\n[ADMIN] Bildirim dinleme başlatıldı. Sunucudan gelen bildirimler burada gösterilecek.\nÇıkmak için Ctrl+C kullanabilirsiniz.\n\n");
+    while (1) {
+        ssize_t n = recv(conn->socket, buffer, sizeof(buffer)-1, 0);
+        if (n > 0) {
+            buffer[n] = '\0';
+            printf("\n[ADMIN BILDIRIM] Sunucudan gelen bildirim:\n%s\n", buffer);
+        } else if (n == 0) {
+            printf("\n[ADMIN] Sunucu bağlantısı kapatıldı.\n");
+            break;
+        } else {
+            perror("[ADMIN] Bildirim okuma hatası");
+            break;
+        }
+    }
+}
+
+void watch_report_replies(void) {
+    int last_count = 0;
+    printf("\nGelen admin cevaplarını izleme modunda. Çıkmak için Ctrl+C kullanabilirsiniz.\n");
+    while (1) {
+        pthread_mutex_lock(&report_reply_mutex);
+        if (report_reply_count > last_count) {
+            for (int i = last_count; i < report_reply_count; ++i) {
+                printf("- Rapor #%d: %s\n", report_replies[i].report_id, report_replies[i].msg);
+            }
+            last_count = report_reply_count;
+        }
+        pthread_mutex_unlock(&report_reply_mutex);
+        sleep(1); // 1 saniye bekle
+    }
+}
+
+// ECDH sonrası sunucuya HELLO mesajı gönder
+int send_hello_after_ecdh(client_connection_t* conn, const char* jwt_token) {
+    char hello_msg[1200];
+    snprintf(hello_msg, sizeof(hello_msg), "HELLO:%s", jwt_token);
+    ssize_t sent = send(conn->socket, hello_msg, strlen(hello_msg), 0);
+    if (sent <= 0) {
+        PRINTF_LOG("HELLO mesajı gönderilemedi!\n");
+        return -1;
+    }
+    PRINTF_LOG("HELLO mesajı gönderildi (sent=%zd)\n", sent);
+    return 0;
 }

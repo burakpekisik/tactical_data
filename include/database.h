@@ -41,6 +41,7 @@ typedef struct {
     char description[512];
     long timestamp;
     int is_valid;
+    int report_id;
 } tactical_data_t;
 
 // Database functions

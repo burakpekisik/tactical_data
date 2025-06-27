@@ -32,5 +32,11 @@ int send_json_file(client_connection_t* conn, const char* filename, int encrypt,
 void handle_server_response(client_connection_t* conn);
 void show_menu(void);
 client_connection_t* connect_to_server(const char* server_host);
+void listen_for_admin_notifications(client_connection_t* conn);
+void* report_reply_listener_thread(void* arg);
+void* admin_reply_input_thread(void* arg);
+void show_report_replies(void);
+void watch_report_replies(void);
+int send_hello_after_ecdh(client_connection_t* conn, const char* jwt_token);
 
 #endif /* ENCRYPTED_CLIENT_H */

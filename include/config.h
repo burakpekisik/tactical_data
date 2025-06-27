@@ -49,4 +49,8 @@
 #define ADMIN_PRIVILEGE 1
 #define USER_PRIVILEGE 0
 
+// Reply manager konfigürasyonu
+#define MAX_CLIENTS 64
+
+
 #endif // _CONFIG_H_
