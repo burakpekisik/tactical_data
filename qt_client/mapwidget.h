@@ -17,12 +17,15 @@ public:
     Q_INVOKABLE void addMarker(double latitude, double longitude, const QString& description, const QString& status, int id, qint64 timestamp, bool isTemporary = false);
     Q_INVOKABLE void clearMapItems();
     Q_INVOKABLE void setMarkersVisible(bool visible);
+    Q_INVOKABLE void setMode(int modeValue);
 
 signals:
     void pointClicked(double latitude, double longitude);
+    void markerClicked(int id, double latitude, double longitude);
 
 private slots:
     void onQmlPointClicked(double latitude, double longitude);
+    void onQmlMarkerClicked(int id, double latitude, double longitude);
 
 private:
     void setupQmlMap();

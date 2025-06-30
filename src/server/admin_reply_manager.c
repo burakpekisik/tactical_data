@@ -7,8 +7,7 @@
 #include <sys/socket.h>
 #include <pthread.h>
 #include "database.h"
-
-#define MAX_ACTIVE_USERS 128
+#include "config.h"
 
 typedef struct {
     int user_id;

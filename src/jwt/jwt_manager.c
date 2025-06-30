@@ -43,3 +43,14 @@ int verify_jwt(const char *token) {
     jwt_free(jwt);
     return 0; // JWT is valid
 }
+
+int get_jwt_privilege(const char *token) {
+    jwt_t *jwt;
+    if (jwt_decode(&jwt, token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) != 0) {
+        fprintf(stderr, "JWT decode error\n");
+        return -1; // JWT verification failed
+    }
+    int privilege = jwt_get_grant_int(jwt, "privilege");
+    jwt_free(jwt);
+    return privilege; // Return the privilege level
+}

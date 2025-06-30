@@ -62,3 +62,7 @@ target_link_libraries(TacticalMapClient
     Qt6::Network
     m  # Math library for crypto operations
 )
+
+# Copy QML file to build directory
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/map.qml 
+               ${CMAKE_CURRENT_BINARY_DIR}/map.qml COPYONLY)

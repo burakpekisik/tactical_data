@@ -17,7 +17,7 @@ ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/serve
 
 CLIENT_SOURCES = $(SRC_DIR)/client/client.c
 JSON_CLIENT_SOURCES = $(SRC_DIR)/client/json_client.c $(SRC_DIR)/common/json_utils.c
-ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/client/fallback_manager.c $(SRC_DIR)/client/protocol_manager.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/common/logger.c $(SRC_DIR)/argon/argon2.c $(SRC_DIR)/user/login_user_client.c
+ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/client/fallback_manager.c $(SRC_DIR)/client/protocol_manager.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/common/logger.c $(SRC_DIR)/argon/argon2.c $(SRC_DIR)/user/login_user_client.c ${SRC_DIR}/reports/get_report_list.c
 
 PARSER_SOURCES = $(SRC_DIR)/common/json_parser.c
 

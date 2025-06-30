@@ -38,8 +38,9 @@ void MapWidget::setupQmlMap()
     qmlWidget = new QQuickWidget(this);
     qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
     
-    // QML context'ine C++ nesnesini kaydet
+    // QML context'ine C++ nesnesini ve mod bilgisini kaydet
     qmlWidget->rootContext()->setContextProperty("mapWidget", this);
+    qmlWidget->rootContext()->setContextProperty("mode", 0); // 0: SendMode, 1: ReplyMode (varsayılan SendMode)
     
     // QML dosyasını yükle
     qmlWidget->setSource(QUrl::fromLocalFile("map.qml"));
@@ -55,6 +56,8 @@ void MapWidget::setupQmlMap()
     if (rootObject) {
         connect(rootObject, SIGNAL(mapClicked(double, double)),
                 this, SLOT(onQmlPointClicked(double, double)));
+        connect(rootObject, SIGNAL(markerClicked(int, double, double)),
+                this, SLOT(onQmlMarkerClicked(int, double, double)));
     }
 }
 
@@ -71,6 +74,12 @@ void MapWidget::onQmlPointClicked(double latitude, double longitude)
     emit pointClicked(latitude, longitude);
 }
 
+void MapWidget::onQmlMarkerClicked(int id, double latitude, double longitude)
+{
+    qDebug() << "Marker tıklandı:" << id << latitude << longitude;
+    emit markerClicked(id, latitude, longitude);
+}
+
 void MapWidget::addMarker(double latitude, double longitude, const QString& description, const QString& status, int id, qint64 timestamp, bool isTemporary)
 {
     if (!qmlWidget) return;
@@ -84,8 +93,8 @@ void MapWidget::addMarker(double latitude, double longitude, const QString& desc
         Q_ARG(QVariant, timestamp),
         Q_ARG(QVariant, isTemporary)
     );
-    logToConsole(QString("addMarker çağrıldı: %1, %2, %3, %4, %5, %6, %7")
-        .arg(latitude).arg(longitude).arg(description).arg(status).arg(id).arg(timestamp).arg(isTemporary));
+    // logToConsole(QString("addMarker çağrıldı: %1, %2, %3, %4, %5, %6, %7")
+    //     .arg(latitude).arg(longitude).arg(description).arg(status).arg(id).arg(timestamp).arg(isTemporary));
 }
 
 void MapWidget::clearMapItems()
@@ -100,4 +109,13 @@ void MapWidget::setMarkersVisible(bool visible)
     if (!qmlWidget) return;
     QMetaObject::invokeMethod(qmlWidget->rootObject(), "setMarkersVisible", Q_ARG(QVariant, visible));
     logToConsole(QString("setMarkersVisible çağrıldı: %1").arg(visible));
+}
+
+void MapWidget::setMode(int modeValue)
+{
+    if (qmlWidget) {
+        qmlWidget->rootContext()->setContextProperty("mode", modeValue);
+        // QML tarafında property güncellensin diye aşağıdaki satırı ekleyin:
+        QMetaObject::invokeMethod(qmlWidget->rootObject(), "setMode");
+    }
 }

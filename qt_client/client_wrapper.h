@@ -159,8 +159,9 @@ signals:
     /**
      * @brief Raporlar alındığında emit edilir
      * @param reports Alınan raporlar
+     * @param privilege Kullanıcı yetkisi (0: normal, 1: admin)
      */
-    void reportsReceived(const QJsonArray& reports);
+    void reportsReceived(const QJsonArray& reports, int privilege);
 
     /**
      * @brief ECDH tamamlandığında emit edilir

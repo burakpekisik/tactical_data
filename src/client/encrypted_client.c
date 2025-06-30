@@ -26,6 +26,7 @@
 #include "logger.h"
 #include "../user/login_user.h" // login_user_with_argon2 prototipi burada olmalı
 #include <pthread.h>
+#include "get_report_list.h"
  
 char jwt_token[1024] = ""; // Global JWT token
 
@@ -85,9 +86,9 @@ int main() {
         return -1;
     }
     // --- Kullanıcı için report reply dinleyici thread başlat ---
-    pthread_t reply_thread;
-    pthread_create(&reply_thread, NULL, report_reply_listener_thread, conn);
-    pthread_detach(reply_thread);
+    // pthread_t reply_thread;
+    // pthread_create(&reply_thread, NULL, report_reply_listener_thread, conn);
+    // pthread_detach(reply_thread);
     // --- Admin için reply input thread başlat (isteğe bağlı, menüye girmeden de çalışır) ---
     // pthread_t admin_input_thread;
     // pthread_create(&admin_input_thread, NULL, admin_reply_input_thread, conn);
@@ -126,64 +127,11 @@ int main() {
                 break;
                 
             case 3: // Sifreli rapor listesi al
-                if (!conn->ecdh_initialized) {
-                    PRINTF_LOG("ECDH başlatılmamış - şifreli rapor listesi alınamaz\n");
-                    break;
-                }
-                {
-                    char report_query[2048];
-                    snprintf(report_query, sizeof(report_query), "{\"command\":\"REPORT_QUERY\",\"jwt\":\"%s\"}", jwt_token);
-                    char *encrypted_message = create_encrypted_protocol_message("REPORT_QUERY", report_query, conn->ecdh_ctx.aes_key, jwt_token);
-                    if (!encrypted_message) {
-                        PRINTF_LOG("Şifreli rapor sorgu mesajı oluşturulamadı\n");
-                        break;
-                    }
-                    send(conn->socket, encrypted_message, strlen(encrypted_message), 0);
-                    free(encrypted_message);
-                    char recvbuf[32768];
-                    ssize_t n = recv(conn->socket, recvbuf, sizeof(recvbuf)-1, 0);
-                    if (n > 0) {
-                        recvbuf[n] = '\0';
-                        // Şifreli yanıtı çöz
-                        if (strncmp(recvbuf, "ENCRYPTED:REPORT_QUERY:", 22) == 0) {
-                            const char* hex_data = recvbuf + 22;
-                            // Eğer ilk karakter ':' ise atla
-                            if (*hex_data == ':') hex_data++;
-                            while (*hex_data == ' ' || *hex_data == '\n' || *hex_data == '\r' || *hex_data == '\t') hex_data++;
-                            size_t hex_len = strlen(hex_data);
-                            while (hex_len > 0 && (hex_data[hex_len-1] == '\n' || hex_data[hex_len-1] == '\r' || hex_data[hex_len-1] == ' ' || hex_data[hex_len-1] == '\t')) {
-                                ((char*)hex_data)[hex_len-1] = '\0';
-                                hex_len--;
-                            }
-                            PRINTF_LOG("[DEBUG] Gelen hex_data uzunluğu: %zu\n", hex_len);
-                            PRINTF_LOG("[DEBUG] İlk 32 karakter: %.32s\n", hex_data);
-                            size_t encrypted_length;
-                            uint8_t* encrypted_bytes = hex_to_bytes(hex_data, &encrypted_length);
-                            if (encrypted_bytes && encrypted_length > 16) {
-                                uint8_t iv[16];
-                                memcpy(iv, encrypted_bytes, 16);
-                                char* decrypted_json = decrypt_data(
-                                    encrypted_bytes + 16,
-                                    encrypted_length - 16,
-                                    conn->ecdh_ctx.aes_key,
-                                    iv
-                                );
-                                if (decrypted_json) {
-                                    PRINTF_CLIENT("\nRapor Listesi (Çözüldü):\n%s\n", decrypted_json);
-                                    free(decrypted_json);
-                                } else {
-                                    PRINTF_CLIENT("Rapor listesi şifresi çözülemedi!\n");
-                                }
-                                free(encrypted_bytes);
-                            } else {
-                                PRINTF_CLIENT("Rapor listesi yanıtı hatalı! (hex_data uzunluğu: %zu)\n", hex_len);
-                            }
-                        } else {
-                            PRINTF_CLIENT("Rapor listesi alınamadı veya bağlantı hatası!\n");
-                        }
-                    } else {
-                        PRINTF_CLIENT("Rapor listesi alınamadı veya bağlantı hatası!\n");
-                    }
+                LOG_CLIENT_INFO("Sifreli rapor listesi aliniyor...");
+                if (get_report_list_by_user(conn, jwt_token) == 1) {
+                    PRINTF_CLIENT("Rapor listesi alindi ve ekrana yazdirildi.\n");
+                } else {
+                    PRINTF_CLIENT("Rapor listesi alınamadı veya bağlantı hatası!\n");
                 }
                 break;
                 
@@ -200,7 +148,6 @@ int main() {
                 listen_for_admin_notifications(conn);
                 break;
             case 6: // Admin rapora cevap ver
-            {
                 int report_id;
                 char msg[900];
                 printf("Rapor ID girin: ");
@@ -211,24 +158,49 @@ int main() {
                 }
                 while (getchar() != '\n'); // Temizle
                 printf("Mesajınızı girin: ");
-                if (fgets(msg, sizeof(msg), stdin)) {
-                    msg[strcspn(msg, "\n")] = 0;
-                    if (strlen(msg) > 0) {
-                        char cmd[1200];
-                        snprintf(cmd, sizeof(cmd), "REPLY_REPORT:%d:%s", report_id, msg);
-                        send(conn->socket, cmd, strlen(cmd), 0);
-                        printf("Rapor cevabı gönderildi.\n");
-                    } else {
-                        printf("Mesaj boş olamaz!\n");
-                    }
+                if (fgets(msg, sizeof(msg), stdin) == NULL) {
+                    printf("Mesaj okunamadı!\n");
+                    break;
                 }
+                msg[strcspn(msg, "\n")] = 0;
+                if (strlen(msg) == 0) {
+                    printf("Mesaj boş olamaz!\n");
+                    break;
+                }
+                PRINTF_LOG("Sifreleme islemi baslatiliyor...\n");
+                if (!conn->ecdh_initialized) {
+                    PRINTF_LOG("ECDH başlatılmamış - şifreleme yapılamaz\n");
+                    break;
+                }
+
+                char json_content[1024];
+                snprintf(json_content, sizeof(json_content), "{\"report_id\":%d,\"msg\":\"%s\"}", report_id, msg);
+                char *protocol_message = create_encrypted_protocol_message("REPLY_REPORT", json_content, conn->ecdh_ctx.aes_key, jwt_token);
+                if (!protocol_message) {
+                    printf("Şifreli mesaj oluşturulamadı!\n");
+                    break;
+                }
+                send(conn->socket, protocol_message, strlen(protocol_message), 0);
+                free(protocol_message);
+                // Sunucudan REPLY_REPORT cevabını bekle
+                char recvbuf[32768];
+                ssize_t n = recv(conn->socket, recvbuf, sizeof(recvbuf)-1, 0);
+                if (n > 0) {
+                    recvbuf[n] = '\0';
+                    printf("%s\n", recvbuf);
+                } else {
+                    printf("Sunucudan yanıt alınamadı veya bağlantı kapandı.\n");
+                }
+                printf("Rapor cevabı şifreli olarak gönderildi ve işlem tamamlandı.\n");
                 break;
-            }
             case 7: // Gelen admin cevaplarını görüntüle
-                watch_report_replies();
+                watch_report_replies(conn);
+                break;
+            case 8: // Kendi reply'larımı JWT ile sorgula
+                query_my_replies_with_jwt(conn, jwt_token);
                 break;
             default:
-                PRINTF_LOG("Gecersiz secim. Lutfen 1-7 arasi bir sayi girin.\n");
+                PRINTF_LOG("Gecersiz secim. Lutfen 1-8 arasi bir sayi girin.\n");
                 break;
         }
         PRINTF_LOG("\n");
@@ -257,6 +229,7 @@ void show_menu(void) {
     PRINTF_LOG("5. Admin bildirimlerini dinle (admin için)\n");
     PRINTF_LOG("6. Raporlara cevap ver (admin)\n");
     PRINTF_LOG("7. Gelen admin cevaplarını görüntüle\n");
+    PRINTF_LOG("8. Kendi cevaplarımı sorgula (JWT ile)\n");
     PRINTF_LOG("============\n");
 }
 
@@ -918,7 +891,10 @@ void listen_for_admin_notifications(client_connection_t* conn) {
     }
 }
 
-void watch_report_replies(void) {
+void watch_report_replies(client_connection_t* conn) {
+    pthread_t reply_thread;
+    pthread_create(&reply_thread, NULL, report_reply_listener_thread, conn);
+    pthread_detach(reply_thread);
     int last_count = 0;
     printf("\nGelen admin cevaplarını izleme modunda. Çıkmak için Ctrl+C kullanabilirsiniz.\n");
     while (1) {
@@ -934,7 +910,35 @@ void watch_report_replies(void) {
     }
 }
 
-// ECDH sonrası sunucuya HELLO mesajı gönder
+// Kullanıcının kendi reply'larını JWT ile sorgulayan fonksiyon
+void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token) {
+    if (!conn || !jwt_token || strlen(jwt_token) == 0) {
+        PRINTF_CLIENT("JWT token veya bağlantı hatalı!\n");
+        return;
+    }
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "REPLY_QUERY:%s", jwt_token);
+    send(conn->socket, cmd, strlen(cmd), 0);
+    char buffer[32768];
+    ssize_t n = recv(conn->socket, buffer, sizeof(buffer)-1, 0);
+    if (n > 0) {
+        buffer[n] = '\0';
+        PRINTF_CLIENT("\n[REPLY_QUERY] Sunucudan gelen cevaplar:\n%s\n", buffer);
+    } else {
+        PRINTF_CLIENT("Reply sorgusu başarısız veya bağlantı hatası!\n");
+    }
+    // Artık tuş bekleme yok, fonksiyon hemen ana menüye döner
+}
+
+/**
+ * @brief ECDH sonrası sunucuya HELLO mesajı gönder
+ * @details ECDH anahtar değişimi tamamlandıktan sonra, istemci tarafından sunucuya
+ *          bir HELLO mesajı gönderilir. Bu mesaj, JWT token'ı içerir ve sunucuya
+ *          bağlantının devam ettiğini bildirir.
+ * @param conn Aktif sunucu bağlantısı
+ * @param jwt_token Kullanıcının JWT token'ı
+ * @return int Mesaj gönderimi sonucu (0: başarılı, -1: hata)
+ */
 int send_hello_after_ecdh(client_connection_t* conn, const char* jwt_token) {
     char hello_msg[1200];
     snprintf(hello_msg, sizeof(hello_msg), "HELLO:%s", jwt_token);

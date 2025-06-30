@@ -120,6 +120,7 @@ void MainWindow::setupMapPanel()
     // Harita widget'ı
     mapWidget = new MapWidget(this);
     connect(mapWidget, &MapWidget::pointClicked, this, &MainWindow::onMapClicked);
+    connect(mapWidget, &MapWidget::markerClicked, this, &MainWindow::onMarkerClicked);
     
     // Koordinat bilgisi
     coordinatesLabel = new QLabel("Koordinat seçmek için haritaya tıklayın");
@@ -165,7 +166,30 @@ void MainWindow::setupControlPanel()
     controlLayout->addWidget(dataGroup);
     controlLayout->addWidget(logGroup);
     controlLayout->setContentsMargins(5, 5, 5, 5);
-    
+
+    // Admin mod anahtarlama butonunu başta oluştur, gizli tut
+    modeSwitchButton = new QPushButton("Dönüt Yap Modu", this);
+    modeSwitchButton->setCheckable(true);
+    modeSwitchButton->setChecked(false);
+    modeSwitchButton->hide();
+    connect(modeSwitchButton, &QPushButton::toggled, this, [this](bool checked){
+        currentMode = checked ? ReplyMode : SendMode;
+        modeSwitchButton->setText(checked ? "Veri Gönder Modu" : "Dönüt Yap Modu");
+        logTextEdit->append(QString("<b>[MOD]</b> %1").arg(checked ? "Dönüt Yap Modu" : "Veri Gönder Modu"));
+        // Mod değişince QML'e marker ekleme izni gönder
+        if (mapWidget) {
+            QQuickWidget* quickWidget = mapWidget->findChild<QQuickWidget*>();
+            if (quickWidget) {
+                quickWidget->rootContext()->setContextProperty("allowAddMarker", currentMode == SendMode);
+            }
+        }
+        // Veri Gönderimi panelini sadece SendMode'da aktif et
+        if (dataGroup) {
+            dataGroup->setEnabled(currentMode == SendMode);
+        }
+    });
+    controlLayout->addWidget(modeSwitchButton);
+
     updateUIState();
 }
 
@@ -178,6 +202,7 @@ void MainWindow::setupControlPanel()
 void MainWindow::setupDataPanel()
 {
     dataGroup = new QGroupBox("Veri Gönderimi");
+    dataGroup->setEnabled(currentMode == SendMode); // Uygulama başında da doğru modda başlasın
     QVBoxLayout *dataLayout = new QVBoxLayout(dataGroup);
     
     // Seçili nokta bilgisi
@@ -296,24 +321,44 @@ void MainWindow::setupConnectionPanel()
  */
 void MainWindow::onMapClicked(double latitude, double longitude)
 {
+    if (currentMode == ReplyMode) {
+        // Dönüt modunda harita boşluğuna tıklanınca hiçbir şey yapma
+        return;
+    }
+    // SendMode: Nokta eklenebilir
     selectedLatitude = latitude;
     selectedLongitude = longitude;
     pointSelected = true;
-    
     QString coordText = QString("Seçili Nokta: %1, %2")
                        .arg(latitude, 0, 'f', 6)
                        .arg(longitude, 0, 'f', 6);
-    
     selectedPointLabel->setText(coordText);
-    coordinatesLabel->setText(QString("Koordinat: %1, %2").arg(latitude, 0, 'f', 6).arg(longitude, 0, 'f', 6));
-    
-    // UI durumunu güncelle
     updateUIState();
-    
-    logTextEdit->append(QString("Nokta seçildi: %1, %2 - %3")
-                       .arg(latitude, 0, 'f', 6)
-                       .arg(longitude, 0, 'f', 6)
-                       .arg(QDateTime::currentDateTime().toString()));
+}
+
+void MainWindow::onMarkerClicked(int id, double latitude, double longitude)
+{
+    if (currentMode == ReplyMode) {
+        // Sadece marker tıklanınca dönüt menüsü aç
+        QDialog dialog(this);
+        dialog.setWindowTitle("Dönüt Gönder");
+        QVBoxLayout* layout = new QVBoxLayout(&dialog);
+        QLabel* info = new QLabel(QString("Seçili Marker ID: %1\nKoordinat: %2, %3").arg(id).arg(latitude, 0, 'f', 6).arg(longitude, 0, 'f', 6));
+        layout->addWidget(info);
+        QLabel* det = new QLabel("Buraya rapor detayları eklenebilir.");
+        layout->addWidget(det);
+        QLineEdit* replyEdit = new QLineEdit();
+        replyEdit->setPlaceholderText("Dönüt mesajınızı yazın...");
+        layout->addWidget(replyEdit);
+        QPushButton* sendBtn = new QPushButton("Dönütü Kaydet (simülasyon)");
+        layout->addWidget(sendBtn);
+        connect(sendBtn, &QPushButton::clicked, &dialog, [&](){
+            logTextEdit->append(QString("<b>[DÖNÜT]</b> Marker ID %1 (%2, %3) için mesaj: %4")
+                .arg(id).arg(latitude, 0, 'f', 6).arg(longitude, 0, 'f', 6).arg(replyEdit->text()));
+            dialog.accept();
+        });
+        dialog.exec();
+    }
 }
 
 /**
@@ -467,8 +512,10 @@ void MainWindow::onLogMessage(const QString& message)
 /**
  * @brief Raporlar alındığında çağrılır
  */
-void MainWindow::onReportsReceived(const QJsonArray& reports)
+void MainWindow::onReportsReceived(const QJsonArray& reports, int privilege)
 {
+    qDebug() << "[DEBUG] onReportsReceived called, privilege:" << privilege << ", reports size:" << reports.size();
+    userPrivilege = privilege;
     logTextEdit->append("<b>[RAPOR]</b> Sunucudan rapor listesi alındı. Toplam: " + QString::number(reports.size()));
     if (!mapWidget) return;
     QMetaObject::invokeMethod(mapWidget, "clearMapItems");
@@ -486,6 +533,13 @@ void MainWindow::onReportsReceived(const QJsonArray& reports)
         QMetaObject::invokeMethod(mapWidget, "addMarker",
             Q_ARG(double, lat), Q_ARG(double, lon), Q_ARG(QString, desc), Q_ARG(QString, status), Q_ARG(int, id), Q_ARG(qint64, timestamp), Q_ARG(bool, false));
     }
+    // Admin ise mod switch butonunu göster
+    if (userPrivilege == 1 && modeSwitchButton) {
+        modeSwitchButton->show();
+    } else if (modeSwitchButton) {
+        modeSwitchButton->hide();
+    }
+    qDebug() << "[DEBUG] onReportsReceived END";
 }
 
 /**
@@ -516,4 +570,10 @@ void MainWindow::updateUIState()
 void MainWindow::showStatusMessage(const QString& message, int timeout)
 {
     statusBar()->showMessage(message, timeout);
+    
+    if (mapWidget) {
+        // Mod değişince QML'e marker ekleme izni gönder
+        QVariant allowAdd = (currentMode == SendMode);
+        mapWidget->findChild<QQuickWidget*>()->rootContext()->setContextProperty("allowAddMarker", allowAdd);
+    }
 }

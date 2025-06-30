@@ -349,7 +349,8 @@ void ClientWrapper::onDataReceived()
             startIdx = incomingBuffer.indexOf(prefix);
             continue;
         }
-        emit reportsReceived(obj["reports"].toArray());
+        int privilege = obj.contains("privilege") ? obj["privilege"].toInt() : 0;
+        emit reportsReceived(obj["reports"].toArray(), privilege);
         startIdx = incomingBuffer.indexOf(prefix);
     }
 }

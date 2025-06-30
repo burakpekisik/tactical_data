@@ -19,5 +19,7 @@ void* queue_processor(void* arg);
 void handle_signal(int sig);
 void* periodic_backup_thread();
 int parse_encrypted_protocol_message(const char* message, char** command, char** filename, char** hex_data, char** jwt_token);
+int send_large_response(int sockfd, const char* data, size_t length);
+void send_large_encrypted_response(int client_socket, const char* hex_data);
 
 #endif /* ENCRYPTED_SERVER_H */

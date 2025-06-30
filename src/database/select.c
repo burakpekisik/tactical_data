@@ -142,6 +142,58 @@ static int report_callback(void *data, int argc, char **argv, char **azColName) 
 }
 
 /**
+ * @brief REPLIES tablosu callback fonksiyonu
+ * @details sqlite3_exec() tarafından çağrılan callback. Her reply record'u için
+ *          çağrılır ve dynamic array'e reply verilerini ekler.
+ *
+ * Callback Data Formatı:
+ * - data[0]: reply_t** (replies array pointer)
+ * - data[1]: int* (current count)
+ * - data[2]: int* (array capacity)
+ *
+ * @param data Callback veri paketi (reply array, count, capacity)
+ * @param argc Column sayısı
+ * @param argv Column değerleri array'i
+ * @param azColName Column isimleri array'i
+ * @return int Callback sonucu (0: devam, non-zero: abort)
+ *
+ * @note Dynamic memory reallocation yapabilir
+ * @note NULL değerler güvenli şekilde handle edilir
+ * @warning Buffer overflow koruması için strncpy kullanılır
+ */
+static int reply_callback(void *data, int argc, char **argv, char **azColName) {
+    reply_t **replies = (reply_t **)((void**)data)[0];
+    int *count = (int *)((void**)data)[1];
+    int *capacity = (int *)((void**)data)[2];
+
+    if (*count >= *capacity) {
+        *capacity *= 2;
+        *replies = realloc(*replies, *capacity * sizeof(reply_t));
+    }
+
+    reply_t *reply = &(*replies)[*count];
+    memset(reply, 0, sizeof(reply_t));
+
+    for(int i = 0; i < argc; i++) {
+        if (strcmp(azColName[i], "ID") == 0 && argv[i]) {
+            reply->id = atoi(argv[i]);
+        } else if (strcmp(azColName[i], "USER_ID") == 0 && argv[i]) {
+            reply->user_id = atoi(argv[i]);
+        } else if (strcmp(azColName[i], "REPORT_ID") == 0 && argv[i]) {
+            reply->report_id = atoi(argv[i]);
+        } else if (strcmp(azColName[i], "MESSAGE") == 0 && argv[i]) {
+            strncpy(reply->message, argv[i], sizeof(reply->message) - 1);
+        } else if (strcmp(azColName[i], "TIMESTAMP") == 0 && argv[i]) {
+            reply->timestamp = atol(argv[i]);
+        } else if (strcmp(azColName[i], "CREATED_AT") == 0 && argv[i]) {
+            strncpy(reply->created_at, argv[i], sizeof(reply->created_at) - 1);
+        }
+    }
+    (*count)++;
+    return 0;
+}
+
+/**
  * @brief Tüm unit kayıtlarını sorgular
  * @details UNITS tablosundaki tüm kayıtları CREATED_AT'e göre ters sıralı (en yeni önce)
  *          olarak getirir. Dynamic array allocation kullanır.
@@ -488,7 +540,7 @@ int db_select_replies_by_user(int user_id, reply_t **replies, int *count) {
 
     void *callback_data[] = {replies, count, &capacity};
     
-    rc = sqlite3_exec(g_db, sql, report_callback, callback_data, &zErrMsg);
+    rc = sqlite3_exec(g_db, sql, reply_callback, callback_data, &zErrMsg);
     
     if(rc != SQLITE_OK) {
         fprintf(stderr, "SQL error selecting replies by user: %s\n", zErrMsg);
@@ -519,7 +571,7 @@ int db_select_replies_by_report(int report_id, reply_t **replies, int *count) {
 
     void *callback_data[] = {replies, count, &capacity};
     
-    rc = sqlite3_exec(g_db, sql, report_callback, callback_data, &zErrMsg);
+    rc = sqlite3_exec(g_db, sql, reply_callback, callback_data, &zErrMsg);
     
     if(rc != SQLITE_OK) {
         fprintf(stderr, "SQL error selecting replies by report: %s\n", zErrMsg);

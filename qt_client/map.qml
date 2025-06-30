@@ -12,6 +12,10 @@ Rectangle {
     border.width: 1
 
     signal mapClicked(double latitude, double longitude)
+    signal markerClicked(int id, double latitude, double longitude)
+    function emitMarkerClicked(markerId, lat, lon) {
+        mapContainer.markerClicked(markerId, lat, lon);
+    }
 
     // OpenStreetMap Plugin
     Plugin {
@@ -34,7 +38,7 @@ Rectangle {
         anchors.margins: 2
         plugin: mapPlugin
         
-        // Varsayılan konum - Türkiye merkezi (Ankara)
+        // Varsayılan konum - Türkiye merkezi
         center: QtPositioning.coordinate(39.925533, 32.866287)
         zoomLevel: 6
         
@@ -94,7 +98,7 @@ Rectangle {
             // Mouse bırakma
             onReleased: function(mouse) {
                 if (mouse.button === Qt.LeftButton) {
-                    if (!isDragging) {
+                    if (!isDragging && mapContainer.allowAddMarker === true) {
                         // Sadece tıklama - işaretçi koy
                         var coord = map.toCoordinate(Qt.point(mouse.x, mouse.y))
                         console.log("Tıklanan koordinat:", coord.latitude, coord.longitude)
@@ -115,14 +119,12 @@ Rectangle {
                             "isTemporary": true,
                             "description": "",
                             "status": "",
-                            "id": "",
+                            "id": -1,
                             "timestamp": "",
                             "visible": true
                         })
                         map.addMapItem(marker)
                         markers.push(marker)
-                        
-                        // Sinyali gönder
                         mapContainer.mapClicked(coord.latitude, coord.longitude)
                     }
                     isDragging = false
@@ -315,9 +317,10 @@ Rectangle {
                                     break;
                                 }
                             }
-                        } else {
+                        } else if (marker.id !== -1) {
                             Qt.callLater(function() {
                                 marker.showDetails();
+                                mapContainer.emitMarkerClicked(marker.id, marker.coordinate.latitude, marker.coordinate.longitude);
                             });
                         }
                     }
@@ -326,7 +329,7 @@ Rectangle {
             }
             coordinate: QtPositioning.coordinate(0, 0)
             // --- Sadeleştirilmiş property'ler ---
-            property string id: ""
+            property int id: -1
             property string status: ""
             property string description: ""
             property string timestamp: ""
@@ -408,6 +411,14 @@ Rectangle {
     // Marker yönetim fonksiyonları
     property bool visibleMarkers: true
     property var markers: []
+    property int mode: 0
+    property bool allowAddMarker: mode === 0 ? true : false
+    function setMode(modeValue) {
+        mode = modeValue;
+        console.log("[QML] Mod değiştirildi:", mode);
+        allowAddMarker = mode === 0 ? true : false;
+        console.log("[QML] Mod değiştirildi:", mode, "İzin verilen marker ekleme:", allowAddMarker);
+    }
 
     function setMarkersVisible(visible) {
         visibleMarkers = visible;
@@ -420,7 +431,7 @@ Rectangle {
     }
 
     function addMarker(lat, lon, desc, status, id, timestamp, isTemporary) {
-        console.log("[QML] [REQ] Marker ekleme isteği: lat=", lat, "lon=", lon, "desc=", desc, "status=", status, "id=", id, "timestamp=", timestamp, "isTemporary=", isTemporary);
+        // console.log("[QML] [REQ] Marker ekleme isteği: lat=", lat, "lon=", lon, "desc=", desc, "status=", status, "id=", id, "timestamp=", timestamp, "isTemporary=", isTemporary);
         var marker = markerComponent.createObject(map, {
             "coordinate": QtPositioning.coordinate(lat, lon),
             "description": desc,
@@ -433,7 +444,7 @@ Rectangle {
         if (marker) {
             map.addMapItem(marker);
             markers.push(marker);
-            console.log("[QML] [RESP] Marker eklendi:", lat, lon, desc, status, id, timestamp, isTemporary);
+            // console.log("[QML] [RESP] Marker eklendi:", lat, lon, desc, status, id, timestamp, isTemporary);
         }
     }
     function clearMapItems() {

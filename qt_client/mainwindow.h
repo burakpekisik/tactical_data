@@ -29,6 +29,7 @@ public:
 
 private slots:
     void onMapClicked(double latitude, double longitude);
+    void onMarkerClicked(int id, double latitude, double longitude);
     void onSendData();
     void onConnectToServer();
     void onDisconnectFromServer();
@@ -38,7 +39,7 @@ private slots:
     void onDataSendResult(ClientWrapper::SendResult result, const QString& message);
     void onDataReceived(const QString& data);
     void onLogMessage(const QString& message);
-    void onReportsReceived(const QJsonArray& reports); // <-- RAPOR SLOTU
+    void onReportsReceived(const QJsonArray& reports, int privilege); // <-- RAPOR SLOTU
 
 private:
     void setupUI();
@@ -94,6 +95,14 @@ private:
     void showStatusMessage(const QString& message, int timeout = 5000);
 
     QPushButton *toggleMarkersButton;
+
+    enum Mode {
+        SendMode,
+        ReplyMode
+    };
+    Mode currentMode = SendMode;
+    QPushButton *modeSwitchButton; // Admin için mod değiştirici buton
+    int userPrivilege = 0;
 };
 
 #endif // MAINWINDOW_H

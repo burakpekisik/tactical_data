@@ -723,9 +723,20 @@ void* handle_client(void* arg) {
             is_encrypted = 1;
         } else {
             if (parse_protocol_message(buffer, &command, &filename, &content) != 0) {
-                char *error_response = "HATA: Gecersiz protokol formati. Format: COMMAND:FILENAME:CONTENT";
-                send(client_socket, error_response, strlen(error_response), 0);
-                continue;
+                // Standart parse başarısızsa REPLY_QUERY:<jwt_token> gibi iki parçalı komutları kontrol et
+                char* colon = strchr(buffer, ':');
+                if (colon && strncmp(buffer, "REPLY_QUERY", 11) == 0) {
+                    size_t cmd_len = colon - buffer;
+                    command = malloc(cmd_len + 1);
+                    strncpy(command, buffer, cmd_len);
+                    command[cmd_len] = '\0';
+                    filename = NULL;
+                    content = strdup(colon + 1);
+                } else {
+                    char *error_response = "HATA: Gecersiz protokol formati. Format: COMMAND:FILENAME:CONTENT";
+                    send(client_socket, error_response, strlen(error_response), 0);
+                    continue;
+                }
             }
         }
         // --- ECDH bağlantısı için user_id <-> socket mapping güncelle ---
@@ -833,6 +844,29 @@ void* handle_client(void* arg) {
             handle_report_query(jwt_token_part, json_result, sizeof(json_result));
             send(client_socket, json_result, strlen(json_result), 0);
             free(jwt_token_part);
+        } else if (command && strcmp(command, "REPLY_QUERY") == 0) {
+            PRINTF_LOG("REPLY_QUERY komutu alındı. JWT ile reply sorgulama başlatılıyor...\n");
+            char* jwt_token_part = NULL;
+            if (content && strlen(content) > 10) {
+                jwt_token_part = strdup(content);
+            }
+            if (!jwt_token_part) {
+                PRINTF_LOG("HATA: REPLY_QUERY mesajında JWT token yok!\n");
+                char* error_response = "HATA: REPLY_QUERY mesajında JWT token yok!";
+                send(client_socket, error_response, strlen(error_response), 0);
+                if (command) free(command);
+                if (filename) free(filename);
+                if (content) free(content);
+                continue;
+            }
+            char json_result[32768];
+            handle_reply_query(jwt_token_part, json_result, sizeof(json_result));
+            send(client_socket, json_result, strlen(json_result), 0);
+            free(jwt_token_part);
+            if (command) free(command);
+            if (filename) free(filename);
+            if (content) free(content);
+            continue;
         } else {
             parsed_result = malloc(256);
             snprintf(parsed_result, 256, "HATA: Bilinmeyen komut: %s", command);
@@ -982,12 +1016,65 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         char* hex_data = bytes_to_hex(combined_data, combined_length);
         free(combined_data);
         free_crypto_result(encrypted);
-        free(decrypted_json);
+        //free(decrypted_json); // Sadece else bloğunda free edilecek
         // ENCRYPTED:REPORT_QUERY:hex_data formatında döndür
         size_t total_size = strlen("ENCRYPTED:REPORT_QUERY:") + strlen(hex_data) + 1;
-        char* result = malloc(total_size);
-        snprintf(result, total_size, "ENCRYPTED:REPORT_QUERY:%s", hex_data);
-        free(hex_data);
+        if (strlen(hex_data) > ENCRYPTED_PART_SIZE) {
+            PRINTF_LOG("[SERVER] ENCRYPTED yanıtı uzun, parça parça gönderilecek. Toplam uzunluk: %zu\n", strlen(hex_data));
+            send_large_encrypted_response(client_socket, hex_data);
+            free(hex_data);
+            return NULL; // Artık tek bir yanıt dönülmüyor
+        } else {
+            PRINTF_LOG("[SERVER] ENCRYPTED yanıtı kısa, tek parça gönderilecek. Uzunluk: %zu\n", strlen(hex_data));
+            char* result = malloc(total_size);
+            snprintf(result, total_size, "ENCRYPTED:REPORT_QUERY:%s", hex_data);
+            free(hex_data);
+            free(decrypted_json);
+            return result;
+        }
+    } else if (strcmp(filename, "REPLY_REPORT") == 0) {
+        // ENCRYPTED:REPLY_REPORT için işlevsellik: JSON parse, mapping ve reply gönderimi
+        cJSON* root = cJSON_Parse(decrypted_json);
+        char* result = NULL;
+        int report_id = -1;
+        char* msg = NULL; // Sadece burada tanımla
+        char* user_id_from_jwt = NULL;
+        // JWT'den user_id çek
+        if (jwt_token) {
+            jwt_t *jwt_ptr = NULL;
+            if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                if (sub) user_id_from_jwt = strdup(sub);
+                jwt_free(jwt_ptr);
+            }
+        }
+        if (root) {
+            cJSON* report_id_item = cJSON_GetObjectItem(root, "report_id");
+            cJSON* msg_item = cJSON_GetObjectItem(root, "msg");
+            if (report_id_item && cJSON_IsNumber(report_id_item)) report_id = report_id_item->valueint;
+            if (msg_item && cJSON_IsString(msg_item)) msg = strdup(msg_item->valuestring);
+            cJSON_Delete(root);
+            // JWT'den user_id mapping
+            if (user_id_from_jwt) {
+                int user_id = atoi(user_id_from_jwt);
+                admin_reply_manager_register_user(user_id, client_socket);
+                PRINTF_LOG("[ADMIN_REPLY] ENCRYPTED REPLY_REPORT ile mapping güncellendi: user_id=%d, socket=%d\n", user_id, client_socket);
+            }
+            if (report_id != -1 && msg) {
+                admin_reply_manager_send_reply(report_id, msg, client_socket);
+                result = malloc(256);
+                snprintf(result, 256, "REPLY_REPORT cevabı başarıyla işlendi.\nReport ID: %d\nMessage: %s\n", report_id, msg);
+            } else {
+                result = malloc(256);
+                strcpy(result, "HATA: REPLY_REPORT JSON formatı hatalı veya eksik alanlar var");
+            }
+            if (msg) free(msg);
+        } else {
+            result = malloc(256);
+            strcpy(result, "HATA: REPLY_REPORT JSON parse edilemedi");
+        }
+        free(decrypted_json);
+        if (user_id_from_jwt) free(user_id_from_jwt);
         return result;
     }
     // Diğer dosya adlarında eski davranış devam ediyor
@@ -1032,6 +1119,29 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
     }
     free(decrypted_json);
     return result;
+}
+
+
+// Büyük ENCRYPTED yanıtlarını parça parça gönder
+void send_large_encrypted_response(int client_socket, const char* hex_data) {
+    size_t hex_len = strlen(hex_data);
+    int total_parts = (hex_len + ENCRYPTED_PART_SIZE - 1) / ENCRYPTED_PART_SIZE;
+    PRINTF_LOG("[SERVER][ENCRYPTED_PART] Toplam uzunluk: %zu, Parça sayısı: %d\n", hex_len, total_parts);
+    for (int i = 0; i < total_parts; ++i) {
+        size_t start = i * ENCRYPTED_PART_SIZE;
+        size_t part_len = (start + ENCRYPTED_PART_SIZE < hex_len) ? ENCRYPTED_PART_SIZE : (hex_len - start);
+        char header[128];
+        snprintf(header, sizeof(header), "ENCRYPTED_PART:%d:%d:%zu:", i+1, total_parts, part_len);
+        size_t msg_len = strlen(header) + part_len + 2; // +1 for \n, +1 for \0
+        char* msg = malloc(msg_len);
+        strcpy(msg, header);
+        memcpy(msg + strlen(header), hex_data + start, part_len);
+        msg[strlen(header) + part_len] = '\n';
+        msg[strlen(header) + part_len + 1] = '\0';
+        PRINTF_LOG("[SERVER][ENCRYPTED_PART] Parça %d/%d, Uzunluk: %zu, İlk 32 byte: %.32s\n", i+1, total_parts, part_len, msg + strlen(header));
+        send(client_socket, msg, strlen(header) + part_len + 1, 0); // +1 for \n
+        free(msg);
+    }
 }
 
 /**
@@ -1114,7 +1224,7 @@ int parse_protocol_message(const char* message, char** command, char** filename,
     return 0;
 }
 
-// Yeni yardımcı fonksiyon: ENCRYPTED mesajı için 4 alanı ayır
+// ENCRYPTED mesajı için 4 alanı ayır
 int parse_encrypted_protocol_message(const char* message, char** command, char** filename, char** hex_data, char** jwt_token) {
     char* first_colon = strchr(message, ':');
     if (!first_colon) return -1;

@@ -60,3 +60,49 @@ int handle_report_query(const char* jwt_token, char* out_json, size_t out_json_s
     jwt_free(jwt);
     return 0;
 }
+
+// Kullanıcının reply'larını JWT ile JSON olarak döndür
+int handle_reply_query(const char* jwt_token, char* out_json, size_t out_json_size) {
+    LOG_SERVER_INFO("[REPLY_QUERY] handle_reply_query çağrıldı, jwt_token: %s", jwt_token ? jwt_token : "(null)");
+    if (verify_jwt(jwt_token) != 0) {
+        LOG_SERVER_ERROR("[REPLY_QUERY] JWT doğrulama başarısız! Token: %s", jwt_token ? jwt_token : "(null)");
+        snprintf(out_json, out_json_size, "{\"error\":\"Invalid JWT\"}");
+        return -1;
+    }
+    jwt_t *jwt;
+    int decode_result = jwt_decode(&jwt, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
+    LOG_SERVER_INFO("[REPLY_QUERY] jwt_decode result: %d", decode_result);
+    if (decode_result != 0) {
+        LOG_SERVER_ERROR("[REPLY_QUERY] jwt_decode başarısız! Token: %s", jwt_token ? jwt_token : "(null)");
+        snprintf(out_json, out_json_size, "{\"error\":\"JWT decode failed\"}");
+        return -1;
+    }
+    int privilege = jwt_get_grant_int(jwt, "privilege");
+    const char* sub_str = jwt_get_grant(jwt, "sub");
+    int user_id = sub_str ? atoi(sub_str) : -1;
+    LOG_SERVER_INFO("[REPLY_QUERY] JWT payload: privilege=%d, user_id=%d (sub=%s)", privilege, user_id, sub_str ? sub_str : "(null)");
+    reply_t *replies = NULL;
+    int reply_count = 0;
+    db_select_replies_by_user(user_id, &replies, &reply_count);
+    LOG_SERVER_INFO("[REPLY_QUERY] Toplam reply sayısı: %d", reply_count);
+    // JSON cevabı oluştur
+    char* ptr = out_json;
+    size_t used = 0;
+    used += snprintf(ptr + used, out_json_size - used, "{\"replies\":[");
+    for (int i = 0; i < reply_count; ++i) {
+        char entry[1024];
+        snprintf(entry, sizeof(entry),
+            "{\"id\":%d,\"user_id\":%d,\"report_id\":%d,\"message\":\"%s\",\"timestamp\":%ld}",
+            replies[i].id, replies[i].user_id, replies[i].report_id, replies[i].message, replies[i].timestamp);
+        used += snprintf(ptr + used, out_json_size - used, "%s%s", entry, (i < reply_count - 1) ? "," : "");
+        if (used >= out_json_size) {
+            LOG_SERVER_ERROR("[REPLY_QUERY] JSON buffer overflow! used=%zu, out_json_size=%zu", used, out_json_size);
+            break;
+        }
+    }
+    snprintf(ptr + used, out_json_size - used, "]}");
+    LOG_SERVER_INFO("[REPLY_QUERY] JSON cevabı hazır, uzunluk: %zu", strlen(out_json));
+    if (replies) free(replies);
+    jwt_free(jwt);
+    return 0;
+}
