@@ -148,50 +148,11 @@ int main() {
                 listen_for_admin_notifications(conn);
                 break;
             case 6: // Admin rapora cevap ver
-                int report_id;
-                char msg[900];
-                printf("Rapor ID girin: ");
-                if (scanf("%d", &report_id) != 1) {
-                    printf("Geçersiz rapor ID!\n");
-                    while (getchar() != '\n');
-                    break;
-                }
-                while (getchar() != '\n'); // Temizle
-                printf("Mesajınızı girin: ");
-                if (fgets(msg, sizeof(msg), stdin) == NULL) {
-                    printf("Mesaj okunamadı!\n");
-                    break;
-                }
-                msg[strcspn(msg, "\n")] = 0;
-                if (strlen(msg) == 0) {
-                    printf("Mesaj boş olamaz!\n");
-                    break;
-                }
-                PRINTF_LOG("Sifreleme islemi baslatiliyor...\n");
-                if (!conn->ecdh_initialized) {
-                    PRINTF_LOG("ECDH başlatılmamış - şifreleme yapılamaz\n");
-                    break;
-                }
-
-                char json_content[1024];
-                snprintf(json_content, sizeof(json_content), "{\"report_id\":%d,\"msg\":\"%s\"}", report_id, msg);
-                char *protocol_message = create_encrypted_protocol_message("REPLY_REPORT", json_content, conn->ecdh_ctx.aes_key, jwt_token);
-                if (!protocol_message) {
-                    printf("Şifreli mesaj oluşturulamadı!\n");
-                    break;
-                }
-                send(conn->socket, protocol_message, strlen(protocol_message), 0);
-                free(protocol_message);
-                // Sunucudan REPLY_REPORT cevabını bekle
-                char recvbuf[32768];
-                ssize_t n = recv(conn->socket, recvbuf, sizeof(recvbuf)-1, 0);
-                if (n > 0) {
-                    recvbuf[n] = '\0';
-                    printf("%s\n", recvbuf);
+                if (admin_reply_to_report(conn, jwt_token) != 0) {
+                    PRINTF_LOG("Rapor cevabi gonderilemedi!\n");
                 } else {
-                    printf("Sunucudan yanıt alınamadı veya bağlantı kapandı.\n");
+                    PRINTF_LOG("Rapor cevabi basariyla gonderildi.\n");
                 }
-                printf("Rapor cevabı şifreli olarak gönderildi ve işlem tamamlandı.\n");
                 break;
             case 7: // Gelen admin cevaplarını görüntüle
                 watch_report_replies(conn);
@@ -347,11 +308,11 @@ void handle_server_response(client_connection_t* conn) {
     char buffer[CONFIG_BUFFER_SIZE] = {0};
     
     ssize_t bytes_received;
-    if (conn->type == CONN_TCP) {
+    if (conn->type == CONN_TYPE_TCP) {
         bytes_received = receive_tcp_response(conn, buffer, CONFIG_BUFFER_SIZE - 1);
-    } else if (conn->type == CONN_UDP) {
+    } else if (conn->type == CONN_TYPE_UDP) {
         bytes_received = receive_udp_response(conn, buffer, CONFIG_BUFFER_SIZE - 1);
-    } else if (conn->type == CONN_P2P) {
+    } else if (conn->type == CONN_TYPE_P2P) {
         bytes_received = receive_p2p_response(conn, buffer, CONFIG_BUFFER_SIZE - 1);
     } else {
         PRINTF_LOG("Bilinmeyen baglanti tipi yanit alinamadi\n");
@@ -413,7 +374,7 @@ client_connection_t* connect_to_server(const char* server_host) {
         conn->server_addr.sin_family = AF_INET;
         conn->server_addr.sin_port = htons(CONFIG_PORT);
         conn->port = CONFIG_PORT;
-        conn->type = CONN_TCP;
+        conn->type = CONN_TYPE_TCP;
         
         // IP adresini çözümle
         if (inet_pton(AF_INET, server_host, &conn->server_addr.sin_addr) <= 0) {
@@ -521,7 +482,7 @@ try_udp:
         conn->server_addr.sin_family = AF_INET;
         conn->server_addr.sin_port = htons(CONFIG_UDP_PORT);
         conn->port = CONFIG_UDP_PORT;
-        conn->type = CONN_UDP;
+        conn->type = CONN_TYPE_UDP;
         
         // IP adresini çözümle (UDP için)
         if (inet_pton(AF_INET, server_host, &conn->server_addr.sin_addr) <= 0) {
@@ -689,7 +650,7 @@ try_p2p:
         conn->server_addr.sin_family = AF_INET;
         conn->server_addr.sin_port = htons(CONFIG_P2P_PORT);  
         conn->port = CONFIG_P2P_PORT;
-        conn->type = CONN_P2P;
+        conn->type = CONN_TYPE_P2P;
         
         // IP adresini çözümle
         if (inet_pton(AF_INET, server_host, &conn->server_addr.sin_addr) <= 0) {
@@ -787,7 +748,6 @@ try_p2p:
 }
 
 // Gelen admin cevaplarını saklamak için yapı
-#define MAX_REPORT_REPLIES 100
 struct report_reply_entry {
     int report_id;
     char msg[900];
@@ -927,7 +887,6 @@ void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token)
     } else {
         PRINTF_CLIENT("Reply sorgusu başarısız veya bağlantı hatası!\n");
     }
-    // Artık tuş bekleme yok, fonksiyon hemen ana menüye döner
 }
 
 /**
@@ -948,5 +907,54 @@ int send_hello_after_ecdh(client_connection_t* conn, const char* jwt_token) {
         return -1;
     }
     PRINTF_LOG("HELLO mesajı gönderildi (sent=%zd)\n", sent);
+    return 0;
+}
+
+int admin_reply_to_report(client_connection_t* conn, const char* jwt_token) {
+    int report_id;
+    char msg[900];
+    printf("Rapor ID girin: ");
+    if (scanf("%d", &report_id) != 1) {
+        printf("Geçersiz rapor ID!\n");
+        while (getchar() != '\n');
+        return -1;
+    }
+    while (getchar() != '\n'); // Temizle
+    printf("Mesajınızı girin: ");
+    if (fgets(msg, sizeof(msg), stdin) == NULL) {
+        printf("Mesaj okunamadı!\n");
+        return -1;
+    }
+    msg[strcspn(msg, "\n")] = 0;
+    if (strlen(msg) == 0) {
+        printf("Mesaj boş olamaz!\n");
+        return -1;
+    }
+    PRINTF_LOG("Sifreleme islemi baslatiliyor...\n");
+    if (!conn->ecdh_initialized) {
+        PRINTF_LOG("ECDH başlatılmamış - şifreleme yapılamaz\n");
+        return -1;
+    }
+
+    char json_content[1024];
+    snprintf(json_content, sizeof(json_content), "{\"report_id\":%d,\"msg\":\"%s\"}", report_id, msg);
+    char *protocol_message = create_encrypted_protocol_message("REPLY_REPORT", json_content, conn->ecdh_ctx.aes_key, jwt_token);
+    if (!protocol_message) {
+        printf("Şifreli mesaj oluşturulamadı!\n");
+        return -1;
+    }
+    send(conn->socket, protocol_message, strlen(protocol_message), 0);
+    free(protocol_message);
+    // Sunucudan REPLY_REPORT cevabını bekle
+    char recvbuf[32768];
+    ssize_t n = recv(conn->socket, recvbuf, sizeof(recvbuf)-1, 0);
+    if (n > 0) {
+        recvbuf[n] = '\0';
+        printf("%s\n", recvbuf);
+    } else {
+        printf("Sunucudan yanıt alınamadı veya bağlantı kapandı.\n");
+        return -1;
+    }
+    printf("Rapor cevabı şifreli olarak gönderildi ve işlem tamamlandı.\n");
     return 0;
 }

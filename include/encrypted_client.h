@@ -8,13 +8,9 @@
 #include <arpa/inet.h>
 #include "crypto_utils.h"
 #include "config.h"
+#include "connection_manager.h"
 
-// Connection types
-typedef enum {
-    CONN_TCP = 0,
-    CONN_UDP = 1,
-    CONN_P2P = 2
-} connection_type_t;
+
 
 typedef struct {
     int socket;
@@ -39,5 +35,6 @@ void show_report_replies(void);
 void watch_report_replies(client_connection_t* conn);
 int send_hello_after_ecdh(client_connection_t* conn, const char* jwt_token);
 void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token);
+int admin_reply_to_report(client_connection_t* conn, const char* jwt_token);
 
 #endif /* ENCRYPTED_CLIENT_H */

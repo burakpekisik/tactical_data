@@ -9,10 +9,6 @@
 #include "database.h"
 #include "config.h"
 
-typedef struct {
-    int user_id;
-    int user_socket;
-} user_socket_map_t;
 
 static user_socket_map_t user_map[MAX_ACTIVE_USERS];
 static int user_map_count = 0;

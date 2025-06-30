@@ -53,6 +53,7 @@
 #define MAX_CLIENTS 64
 #define MAX_ACTIVE_USERS 128
 #define ENCRYPTED_PART_SIZE 4096
+#define MAX_REPORT_REPLIES 100
 
 
 #endif // _CONFIG_H_

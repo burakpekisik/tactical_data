@@ -36,9 +36,9 @@
  */
 const char* get_connection_type_name(connection_type_t type) {
     switch (type) {
-        case CONN_TCP: return "TCP";
-        case CONN_UDP: return "UDP";
-        case CONN_P2P: return "P2P";
+        case CONN_TYPE_TCP: return "TCP";
+        case CONN_TYPE_UDP: return "UDP";
+        case CONN_TYPE_P2P: return "P2P";
         default: return "UNKNOWN";
     }
 }
@@ -56,11 +56,11 @@ const char* get_connection_type_name(connection_type_t type) {
 int try_send_message_current_connection(client_connection_t* conn, const char* message) {
     int result = -1;
     
-    if (conn->type == CONN_TCP) {
+    if (conn->type == CONN_TYPE_TCP) {
         result = send_tcp_message(conn, message);
-    } else if (conn->type == CONN_UDP) {
+    } else if (conn->type == CONN_TYPE_UDP) {
         result = send_udp_message(conn, message);
-    } else if (conn->type == CONN_P2P) {
+    } else if (conn->type == CONN_TYPE_P2P) {
         result = send_p2p_message(conn, message);
     } else {
         PRINTF_LOG("Bilinmeyen baglanti tipi\n");
@@ -101,14 +101,14 @@ int try_send_message_with_fallback(client_connection_t* conn, const char* protoc
     int fallback_count = 0;
     
     // Mevcut tip dışındaki tipleri sıraya koy
-    if (conn->type != CONN_TCP) {
-        fallback_order[fallback_count++] = CONN_TCP;
+    if (conn->type != CONN_TYPE_TCP) {
+        fallback_order[fallback_count++] = CONN_TYPE_TCP;
     }
-    if (conn->type != CONN_UDP) {
-        fallback_order[fallback_count++] = CONN_UDP;
+    if (conn->type != CONN_TYPE_UDP) {
+        fallback_order[fallback_count++] = CONN_TYPE_UDP;
     }
-    if (conn->type != CONN_P2P) {
-        fallback_order[fallback_count++] = CONN_P2P;
+    if (conn->type != CONN_TYPE_P2P) {
+        fallback_order[fallback_count++] = CONN_TYPE_P2P;
     }
     
     // Her fallback tipini dene
@@ -213,15 +213,15 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
     int sock_type;
     
     switch (target_type) {
-        case CONN_TCP:
+        case CONN_TYPE_TCP:
             port = CONFIG_PORT;
             sock_type = SOCK_STREAM;
             break;
-        case CONN_UDP:
+        case CONN_TYPE_UDP:
             port = CONFIG_UDP_PORT;
             sock_type = SOCK_DGRAM;
             break;
-        case CONN_P2P:
+        case CONN_TYPE_P2P:
             port = CONFIG_P2P_PORT;
             sock_type = SOCK_STREAM;
             break;
@@ -243,7 +243,7 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
     }
     
     // Bağlantı kur
-    if (target_type == CONN_TCP || target_type == CONN_P2P) {
+    if (target_type == CONN_TYPE_TCP || target_type == CONN_TYPE_P2P) {
         // TCP/P2P için connect
         if (connect(fallback_conn->socket, (struct sockaddr*)&fallback_conn->server_addr, 
                    sizeof(fallback_conn->server_addr)) < 0) {
@@ -261,7 +261,7 @@ client_connection_t* create_fallback_connection(client_connection_t* original_co
             return NULL;
         }
         
-    } else if (target_type == CONN_UDP) {
+    } else if (target_type == CONN_TYPE_UDP) {
         // UDP için test ping
         const char* test_msg = "PING";
         if (sendto(fallback_conn->socket, test_msg, strlen(test_msg), 0,
@@ -520,13 +520,13 @@ bool setup_udp_ecdh_for_fallback(client_connection_t* conn) {
  * @example
  * @code
  * // P2P için mesaj adaptasyonu
- * char* adapted = adapt_message_for_protocol("ENCRYPTED:data", CONN_P2P);
+ * char* adapted = adapt_message_for_protocol("ENCRYPTED:data", CONN_TYPE_P2P);
  * // Sonuç: "P2P_ENCRYPTED:ENCRYPTED:data"
  * @endcode
  */
 char* adapt_message_for_protocol(const char* original_message, connection_type_t target_type) {
     // P2P için özel format gerekiyor
-    if (target_type == CONN_P2P) {
+    if (target_type == CONN_TYPE_P2P) {
         char* adapted_message = malloc(CONFIG_BUFFER_SIZE);
         if (adapted_message == NULL) {
             return NULL;
