@@ -567,3 +567,129 @@ void update_main_connection_from_fallback(client_connection_t* main_conn, client
     memcpy(&main_conn->ecdh_ctx, &fallback_conn->ecdh_ctx, sizeof(ecdh_context_t));
     // Gerekirse diğer alanlar da kopyalanabilir
 }
+
+/**
+ * @brief Şifreli JSON dosya gönderimi için UDP fallback
+ * @details Sadece şifreli dosya gönderiminde (case 2) UDP fallback kullanımı için.
+ * @param original_conn Ana bağlantı (TCP başarısızsa)
+ * @param filename Dosya adı
+ * @param content JSON içeriği
+ * @param jwt_token Kullanıcı JWT
+ * @return int (>=0: başarılı, <0: hata)
+ */
+int send_json_file_udp_fallback(client_connection_t* original_conn, const char* filename, const char* content, const char* jwt_token) {
+    PRINTF_LOG("[UDP-FALLBACK] Şifreli dosya gönderimi için UDP fallback başlatılıyor...\n");
+    client_connection_t* udp_conn = create_fallback_connection(original_conn, CONN_TYPE_UDP);
+    if (!udp_conn || !udp_conn->ecdh_initialized) {
+        PRINTF_LOG("[UDP-FALLBACK] UDP bağlantısı veya ECDH başarısız\n");
+        if (udp_conn) close_connection(udp_conn);
+        return -1;
+    }
+    char* udp_message = create_encrypted_protocol_message(filename, content, udp_conn->ecdh_ctx.aes_key, jwt_token);
+    if (!udp_message) {
+        close_connection(udp_conn);
+        return -1;
+    }
+    int result = send_udp_message(udp_conn, udp_message);
+    free(udp_message);
+    update_main_connection_from_fallback(original_conn, udp_conn);
+    close_connection(udp_conn);
+    return result;
+}
+
+/**
+ * @brief Admin rapora cevap için UDP fallback
+ * @details Sadece admin reply işlemlerinde (case 6) UDP fallback kullanımı için.
+ * @param original_conn Ana bağlantı (TCP başarısızsa)
+ * @param report_id Rapor ID
+ * @param msg Mesaj
+ * @param jwt_token Kullanıcı JWT
+ * @return int (>=0: başarılı, <0: hata)
+ */
+int admin_reply_to_report_udp_fallback(client_connection_t* original_conn, int report_id, const char* msg, const char* jwt_token) {
+    PRINTF_LOG("[UDP-FALLBACK] Admin reply için UDP fallback başlatılıyor...\n");
+    client_connection_t* udp_conn = create_fallback_connection(original_conn, CONN_TYPE_UDP);
+    if (!udp_conn || !udp_conn->ecdh_initialized) {
+        PRINTF_LOG("[UDP-FALLBACK] UDP bağlantısı veya ECDH başarısız\n");
+        if (udp_conn) close_connection(udp_conn);
+        return -1;
+    }
+    char json_content[1024];
+    snprintf(json_content, sizeof(json_content), "{\"report_id\":%d,\"msg\":\"%s\"}", report_id, msg);
+    char* udp_message = create_encrypted_protocol_message("REPLY_REPORT", json_content, udp_conn->ecdh_ctx.aes_key, jwt_token);
+    if (!udp_message) {
+        close_connection(udp_conn);
+        return -1;
+    }
+    int result = send_udp_message(udp_conn, udp_message);
+    free(udp_message);
+    update_main_connection_from_fallback(original_conn, udp_conn);
+    close_connection(udp_conn);
+    return result;
+}
+
+/**
+ * @brief Şifreli JSON dosya gönderimi için P2P fallback
+ * @details Sadece şifreli dosya gönderiminde (case 2) P2P fallback kullanımı için.
+ * @param original_conn Ana bağlantı (TCP/UDP başarısızsa)
+ * @param filename Dosya adı
+ * @param content JSON içeriği
+ * @param jwt_token Kullanıcı JWT
+ * @return int (>=0: başarılı, <0: hata)
+ */
+int send_json_file_p2p_fallback(client_connection_t* original_conn, const char* filename, const char* content, const char* jwt_token) {
+    PRINTF_LOG("[P2P-FALLBACK] Şifreli dosya gönderimi için P2P fallback başlatılıyor...\n");
+    client_connection_t* p2p_conn = create_fallback_connection(original_conn, CONN_TYPE_P2P);
+    if (!p2p_conn || !p2p_conn->ecdh_initialized) {
+        PRINTF_LOG("[P2P-FALLBACK] P2P bağlantısı veya ECDH başarısız\n");
+        if (p2p_conn) close_connection(p2p_conn);
+        return -1;
+    }
+    char* p2p_message = create_encrypted_protocol_message(filename, content, p2p_conn->ecdh_ctx.aes_key, jwt_token);
+    if (!p2p_message) {
+        close_connection(p2p_conn);
+        return -1;
+    }
+    // P2P için mesajı uygun formata uyarla
+    char* adapted = adapt_message_for_protocol(p2p_message, CONN_TYPE_P2P);
+    int result = send_p2p_message(p2p_conn, adapted ? adapted : p2p_message);
+    if (adapted) free(adapted);
+    free(p2p_message);
+    update_main_connection_from_fallback(original_conn, p2p_conn);
+    close_connection(p2p_conn);
+    return result;
+}
+
+/**
+ * @brief Admin rapora cevap için P2P fallback
+ * @details Sadece admin reply işlemlerinde (case 6) P2P fallback kullanımı için.
+ * @param original_conn Ana bağlantı (TCP/UDP başarısızsa)
+ * @param report_id Rapor ID
+ * @param msg Mesaj
+ * @param jwt_token Kullanıcı JWT
+ * @return int (>=0: başarılı, <0: hata)
+ */
+int admin_reply_to_report_p2p_fallback(client_connection_t* original_conn, int report_id, const char* msg, const char* jwt_token) {
+    PRINTF_LOG("[P2P-FALLBACK] Admin reply için P2P fallback başlatılıyor...\n");
+    client_connection_t* p2p_conn = create_fallback_connection(original_conn, CONN_TYPE_P2P);
+    if (!p2p_conn || !p2p_conn->ecdh_initialized) {
+        PRINTF_LOG("[P2P-FALLBACK] P2P bağlantısı veya ECDH başarısız\n");
+        if (p2p_conn) close_connection(p2p_conn);
+        return -1;
+    }
+    char json_content[1024];
+    snprintf(json_content, sizeof(json_content), "{\"report_id\":%d,\"msg\":\"%s\"}", report_id, msg);
+    char* p2p_message = create_encrypted_protocol_message("REPLY_REPORT", json_content, p2p_conn->ecdh_ctx.aes_key, jwt_token);
+    if (!p2p_message) {
+        close_connection(p2p_conn);
+        return -1;
+    }
+    // P2P için mesajı uygun formata uyarla
+    char* adapted = adapt_message_for_protocol(p2p_message, CONN_TYPE_P2P);
+    int result = send_p2p_message(p2p_conn, adapted ? adapted : p2p_message);
+    if (adapted) free(adapted);
+    free(p2p_message);
+    update_main_connection_from_fallback(original_conn, p2p_conn);
+    close_connection(p2p_conn);
+    return result;
+}

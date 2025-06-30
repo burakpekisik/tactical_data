@@ -20,5 +20,9 @@ bool setup_ecdh_for_fallback(client_connection_t* conn);
 bool setup_udp_ecdh_for_fallback(client_connection_t* conn);
 char* adapt_message_for_protocol(const char* original_message, connection_type_t target_type);
 void update_main_connection_from_fallback(client_connection_t* main_conn, client_connection_t* fallback_conn);
+int send_json_file_udp_fallback(client_connection_t* original_conn, const char* filename, const char* content, const char* jwt_token);
+int admin_reply_to_report_udp_fallback(client_connection_t* original_conn, int report_id, const char* msg, const char* jwt_token);
+int send_json_file_p2p_fallback(client_connection_t* original_conn, const char* filename, const char* content, const char* jwt_token);
+int admin_reply_to_report_p2p_fallback(client_connection_t* original_conn, int report_id, const char* msg, const char* jwt_token);
 
 #endif /* FALLBACK_MANAGER_H */

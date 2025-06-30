@@ -17,4 +17,15 @@ char* get_current_time(void);
 void free_tactical_data(tactical_data_t* data);
 cJSON* parse_tactical_data_to_json(const tactical_data_t* data);
 
+typedef struct {
+    int report_id;
+    char msg[512];
+    int is_valid;
+} admin_reply_t;
+
+admin_reply_t* parse_admin_reply_json(const char* json_content);
+
+// Dispatcher fonksiyon prototipi (void* döner, çağıran uygun struct'a cast etmeli)
+void* parse_json_by_type(const char* filename, const char* json_content, const char* user_id);
+
 #endif // _JSON_UTILS_H_

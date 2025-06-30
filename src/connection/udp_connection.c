@@ -29,6 +29,7 @@
 #include "database.h"
 #include "logger.h"
 #include "jwt_manager.h"
+#include "encrypted_server.h"
 
 /// @brief Global UDP session listesi (linked list)
 static udp_session_t* session_list = NULL;
@@ -433,24 +434,36 @@ int udp_process_json_data(const char* json_data, const char* filename, const cha
     PRINTF_LOG("UDP JSON Processing: %s from %s:%d\n", filename, client_ip, client_port);
     
     // JSON'u tactical data struct'ına parse et (TCP'deki gibi)
-    tactical_data_t* tactical_data = parse_json_to_tactical_data(json_data, filename, "UNKNOWN");
-    if (tactical_data != NULL && tactical_data->is_valid) {
-        PRINTF_LOG("UDP: Tactical data parsed successfully\n");
-        
-        // Database'e kaydet
-        char* response = db_save_tactical_data_and_get_response(tactical_data, filename);
-        if (response) {
-            PRINTF_LOG("UDP: Database save response: %s\n", response);
-            free(response);
+    void* parsed = parse_json_by_type(filename, json_data, "UNKNOWN");
+    int is_valid = 0;
+    if (strcmp(filename, "REPLY_REPORT") == 0) {
+        admin_reply_t* reply = (admin_reply_t*)parsed;
+        if (reply && reply->is_valid) {
+            PRINTF_LOG("UDP: Admin reply parsed successfully\n");
+            // Burada admin reply için özel işlem yapılabilir (ör. DB'ye kaydet, logla, vs.)
+            is_valid = 1;
+            // free(reply); // Kullanım sonrası free edilmeli
         }
-        
-        free_tactical_data(tactical_data);
-        
-        PRINTF_LOG("UDP JSON Success: Data saved to database for %s\n", filename);
+        if (reply) free(reply);
+    } else {
+        tactical_data_t* tactical_data = (tactical_data_t*)parsed;
+        if (tactical_data && tactical_data->is_valid) {
+            PRINTF_LOG("UDP: Tactical data parsed successfully\n");
+            // Database'e kaydet
+            char* response = db_save_tactical_data_and_get_response(tactical_data, filename);
+            if (response) {
+                PRINTF_LOG("UDP: Database save response: %s\n", response);
+                free(response);
+            }
+            is_valid = 1;
+        }
+        if (tactical_data) free_tactical_data(tactical_data);
+    }
+    if (is_valid) {
+        PRINTF_LOG("UDP JSON Success: Data processed for %s\n", filename);
         return 0;
     } else {
-        PRINTF_LOG("UDP JSON Error: Invalid tactical data format\n");
-        if (tactical_data) free_tactical_data(tactical_data);
+        PRINTF_LOG("UDP JSON Error: Invalid data format\n");
         return -1;
     }
 }
@@ -466,79 +479,19 @@ int udp_process_json_data(const char* json_data, const char* filename, const cha
  */
 int udp_process_encrypted_data(const char* encrypted_data, const char* filename, const char* client_ip, int client_port, const uint8_t* session_key, const char* jwt_token) {
     PRINTF_LOG("UDP Encrypted Processing: %s from %s:%d\n", filename, client_ip, client_port);
-    
-    if (session_key == NULL) {
-        PRINTF_LOG("UDP Encrypted Error: Session key NULL - anahtar değişimi yapılmamış\n");
-        return -1;
-    }
-    
-    // Hex data'yı decode et - standart crypto_utils fonksiyonunu kullan
-    size_t binary_len;
-    uint8_t* binary_data = hex_to_bytes(encrypted_data, &binary_len);
-    if (!binary_data) {
-        PRINTF_LOG("UDP Encrypted Error: Hex decode failed\n");
-        return -1;
-    }
-    
-    // Decrypt data - IV ilk 16 byte'ta
-    if (binary_len < 16) {
-        PRINTF_LOG("UDP Encrypted Error: Data too short for IV\n");
-        free(binary_data);
-        return -1;
-    }
-    
-    uint8_t* iv = binary_data;
-    uint8_t* ciphertext = binary_data + 16;
-    size_t ciphertext_len = binary_len - 16;
-    
-    char* decrypted_json = decrypt_data(ciphertext, ciphertext_len, session_key, iv);
-    free(binary_data);
-    
-    if (!decrypted_json) {
-        PRINTF_LOG("UDP Encrypted Error: Decryption failed\n");
-        return -1;
-    }
-    
-    PRINTF_LOG("UDP: Data decrypted successfully\n");
-
-    // JWT'den user_id (sub claim) çıkarımı
-    char* user_id_from_jwt = NULL;
-    if (jwt_token) {
-        jwt_t *jwt_ptr = NULL;
-        int decode_result = jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
-        PRINTF_LOG("[UDP][DEBUG] jwt_decode sonucu: %d\n", decode_result);
-        if (decode_result == 0 && jwt_ptr) {
-            const char* sub = jwt_get_grant(jwt_ptr, "sub");
-            PRINTF_LOG("[UDP][DEBUG] JWT sub: %s\n", sub ? sub : "(null)");
-            if (sub) user_id_from_jwt = strdup(sub);
-            jwt_free(jwt_ptr);
+    // handle_encrypted_request fonksiyonunu kullan
+    char* result = handle_encrypted_request(filename, encrypted_data, session_key, jwt_token, -1, client_ip, client_port);
+    int success = -1;
+    if (result) {
+        // Hata mesajı veya başarılı mesaj dönebilir, logla
+        PRINTF_LOG("UDP: handle_encrypted_request sonucu: %s\n", result);
+        // Başarıyı anlamak için mesajı kontrol et
+        if (strstr(result, "HATA:") == NULL) {
+            success = 0;
         }
+        free(result);
     }
-
-    // Parse decrypted JSON
-    tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename, user_id_from_jwt ? user_id_from_jwt : "UNKNOWN");
-    if (user_id_from_jwt) free(user_id_from_jwt);
-    free(decrypted_json);
-    
-    if (tactical_data != NULL && tactical_data->is_valid) {
-        PRINTF_LOG("UDP: Encrypted tactical data parsed successfully\n");
-        
-        // Database'e kaydet
-        char* response = db_save_tactical_data_and_get_response(tactical_data, filename);
-        if (response) {
-            PRINTF_LOG("UDP: Database save response: %s\n", response);
-            free(response);
-        }
-        
-        free_tactical_data(tactical_data);
-        
-        PRINTF_LOG("UDP Encrypted Success: Data saved to database for %s\n", filename);
-        return 0;
-    } else {
-        PRINTF_LOG("UDP Encrypted Error: Invalid decrypted tactical data format\n");
-        if (tactical_data) free_tactical_data(tactical_data);
-        return -1;
-    }
+    return success;
 }
 
 /**

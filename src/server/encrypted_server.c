@@ -826,8 +826,7 @@ void* handle_client(void* arg) {
         } else if (strcmp(command, "ENCRYPTED") == 0 && is_encrypted) {
             PRINTF_LOG("Sifreli JSON parse ediliyor (Tactical Data format)...\n");
             fflush(stdout);
-            parsed_result = handle_encrypted_request(filename, content, get_session_key(&client_manager), jwt_token, client_socket);
-        } else if (strcmp(command, "REPORT_QUERY") == 0) {
+            parsed_result = handle_encrypted_request(filename, content, get_session_key(&client_manager), jwt_token, client_socket, client_ip, 0);        } else if (strcmp(command, "REPORT_QUERY") == 0) {
             PRINTF_LOG("REPORT_QUERY komutu alındı. JWT ile rapor sorgulama başlatılıyor...\n");
             char* jwt_token_part = NULL;
             // content doğrudan JWT token ise
@@ -944,8 +943,8 @@ void* handle_client(void* arg) {
  * @see db_save_tactical_data_and_get_response()
  */
 // Sifreli istek ile bas et
-char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key, const char* jwt_token, int client_socket) {
-    PRINTF_LOG("[DEBUG] handle_encrypted_request: filename=%s, client_socket=%d, jwt_token=%s\n", filename, client_socket, jwt_token ? jwt_token : "(null)");
+char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key, const char* jwt_token, int client_socket, const char* client_ip, int client_port) {
+    PRINTF_LOG("[DEBUG] handle_encrypted_request: filename=%s, client_socket=%d, client_ip=%s, client_port=%d, jwt_token=%s\n", filename, client_socket, client_ip ? client_ip : "(null)", client_port, jwt_token ? jwt_token : "(null)");
     if (session_key == NULL) {
         char *error_msg = malloc(256);
         strcpy(error_msg, "HATA: Session key NULL");
@@ -981,7 +980,6 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
     PRINTF_LOG("[DEBUG] Decrypted JSON: %s\n", decrypted_json);
     // Eğer dosya adı REPORT_QUERY ise, rapor sorgulama işlemi yap
     if (strcmp(filename, "REPORT_QUERY") == 0) {
-        // decrypted_json içeriği JSON string (ör: {"command":"REPORT_QUERY","jwt":"..."})
         cJSON* root = cJSON_Parse(decrypted_json);
         char* jwt_from_json = NULL;
         if (root) {
@@ -997,7 +995,6 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
             snprintf(plain_result, 32768, "{\"error\":\"JWT bulunamadı\"}");
         }
         if (root) cJSON_Delete(root);
-        // Yanıtı AES ile şifrele
         uint8_t iv[CRYPTO_IV_SIZE];
         generate_random_iv(iv);
         crypto_result_t* encrypted = encrypt_data(plain_result, session_key, iv);
@@ -1016,14 +1013,18 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         char* hex_data = bytes_to_hex(combined_data, combined_length);
         free(combined_data);
         free_crypto_result(encrypted);
-        //free(decrypted_json); // Sadece else bloğunda free edilecek
-        // ENCRYPTED:REPORT_QUERY:hex_data formatında döndür
         size_t total_size = strlen("ENCRYPTED:REPORT_QUERY:") + strlen(hex_data) + 1;
         if (strlen(hex_data) > ENCRYPTED_PART_SIZE) {
             PRINTF_LOG("[SERVER] ENCRYPTED yanıtı uzun, parça parça gönderilecek. Toplam uzunluk: %zu\n", strlen(hex_data));
-            send_large_encrypted_response(client_socket, hex_data);
+            if (client_socket >= 0) {
+                send_large_encrypted_response(client_socket, hex_data);
+            } else {
+                // UDP/P2P için burada uygun bir yanıt mekanizması eklenebilir
+                PRINTF_LOG("[SERVER] UDP/P2P için ENCRYPTED yanıtı parça parça gönderilmiyor (client_socket yok)\n");
+            }
             free(hex_data);
-            return NULL; // Artık tek bir yanıt dönülmüyor
+            free(decrypted_json);
+            return NULL;
         } else {
             PRINTF_LOG("[SERVER] ENCRYPTED yanıtı kısa, tek parça gönderilecek. Uzunluk: %zu\n", strlen(hex_data));
             char* result = malloc(total_size);
@@ -1033,13 +1034,11 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
             return result;
         }
     } else if (strcmp(filename, "REPLY_REPORT") == 0) {
-        // ENCRYPTED:REPLY_REPORT için işlevsellik: JSON parse, mapping ve reply gönderimi
         cJSON* root = cJSON_Parse(decrypted_json);
         char* result = NULL;
         int report_id = -1;
-        char* msg = NULL; // Sadece burada tanımla
+        char* msg = NULL;
         char* user_id_from_jwt = NULL;
-        // JWT'den user_id çek
         if (jwt_token) {
             jwt_t *jwt_ptr = NULL;
             if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
@@ -1054,11 +1053,15 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
             if (report_id_item && cJSON_IsNumber(report_id_item)) report_id = report_id_item->valueint;
             if (msg_item && cJSON_IsString(msg_item)) msg = strdup(msg_item->valuestring);
             cJSON_Delete(root);
-            // JWT'den user_id mapping
             if (user_id_from_jwt) {
                 int user_id = atoi(user_id_from_jwt);
-                admin_reply_manager_register_user(user_id, client_socket);
-                PRINTF_LOG("[ADMIN_REPLY] ENCRYPTED REPLY_REPORT ile mapping güncellendi: user_id=%d, socket=%d\n", user_id, client_socket);
+                if (client_socket >= 0) {
+                    admin_reply_manager_register_user(user_id, client_socket);
+                    PRINTF_LOG("[ADMIN_REPLY] ENCRYPTED REPLY_REPORT ile mapping güncellendi: user_id=%d, socket=%d\n", user_id, client_socket);
+                } else if (client_ip && client_port > 0) {
+                    // UDP/P2P için burada user_id <-> client_ip:port mapping yapılabilir
+                    PRINTF_LOG("[ADMIN_REPLY] UDP/P2P REPLY_REPORT için mapping: user_id=%d, ip=%s, port=%d\n", user_id, client_ip, client_port);
+                }
             }
             if (report_id != -1 && msg) {
                 admin_reply_manager_send_reply(report_id, msg, client_socket);
@@ -1077,7 +1080,6 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         if (user_id_from_jwt) free(user_id_from_jwt);
         return result;
     }
-    // Diğer dosya adlarında eski davranış devam ediyor
     char* user_id_from_jwt = NULL;
     if (jwt_token) {
         jwt_t *jwt_ptr = NULL;
@@ -1097,7 +1099,6 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
     if (user_id_from_jwt) free(user_id_from_jwt);
     if (tactical_data != NULL && tactical_data->is_valid) {
         result = db_save_tactical_data_and_get_response(tactical_data, filename);
-        // Bildirim: adminlere gönder
         cJSON* report_json_obj = parse_tactical_data_to_json(tactical_data);
         char* report_json = cJSON_Print(report_json_obj);
         int sender_privilege = 0;
@@ -1108,7 +1109,12 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
                 jwt_free(jwt_ptr);
             }
         }
-        admin_notify_manager_notify_admins(report_json, client_socket, sender_privilege);
+        if (client_socket >= 0) {
+            admin_notify_manager_notify_admins(report_json, client_socket, sender_privilege);
+        } else {
+            // UDP/P2P için admin bildirimi burada yapılabilir
+            PRINTF_LOG("[ADMIN_NOTIFY] UDP/P2P için admin bildirimi: ip=%s, port=%d\n", client_ip ? client_ip : "(null)", client_port);
+        }
         cJSON_Delete(report_json_obj);
         free(report_json);
         free_tactical_data(tactical_data);

@@ -660,3 +660,43 @@ cJSON* parse_tactical_data_to_json(const tactical_data_t* data) {
     cJSON_AddNumberToObject(root, "timestamp", data->timestamp);
     return root;
 }
+
+admin_reply_t* parse_admin_reply_json(const char* json_content) {
+    admin_reply_t* reply = malloc(sizeof(admin_reply_t));
+    if (!reply) return NULL;
+    memset(reply, 0, sizeof(admin_reply_t));
+    reply->is_valid = 0;
+    cJSON* json = cJSON_Parse(json_content);
+    if (!json) {
+        PRINTF_LOG("HATA: Admin reply JSON parse edilemedi\n");
+        free(reply);
+        return NULL;
+    }
+    cJSON* report_id = cJSON_GetObjectItemCaseSensitive(json, "report_id");
+    cJSON* msg = cJSON_GetObjectItemCaseSensitive(json, "msg");
+    if (cJSON_IsNumber(report_id)) {
+        reply->report_id = report_id->valueint;
+    } else {
+        PRINTF_LOG("UYARI: report_id alanı yok veya geçersiz\n");
+        reply->report_id = -1;
+    }
+    if (cJSON_IsString(msg) && msg->valuestring) {
+        strncpy(reply->msg, msg->valuestring, sizeof(reply->msg) - 1);
+        reply->msg[sizeof(reply->msg) - 1] = '\0';
+    } else {
+        strcpy(reply->msg, "");
+    }
+    reply->is_valid = (reply->report_id >= 0 && strlen(reply->msg) > 0);
+    cJSON_Delete(json);
+    return reply;
+}
+
+// Dispatcher fonksiyon: filename'e göre uygun parse fonksiyonunu çağırır
+void* parse_json_by_type(const char* filename, const char* json_content, const char* user_id) {
+    if (strcmp(filename, "REPLY_REPORT") == 0) {
+        return parse_admin_reply_json(json_content);
+    } else {
+        // Varsayılan olarak tactical_data_t parse edilir
+        return parse_json_to_tactical_data(json_content, filename, user_id);
+    }
+}

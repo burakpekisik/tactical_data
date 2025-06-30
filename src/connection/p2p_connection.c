@@ -26,6 +26,7 @@
 #include "database.h"
 #include "json_utils.h"
 #include "logger.h"
+#include "encrypted_server.h"
 
 /// @brief Aktif peer bilgilerini tutan global array
 static p2p_peer_t peers[CONFIG_MAX_CLIENTS];
@@ -973,66 +974,20 @@ void p2p_cleanup_ecdh_for_peer(p2p_peer_t* peer) {
  */
 int p2p_process_encrypted_data(const char* encrypted_data, const char* filename, p2p_peer_t* peer, const char* jwt_token) {
     if (peer == NULL || !peer->ecdh_initialized) {
-        PRINTF_LOG("P2P: ECDH session bulunamadı\n");
+        PRINTF_LOG("P2P: ECDH session yok veya başlatılmamış\n");
         return -1;
     }
     PRINTF_LOG("P2P: Şifreli veri işleniyor: %s (Peer: %s)\n", filename, peer->node_id);
-    // Hex string'i bytes'a çevir
-    size_t encrypted_length;
-    uint8_t* encrypted_bytes = hex_to_bytes(encrypted_data, &encrypted_length);
-    if (encrypted_bytes == NULL) {
-        PRINTF_LOG("P2P: Geçersiz hex format\n");
-        return -1;
-    }
-    // IV'yi ayıkla (ilk 16 byte)
-    if (encrypted_length < CRYPTO_IV_SIZE) {
-        free(encrypted_bytes);
-        PRINTF_LOG("P2P: Yetersiz veri boyutu (IV eksik)\n");
-        return -1;
-    }
-    uint8_t iv[CRYPTO_IV_SIZE];
-    memcpy(iv, encrypted_bytes, CRYPTO_IV_SIZE);
-    // Şifreli veriyi decrypt et
-    char* decrypted_json = decrypt_data(
-        encrypted_bytes + CRYPTO_IV_SIZE,
-        encrypted_length - CRYPTO_IV_SIZE,
-        peer->ecdh_ctx.aes_key, // ECDH session key
-        iv
-    );
-    free(encrypted_bytes);
-    if (decrypted_json == NULL) {
-        PRINTF_LOG("P2P: Decryption başarısız\n");
-        return -1;
-    }
-    PRINTF_LOG("P2P: Veri başarıyla decrypt edildi\n");
-    // JWT'den user_id (sub claim) çıkarımı
-    char* user_id_from_jwt = NULL;
-    if (jwt_token && strlen(jwt_token) > 0) {
-        jwt_t *jwt_ptr = NULL;
-        int decode_result = jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
-        PRINTF_LOG("[P2P] jwt_decode sonucu: %d\n", decode_result);
-        if (decode_result == 0 && jwt_ptr) {
-            const char* sub = jwt_get_grant(jwt_ptr, "sub");
-            PRINTF_LOG("[P2P] JWT sub: %s\n", sub ? sub : "(null)");
-            if (sub) user_id_from_jwt = strdup(sub);
-            jwt_free(jwt_ptr);
+    // handle_encrypted_request fonksiyonunu kullan
+    // peer->ip ve peer->port mevcutsa iletebiliriz, yoksa NULL/0
+    char* result = handle_encrypted_request(filename, encrypted_data, peer->ecdh_ctx.aes_key, jwt_token, peer->socket_fd, peer->ip, peer->port);
+    int success = -1;
+    if (result) {
+        PRINTF_LOG("P2P: handle_encrypted_request sonucu: %s\n", result);
+        if (strstr(result, "HATA:") == NULL) {
+            success = 0;
         }
+        free(result);
     }
-    tactical_data_t* tactical_data = parse_json_to_tactical_data(decrypted_json, filename, user_id_from_jwt ? user_id_from_jwt : "UNKNOWN");
-    free(decrypted_json);
-    if (user_id_from_jwt) free(user_id_from_jwt);
-    if (tactical_data != NULL) {
-        char* response = db_save_tactical_data_and_get_response(tactical_data, filename);
-        if (response) {
-            PRINTF_LOG("P2P: Database save response: %s\n", response);
-            free(response);
-        }
-        free_tactical_data(tactical_data);
-        PRINTF_LOG("P2P: Şifreli veri başarıyla kaydedildi: %s\n", filename);
-        return 0;
-    } else {
-        PRINTF_LOG("P2P: Geçersiz tactical data formatı\n");
-        if (tactical_data) free_tactical_data(tactical_data);
-        return -1;
-    }
+    return success;
 }

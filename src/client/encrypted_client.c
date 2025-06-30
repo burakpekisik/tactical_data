@@ -244,13 +244,10 @@ char* read_file_content(const char* filename, size_t* file_size) {
 int send_json_file(client_connection_t* conn, const char* filename, int encrypt, const char* jwt_token) {
     size_t file_size;
     char *content = read_file_content(filename, &file_size);
-    
     if (content == NULL) {
         return -1;
     }
-    
     PRINTF_LOG("Dosya okundu: %s (%zu byte)\n", filename, file_size);
-    
     char *protocol_message;
     if (encrypt) {
         PRINTF_LOG("Sifreleme islemi baslatiliyor...\n");
@@ -264,34 +261,27 @@ int send_json_file(client_connection_t* conn, const char* filename, int encrypt,
         PRINTF_LOG("Normal gonderim hazırlaniyor...\n");
         protocol_message = create_normal_protocol_message(filename, content, jwt_token);
     }
-    
     if (protocol_message == NULL) {
         free(content);
         return -1;
     }
-    
     PRINTF_LOG("Server'a gonderiliyor...\n");
-    
-    // İlk olarak mevcut bağlantı türüyle dene
     int result = try_send_message_current_connection(conn, protocol_message);
-    
-    if (result < 0) {
-        PRINTF_LOG("Mevcut bağlantı türü (%s) ile gönderim başarısız, fallback deneniyor...\n", 
-               get_connection_type_name(conn->type));
-        
-        // Fallback metodlarını dene (jwt_token parametresi eklendi)
-        result = try_send_message_with_fallback(conn, protocol_message, filename, content, encrypt, jwt_token);
+    if (result < 0 && encrypt) {
+        PRINTF_LOG("Mevcut bağlantı türü (%s) ile gönderim başarısız, UDP fallback deneniyor...\n", get_connection_type_name(conn->type));
+        result = send_json_file_udp_fallback(conn, filename, content, jwt_token);
     }
-    
+    if (result < 0 && encrypt) {
+        PRINTF_LOG("UDP fallback başarısız, P2P fallback deneniyor...\n");
+        result = send_json_file_p2p_fallback(conn, filename, content, jwt_token);
+    }
     if (result < 0) {
         PRINTF_LOG("Tüm fallback metodları başarısız\n");
         free(content);
         free(protocol_message);
         return -1;
     }
-    
     PRINTF_LOG("Basariyla gonderildi\n");
-    
     free(content);
     free(protocol_message);
     return 0;
@@ -935,7 +925,6 @@ int admin_reply_to_report(client_connection_t* conn, const char* jwt_token) {
         PRINTF_LOG("ECDH başlatılmamış - şifreleme yapılamaz\n");
         return -1;
     }
-
     char json_content[1024];
     snprintf(json_content, sizeof(json_content), "{\"report_id\":%d,\"msg\":\"%s\"}", report_id, msg);
     char *protocol_message = create_encrypted_protocol_message("REPLY_REPORT", json_content, conn->ecdh_ctx.aes_key, jwt_token);
@@ -943,16 +932,18 @@ int admin_reply_to_report(client_connection_t* conn, const char* jwt_token) {
         printf("Şifreli mesaj oluşturulamadı!\n");
         return -1;
     }
-    send(conn->socket, protocol_message, strlen(protocol_message), 0);
+    int result = try_send_message_current_connection(conn, protocol_message);
+    if (result < 0) {
+        PRINTF_LOG("Mevcut bağlantı ile gönderim başarısız, UDP fallback deneniyor...\n");
+        result = admin_reply_to_report_udp_fallback(conn, report_id, msg, jwt_token);
+    }
+    if (result < 0) {
+        PRINTF_LOG("UDP fallback başarısız, P2P fallback deneniyor...\n");
+        result = admin_reply_to_report_p2p_fallback(conn, report_id, msg, jwt_token);
+    }
     free(protocol_message);
-    // Sunucudan REPLY_REPORT cevabını bekle
-    char recvbuf[32768];
-    ssize_t n = recv(conn->socket, recvbuf, sizeof(recvbuf)-1, 0);
-    if (n > 0) {
-        recvbuf[n] = '\0';
-        printf("%s\n", recvbuf);
-    } else {
-        printf("Sunucudan yanıt alınamadı veya bağlantı kapandı.\n");
+    if (result < 0) {
+        printf("Tüm bağlantı tipleriyle gönderim başarısız!\n");
         return -1;
     }
     printf("Rapor cevabı şifreli olarak gönderildi ve işlem tamamlandı.\n");
