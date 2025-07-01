@@ -40,6 +40,15 @@ private slots:
     void onDataReceived(const QString& data);
     void onLogMessage(const QString& message);
     void onReportsReceived(const QJsonArray& reports, int privilege); // <-- RAPOR SLOTU
+    void onAdminReplyToReport();
+    void onQueryMyReplies();
+    void onListenForNotifications();
+    void onSwitchConnectionType();
+    void onTestConnections();
+    void onAdminNotificationReceived(const QString& notification);
+    void onReplyQueryResultReceived(const QJsonArray& replies);
+    void onConnectionTypeChanged(ClientWrapper::ConnectionType type);
+    void onFallbackStatusChanged(const QString& status);
 
 private:
     void setupUI();
@@ -48,6 +57,8 @@ private:
     void setupConnectionPanel();
     void setupDataPanel();
     void setupLogPanel();
+    void setupAdminPanel();      // --- Yeni admin panel ---
+    void setupFallbackPanel();   // --- Yeni fallback panel ---
 
     // UI bileşenleri
     QWidget *centralWidget;
@@ -63,6 +74,8 @@ private:
     QGroupBox *connectionGroup;
     QGroupBox *dataGroup;
     QGroupBox *logGroup;
+    QGroupBox *adminGroup;      // --- Yeni admin grup ---
+    QGroupBox *fallbackGroup;   // --- Yeni fallback grup ---
     
     // Bağlantı kontrolleri
     QLineEdit *serverAddressEdit;
@@ -70,6 +83,7 @@ private:
     QPushButton *connectButton;
     QPushButton *disconnectButton;
     QLabel *connectionStatusLabel;
+    QComboBox *connectionTypeCombo;  // --- Bağlantı türü seçici ---
     
     // Veri kontrolleri
     QComboBox *dataTypeCombo;
@@ -81,6 +95,19 @@ private:
     
     // Log
     QTextEdit *logTextEdit;
+    
+    // --- Admin kontrolleri ---
+    QPushButton *adminReplyButton;
+    QPushButton *queryRepliesButton;
+    QPushButton *listenNotificationsButton;
+    QLineEdit *replyMessageEdit;
+    QSpinBox *reportIdSpin;
+    QTextEdit *adminLogEdit;
+    
+    // --- Fallback kontrolleri ---
+    QPushButton *testConnectionsButton;
+    QLabel *fallbackStatusLabel;
+    QTextEdit *fallbackLogEdit;
     
     // Client wrapper
     ClientWrapper *clientWrapper;

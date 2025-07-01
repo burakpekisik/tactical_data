@@ -20,7 +20,13 @@
 #include <QDebug>
 #include <QJsonArray>
 extern "C" {
-#include "crypto_utils.h"
+    #include "encrypted_client.h"
+    #include "crypto_utils.h"
+    #include "protocol_manager.h"
+    #include "fallback_manager.h"
+    #include "config.h"
+    #include "logger.h"
+    #include "cJSON.h"
 }
 
 QByteArray decryptAes256Cbc(const QByteArray &cipher, const QByteArray &key, const QByteArray &iv);
@@ -54,6 +60,9 @@ ClientWrapper::ClientWrapper(QObject *parent)
     , ecdhInitialized(false)
     , handshakeCompleted(false)
     , jwtToken("")
+    , expectedParts(0)
+    , receivedParts(0)
+    , isProcessingParts(false)
 {
     // ECDH context'i sıfırla
     memset(&ecdhContext, 0, sizeof(ecdh_context_t));
@@ -283,75 +292,28 @@ void ClientWrapper::onDataReceived()
         PRINTF_LOG("Received server public key (%d bytes)\n", pubKey.size());
         LOG_CLIENT_INFO("Processing server public key for ECDH handshake");
         processECDHResponse(pubKey);
+        return;
     }
+
+    // --- Parçalı ENCRYPTED_PART yanıtları işle ---
+    processEncryptedParts();
+
+    // --- Tek parçalı ENCRYPTED yanıtları işle ---
+    processEncryptedResponse();
 
     // --- Düz metin/legacy mesajları ayıkla ---
-    const QByteArray prefix = "ENCRYPTED:REPORT_QUERY:";
-    while (!incomingBuffer.isEmpty() && !incomingBuffer.startsWith(prefix)) {
+    while (!incomingBuffer.isEmpty()) {
         int plainEnd = incomingBuffer.indexOf('\n');
         if (plainEnd == -1) break; // Satır sonu yoksa bekle
-        QByteArray plainMsg = incomingBuffer.left(plainEnd + 1);
+        
+        QByteArray plainMsg = incomingBuffer.left(plainEnd);
         incomingBuffer.remove(0, plainEnd + 1);
-        qDebug() << "[DEBUG] Plain/legacy data received:" << QString(plainMsg.left(200));
-        emit dataReceived(QString::fromUtf8(plainMsg));
-    }
-
-    // Şifreli mesajı buffer'da arayalım
-    int startIdx = incomingBuffer.indexOf(prefix);
-    while (startIdx != -1) {
-        int endIdx = incomingBuffer.indexOf('\n', startIdx);
-        QByteArray fullMsg;
-        if (endIdx == -1) {
-            if (startIdx == 0 && incomingBuffer.size() > prefix.size() + 32) {
-                fullMsg = incomingBuffer;
-                incomingBuffer.clear();
-                qDebug() << "[DEBUG] Tam mesaj (satır sonu yok), kalan tüm buffer işleniyor.";
-            } else {
-                qDebug() << "[DEBUG] Tam mesaj gelmedi, buffer'da bekleniyor.";
-                break;
-            }
-        } else {
-            int msgLen = endIdx - startIdx;
-            fullMsg = incomingBuffer.mid(startIdx, msgLen);
-            incomingBuffer.remove(0, endIdx + 1);
+        
+        QString msgStr = QString::fromUtf8(plainMsg);
+        if (!msgStr.startsWith("ENCRYPTED") && !msgStr.isEmpty()) {
+            qDebug() << "[DEBUG] Plain/legacy data received:" << msgStr.left(200);
+            emit dataReceived(msgStr);
         }
-        // --- HexData temizliği ve şifreli ayrıştırma ---
-        QByteArray hexData = fullMsg.mid(prefix.size());
-        QByteArray cleanHexData;
-        for (char c : hexData) {
-            if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
-                cleanHexData.append(c);
-        }
-        qDebug() << "[DEBUG] Gelen hexData uzunluğu:" << cleanHexData.size();
-        qDebug() << "[DEBUG] cleanHexData (ilk 64):" << QString(cleanHexData.left(64));
-        QByteArray binData = QByteArray::fromHex(cleanHexData);
-        if (binData.size() < 16) {
-            logError("Yanıttaki veri çok kısa");
-            startIdx = incomingBuffer.indexOf(prefix);
-            continue;
-        }
-        QByteArray iv = binData.left(16);
-        QByteArray enc = binData.mid(16);
-        qDebug() << "[DEBUG] IV (hex):" << iv.toHex();
-        qDebug() << "[DEBUG] Şifreli veri (ilk 64):" << enc.left(64).toHex();
-        qDebug() << "[DEBUG] AES anahtarının ilk 16 byte'ı:" << QByteArray(reinterpret_cast<const char*>(aesKey), 16).toHex();
-        QByteArray plainJson = decryptAes256Cbc(enc, QByteArray(reinterpret_cast<const char*>(aesKey), 32), iv);
-        qDebug() << "[DEBUG] Decrypt sonrası JSON (ilk 200):" << QString(plainJson.left(200));
-        QJsonDocument docResp = QJsonDocument::fromJson(plainJson);
-        if (!docResp.isObject()) {
-            logError("Yanıt JSON parse edilemedi");
-            startIdx = incomingBuffer.indexOf(prefix);
-            continue;
-        }
-        QJsonObject obj = docResp.object();
-        if (!obj.contains("reports") || !obj["reports"].isArray()) {
-            logError("Yanıtta rapor listesi yok");
-            startIdx = incomingBuffer.indexOf(prefix);
-            continue;
-        }
-        int privilege = obj.contains("privilege") ? obj["privilege"].toInt() : 0;
-        emit reportsReceived(obj["reports"].toArray(), privilege);
-        startIdx = incomingBuffer.indexOf(prefix);
     }
 }
 
@@ -862,9 +824,10 @@ void ClientWrapper::getReports() {
     free(encryptedMsg);
     tcpSocket->write(msgData);
     tcpSocket->flush();
+    tcpSocket->waitForBytesWritten();
 }
 
-// Basit bir şablon: Gerçek AES çözümleme fonksiyonunu buraya eklemelisin
+// Basit bir şablon: Gerçek AES çözümleme fonksiyonu buraya eklemelisin
 QByteArray ClientWrapper::decryptAes256Cbc(const QByteArray &cipher, const QByteArray &key, const QByteArray &iv) {
     // crypto_utils.h'daki decrypt_data fonksiyonunu kullan
     char* plain = decrypt_data(reinterpret_cast<const uint8_t*>(cipher.constData()), cipher.size(),
@@ -876,4 +839,487 @@ QByteArray ClientWrapper::decryptAes256Cbc(const QByteArray &cipher, const QByte
     QByteArray result = QByteArray(plain, strlen(plain));
     free(plain);
     return result;
+}
+
+// --- YENİ EKLENEN FONKSIYONLAR ---
+
+/**
+ * @brief Admin rapora cevap gönderir
+ * @param reportId Rapor ID'si
+ * @param message Cevap mesajı
+ */
+void ClientWrapper::adminReplyToReport(int reportId, const QString& message) {
+    if (!isConnected() || !handshakeCompleted) {
+        logError("Bağlantı yok veya ECDH tamamlanmamış, admin reply gönderilemez");
+        return;
+    }
+    
+    // JSON formatında admin reply mesajı oluştur
+    QJsonObject replyObj;
+    replyObj["report_id"] = reportId;
+    replyObj["msg"] = message;
+    replyObj["jwt"] = jwtToken;
+    
+    QJsonDocument doc(replyObj);
+    QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
+    
+    // Şifreli protokol mesajı oluştur
+    char* encryptedMsg = create_encrypted_protocol_message("REPLY_REPORT", 
+                                                          jsonData.constData(), 
+                                                          aesKey, 
+                                                          jwtToken.toUtf8().constData());
+    if (!encryptedMsg) {
+        logError("Admin reply şifreli mesajı oluşturulamadı");
+        return;
+    }
+    
+    // Mesajı gönder
+    QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
+    free(encryptedMsg);
+    
+    tcpSocket->write(msgData);
+    tcpSocket->flush();
+    
+    logInfo(QString("Admin reply gönderildi: Rapor ID %1").arg(reportId));
+}
+
+/**
+ * @brief Kendi reply'larını JWT ile sorgular
+ */
+void ClientWrapper::queryMyReplies() {
+    if (!isConnected() || !handshakeCompleted) {
+        logError("Bağlantı yok veya ECDH tamamlanmamış, reply sorgulanamaz");
+        return;
+    }
+    
+    // JSON formatında query mesajı oluştur
+    QJsonObject queryObj;
+    queryObj["jwt"] = jwtToken;
+    
+    QJsonDocument doc(queryObj);
+    QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
+    
+    // Şifreli protokol mesajı oluştur
+    char* encryptedMsg = create_encrypted_protocol_message("REPLY_QUERY", 
+                                                          jsonData.constData(), 
+                                                          aesKey, 
+                                                          jwtToken.toUtf8().constData());
+    if (!encryptedMsg) {
+        logError("Reply query şifreli mesajı oluşturulamadı");
+        return;
+    }
+    
+    // Mesajı gönder
+    QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
+    free(encryptedMsg);
+    
+    tcpSocket->write(msgData);
+    tcpSocket->flush();
+    
+    logInfo("Kendi reply'lar sorgulandı");
+}
+
+/**
+ * @brief Admin bildirimlerini dinlemeyi başlatır
+ */
+void ClientWrapper::listenForAdminNotifications() {
+    if (!isConnected()) {
+        logError("Bağlantı yok, admin bildirimleri dinlenemez");
+        return;
+    }
+    
+    // Admin notification listen mesajı gönder
+    QString notifyCmd = QString("ADMIN_NOTIFY_LISTEN:%1").arg(jwtToken);
+    QByteArray cmdData = notifyCmd.toUtf8();
+    
+    tcpSocket->write(cmdData);
+    tcpSocket->flush();
+    
+    logInfo("Admin bildirim dinleme başlatıldı");
+}
+
+/**
+ * @brief Bağlantı türünü değiştirir
+ * @param type Yeni bağlantı türü
+ */
+void ClientWrapper::switchConnectionType(ConnectionType type) {
+    if (currentType == type) {
+        logInfo("Aynı bağlantı türü zaten aktif");
+        return;
+    }
+    
+    // Mevcut bağlantıyı kapat
+    if (isConnected()) {
+        disconnectFromServer();
+    }
+    
+    currentType = type;
+    logInfo(QString("Bağlantı türü değiştirildi: %1").arg(getConnectionTypeString()));
+}
+
+/**
+ * @brief Mevcut bağlantı türünün string karşılığını döner
+ * @return QString Bağlantı türü string'i
+ */
+QString ClientWrapper::getConnectionTypeString() const {
+    switch (currentType) {
+        case ConnectionType::TCP: return "TCP";
+        case ConnectionType::UDP: return "UDP";
+        case ConnectionType::P2P: return "P2P";
+        default: return "Unknown";
+    }
+}
+
+/**
+ * @brief UDP bağlantısını test eder
+ * @return bool Test sonucu
+ */
+bool ClientWrapper::testUdpConnection() {
+    if (!udpSocket) {
+        udpSocket = new QUdpSocket(this);
+    }
+    
+    // UDP test mesajı gönder
+    QByteArray testMsg = "UDP_TEST";
+    qint64 sent = udpSocket->writeDatagram(testMsg, QHostAddress(serverHost), serverPort + 1);
+    
+    if (sent > 0) {
+        logInfo("UDP test mesajı gönderildi");
+        return true;
+    } else {
+        logError("UDP test mesajı gönderilemedi");
+        return false;
+    }
+}
+
+/**
+ * @brief P2P bağlantısını test eder
+ * @return bool Test sonucu
+ */
+bool ClientWrapper::testP2pConnection() {
+    if (!p2pSocket) {
+        p2pSocket = new QTcpSocket(this);
+    }
+    
+    // P2P port'una bağlanmayı dene
+    p2pSocket->connectToHost(serverHost, serverPort + 2);
+    
+    if (p2pSocket->waitForConnected(3000)) {
+        logInfo("P2P test bağlantısı başarılı");
+        p2pSocket->disconnectFromHost();
+        return true;
+    } else {
+        logError("P2P test bağlantısı başarısız");
+        return false;
+    }
+}
+
+/**
+ * @brief Fallback mekanizması ile tüm protokolleri test eder
+ * @param jsonString Test edilecek JSON verisi
+ * @param encrypted Şifreli gönderim
+ * @return bool Test sonucu
+ */
+bool ClientWrapper::testAllConnectionTypes(const QString& jsonString, bool encrypted) {
+    logInfo("Tüm bağlantı türleri test ediliyor...");
+    
+    // TCP test
+    if (currentType != ConnectionType::TCP) {
+        if (connectToServerInternal(serverHost, serverPort, ConnectionType::TCP)) {
+            if (trySendJsonInternal(jsonString, encrypted)) {
+                logInfo("TCP bağlantı testi başarılı");
+                disconnectFromServer();
+            }
+        }
+    }
+    
+    // UDP test
+    if (testUdpConnection()) {
+        if (connectUdp(serverHost, serverPort + 1)) {
+            QByteArray udpAesKey;
+            if (udpEcdhHandshake(udpAesKey)) {
+                logInfo("UDP ECDH testi başarılı");
+            }
+        }
+    }
+    
+    // P2P test
+    if (testP2pConnection()) {
+        if (connectP2p(serverHost, serverPort + 2)) {
+            QByteArray p2pAesKey;
+            if (p2pEcdhHandshake(p2pAesKey)) {
+                logInfo("P2P ECDH testi başarılı");
+            }
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief İç bağlantı kurma fonksiyonu - fallback test için
+ * @param host Sunucu host'u
+ * @param port Sunucu port'u
+ * @param type Bağlantı türü
+ * @return bool Bağlantı sonucu
+ */
+bool ClientWrapper::connectToServerInternal(const QString& host, int port, ConnectionType type) {
+    switch (type) {
+        case ConnectionType::TCP:
+            if (!tcpSocket) tcpSocket = new QTcpSocket(this);
+            tcpSocket->connectToHost(host, port);
+            return tcpSocket->waitForConnected(3000);
+            
+        case ConnectionType::UDP:
+            return connectUdp(host, port);
+            
+        case ConnectionType::P2P:
+            return connectP2p(host, port);
+            
+        default:
+            return false;
+    }
+}
+
+/**
+ * @brief Gelişmiş hata yönetimi ve fallback durumu raporu
+ * @param error Hata mesajı
+ * @param canFallback Fallback mümkün mü
+ */
+void ClientWrapper::handleAdvancedError(const QString& error, bool canFallback) {
+    logError(error);
+    
+    if (canFallback) {
+        logInfo("Fallback mekanizması deneniyor...");
+        emit connectionStatusChanged(Connecting, "Alternatif bağlantı deneniyor...");
+        
+        // Otomatik fallback tetikle
+        QTimer::singleShot(1000, this, [this]() {
+            // Test verisi ile fallback dene
+            QString testJson = createTacticalDataJson(0.0, 0.0, "fallback_test", "Fallback test");
+            trySendWithFallback(testJson, true);
+        });
+    }
+}
+
+/**
+ * @brief Parçalı ENCRYPTED_PART yanıtlarını işler
+ */
+void ClientWrapper::processEncryptedParts()
+{
+    // ENCRYPTED_PART: formatını ara ve işle
+    while (true) {
+        int headerIdx = incomingBuffer.indexOf("ENCRYPTED_PART:");
+        if (headerIdx == -1) break;
+        
+        // Header'dan sonraki kısmı al
+        int afterHeader = headerIdx + 15; // "ENCRYPTED_PART:" uzunluğu
+        if (afterHeader >= incomingBuffer.size()) break; // Yetersiz veri
+        
+        // Header parse et: idx:total:length:
+        QByteArray headerData = incomingBuffer.mid(afterHeader, 50); // Yeterli uzunluk al
+        QList<QByteArray> parts = headerData.split(':');
+        if (parts.size() < 4) {
+            // Header tam gelmemiş, veri bekle
+            break;
+        }
+        
+        int idx = parts[0].toInt();
+        int total = parts[1].toInt();
+        int plen = parts[2].toInt();
+        
+        // Header'ın sonunu bul (3. ':' karakterine kadar)
+        int colonCount = 0;
+        int hexStart = afterHeader;
+        while (hexStart < incomingBuffer.size() && colonCount < 3) {
+            if (incomingBuffer[hexStart] == ':') colonCount++;
+            hexStart++;
+        }
+        
+        if (colonCount < 3) break; // Header tam gelmemiş
+        
+        // Yeterli hex verisi var mı kontrol et
+        if (hexStart + plen > incomingBuffer.size()) {
+            qDebug() << "[DEBUG] Yeterli hex verisi yok: needed=" << plen << ", available=" << (incomingBuffer.size() - hexStart);
+            break; // Daha fazla veri bekle
+        }
+        
+        // Hex veriyi al
+        QByteArray hexData = incomingBuffer.mid(hexStart, plen);
+        
+        qDebug() << "[DEBUG] ENCRYPTED_PART" << idx << "/" << total << "plen=" << plen << "alındı";
+        qDebug() << "[DEBUG] Hex data (ilk 32):" << hexData.left(32);
+        
+        // İlk parça mı?
+        if (!isProcessingParts) {
+            resetPartProcessing();
+            isProcessingParts = true;
+            expectedParts = total;
+        }
+        
+        // Hex veriyi biriktir
+        allHexData.append(hexData);
+        receivedParts++;
+        
+        // Bu parçayı buffer'dan çıkar
+        int consumed = hexStart + plen - headerIdx;
+        incomingBuffer.remove(headerIdx, consumed);
+        
+        qDebug() << "[DEBUG] Parça" << receivedParts << "/" << expectedParts << "işlendi";
+        
+        // Tüm parçalar alındı mı?
+        if (receivedParts >= expectedParts) {
+            finalizePartProcessing();
+            break;
+        }
+    }
+}
+
+/**
+ * @brief Tek parçalı ENCRYPTED yanıtlarını işler
+ */
+void ClientWrapper::processEncryptedResponse()
+{
+    // Tek parçalı ENCRYPTED: yanıtı ara
+    int encIdx = incomingBuffer.indexOf("ENCRYPTED:");
+    if (encIdx != -1 && incomingBuffer.indexOf("ENCRYPTED_PART:") == -1) {
+        // Tek parça yanıt bulundu
+        int dataStart = encIdx + 10; // "ENCRYPTED:" uzunluğu
+        int lineEnd = incomingBuffer.indexOf('\n', dataStart);
+        
+        if (lineEnd == -1 && incomingBuffer.size() - dataStart > 100) {
+            // Satır sonu yok ama yeterli veri var, tümünü al
+            lineEnd = incomingBuffer.size();
+        }
+        
+        if (lineEnd != -1) {
+            QByteArray fullData = incomingBuffer.mid(dataStart, lineEnd - dataStart);
+            
+            qDebug() << "[DEBUG] Tek parça ENCRYPTED yanıt bulundu, uzunluk:" << fullData.size();
+            qDebug() << "[DEBUG] Full data (ilk 100):" << QString(fullData.left(100));
+            
+            // Format kontrolü: filename:hex_data:jwt_token veya sadece hex_data
+            QList<QByteArray> dataParts = fullData.split(':');
+            QByteArray hexData;
+            
+            if (dataParts.size() >= 3) {
+                // Format: filename:hex_data:jwt_token
+                hexData = dataParts[1];
+                qDebug() << "[DEBUG] Format: filename:hex_data:jwt_token, hex uzunluk:" << hexData.size();
+                qDebug() << "[DEBUG] Hex data parçası:" << QString(hexData.left(64));
+            } else if (dataParts.size() == 2) {
+                // Format: filename:hex_data (JWT yok)
+                hexData = dataParts[1];
+                qDebug() << "[DEBUG] Format: filename:hex_data, hex uzunluk:" << hexData.size();
+                qDebug() << "[DEBUG] Hex data parçası:" << QString(hexData.left(64));
+            } else {
+                // Direkt hex data
+                hexData = fullData;
+                qDebug() << "[DEBUG] Format: direkt hex data, uzunluk:" << hexData.size();
+                qDebug() << "[DEBUG] Raw hex data (ilk 64):" << QString(hexData.left(64));
+            }
+            
+            // Hex veriyi temizle (sadece hex karakterler) - trim de yap
+            hexData = hexData.trimmed();
+            QByteArray cleanHex;
+            for (char c : hexData) {
+                if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+                    cleanHex.append(c);
+                }
+            }
+            
+            qDebug() << "[DEBUG] Temizlenmiş hex uzunluk:" << cleanHex.size();
+            qDebug() << "[DEBUG] Temizlenmiş hex (ilk 32):" << QString(cleanHex.left(32));
+            
+            // Hex'i binary'ye çevir ve decrypt et
+            QByteArray binData = QByteArray::fromHex(cleanHex);
+            if (binData.size() >= 16) {
+                QByteArray iv = binData.left(16);
+                QByteArray enc = binData.mid(16);
+                
+                qDebug() << "[DEBUG] IV:" << iv.toHex();
+                qDebug() << "[DEBUG] Encrypted size:" << enc.size();
+                
+                QByteArray plainJson = decryptAes256Cbc(enc, QByteArray(reinterpret_cast<const char*>(aesKey), 32), iv);
+                
+                if (!plainJson.isEmpty()) {
+                    qDebug() << "[DEBUG] Decrypt başarılı, JSON:" << QString(plainJson.left(200));
+                    
+                    QJsonDocument doc = QJsonDocument::fromJson(plainJson);
+                    if (doc.isObject()) {
+                        QJsonObject obj = doc.object();
+                        if (obj.contains("reports") && obj["reports"].isArray()) {
+                            int privilege = obj.contains("privilege") ? obj["privilege"].toInt() : 0;
+                            emit reportsReceived(obj["reports"].toArray(), privilege);
+                        }
+                    }
+                } else {
+                    qDebug() << "[DEBUG] Decrypt başarısız";
+                }
+            }
+            
+            // Bu mesajı buffer'dan çıkar
+            incomingBuffer.remove(encIdx, lineEnd - encIdx + (lineEnd < incomingBuffer.size() ? 1 : 0));
+        }
+    }
+}
+
+/**
+ * @brief Parça işleme durumunu sıfırlar
+ */
+void ClientWrapper::resetPartProcessing()
+{
+    allHexData.clear();
+    allPlainData.clear();
+    expectedParts = 0;
+    receivedParts = 0;
+    isProcessingParts = false;
+}
+
+/**
+ * @brief Parçalı işleme tamamlandığında çağrılır
+ */
+void ClientWrapper::finalizePartProcessing()
+{
+    qDebug() << "[DEBUG] Tüm parçalar alındı, toplam hex uzunluk:" << allHexData.size();
+    qDebug() << "[DEBUG] İlk 64 hex:" << allHexData.left(64);
+    
+    // Hex'i binary'ye çevir
+    QByteArray binData = QByteArray::fromHex(allHexData);
+    if (binData.size() >= 16) {
+        QByteArray iv = binData.left(16);
+        QByteArray enc = binData.mid(16);
+        
+        qDebug() << "[DEBUG] IV:" << iv.toHex();
+        qDebug() << "[DEBUG] Encrypted size:" << enc.size();
+        
+        // Decrypt et
+        QByteArray plainJson = decryptAes256Cbc(enc, QByteArray(reinterpret_cast<const char*>(aesKey), 32), iv);
+        
+        if (!plainJson.isEmpty()) {
+            qDebug() << "[DEBUG] Parçalı decrypt başarılı, JSON:" << QString(plainJson.left(200));
+            
+            // JSON parse et ve raporları emit et
+            QJsonDocument doc = QJsonDocument::fromJson(plainJson);
+            if (doc.isObject()) {
+                QJsonObject obj = doc.object();
+                if (obj.contains("reports") && obj["reports"].isArray()) {
+                    int privilege = obj.contains("privilege") ? obj["privilege"].toInt() : 0;
+                    emit reportsReceived(obj["reports"].toArray(), privilege);
+                    qDebug() << "[DEBUG] Raporlar emit edildi, sayı:" << obj["reports"].toArray().size();
+                } else {
+                    qDebug() << "[DEBUG] JSON'da reports array bulunamadı";
+                }
+            } else {
+                qDebug() << "[DEBUG] JSON parse edilemedi";
+            }
+        } else {
+            qDebug() << "[DEBUG] Parçalı decrypt başarısız";
+        }
+    } else {
+        qDebug() << "[DEBUG] Binary data çok kısa:" << binData.size();
+    }
+    
+    // Temizle
+    resetPartProcessing();
 }

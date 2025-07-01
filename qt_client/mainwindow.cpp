@@ -91,7 +91,7 @@ void MainWindow::setupUI()
     mainSplitter = new QSplitter(Qt::Horizontal, this);
     
     setupMapPanel();
-    setupControlPanel();
+    setupControlPanel(); // Bu zaten admin ve fallback panellerini içinde kuruyor
     
     // Splitter'a panelleri ekle
     mainSplitter->addWidget(mapPanel);
@@ -160,10 +160,14 @@ void MainWindow::setupControlPanel()
     
     setupConnectionPanel();
     setupDataPanel();
+    setupAdminPanel();      // Admin paneli oluştur
+    setupFallbackPanel();   // Fallback paneli oluştur  
     setupLogPanel();
     
     controlLayout->addWidget(connectionGroup);
     controlLayout->addWidget(dataGroup);
+    controlLayout->addWidget(adminGroup);       // Admin paneli
+    controlLayout->addWidget(fallbackGroup);    // Fallback paneli
     controlLayout->addWidget(logGroup);
     controlLayout->setContentsMargins(5, 5, 5, 5);
 
@@ -576,4 +580,205 @@ void MainWindow::showStatusMessage(const QString& message, int timeout)
         QVariant allowAdd = (currentMode == SendMode);
         mapWidget->findChild<QQuickWidget*>()->rootContext()->setContextProperty("allowAddMarker", allowAdd);
     }
+}
+
+/**
+ * @brief Admin panel kurulumu
+ */
+void MainWindow::setupAdminPanel()
+{
+    adminGroup = new QGroupBox("Admin İşlemleri", this);
+    QVBoxLayout *adminLayout = new QVBoxLayout(adminGroup);
+    
+    // Report ID ve mesaj girişi
+    QHBoxLayout *replyLayout = new QHBoxLayout();
+    replyLayout->addWidget(new QLabel("Rapor ID:"));
+    reportIdSpin = new QSpinBox();
+    reportIdSpin->setRange(1, 99999);
+    replyLayout->addWidget(reportIdSpin);
+    
+    replyMessageEdit = new QLineEdit();
+    replyMessageEdit->setPlaceholderText("Admin cevabı yazın...");
+    replyLayout->addWidget(replyMessageEdit);
+    
+    adminReplyButton = new QPushButton("Rapora Cevap Ver");
+    replyLayout->addWidget(adminReplyButton);
+    
+    adminLayout->addLayout(replyLayout);
+    
+    // Diğer admin butonları
+    QHBoxLayout *adminButtonsLayout = new QHBoxLayout();
+    queryRepliesButton = new QPushButton("Kendi Cevaplarımı Sorgula");
+    listenNotificationsButton = new QPushButton("Bildirimleri Dinle");
+    
+    adminButtonsLayout->addWidget(queryRepliesButton);
+    adminButtonsLayout->addWidget(listenNotificationsButton);
+    adminLayout->addLayout(adminButtonsLayout);
+    
+    // Admin log alanı
+    adminLogEdit = new QTextEdit();
+    adminLogEdit->setMaximumHeight(150);
+    adminLogEdit->setPlaceholderText("Admin işlem logları burada görünecek...");
+    adminLayout->addWidget(adminLogEdit);
+    
+    // Varsayılan olarak gizli
+    adminGroup->setVisible(false);
+    
+    // Signal bağlantıları
+    connect(adminReplyButton, &QPushButton::clicked, this, &MainWindow::onAdminReplyToReport);
+    connect(queryRepliesButton, &QPushButton::clicked, this, &MainWindow::onQueryMyReplies);
+    connect(listenNotificationsButton, &QPushButton::clicked, this, &MainWindow::onListenForNotifications);
+}
+
+/**
+ * @brief Fallback panel kurulumu
+ */
+void MainWindow::setupFallbackPanel()
+{
+    fallbackGroup = new QGroupBox("Bağlantı Yönetimi", this);
+    QVBoxLayout *fallbackLayout = new QVBoxLayout(fallbackGroup);
+    
+    // Bağlantı türü seçimi
+    QHBoxLayout *typeLayout = new QHBoxLayout();
+    typeLayout->addWidget(new QLabel("Bağlantı Türü:"));
+    connectionTypeCombo = new QComboBox();
+    connectionTypeCombo->addItems({"TCP", "UDP", "P2P"});
+    typeLayout->addWidget(connectionTypeCombo);
+    
+    QPushButton *switchTypeButton = new QPushButton("Türü Değiştir");
+    typeLayout->addWidget(switchTypeButton);
+    fallbackLayout->addLayout(typeLayout);
+    
+    // Test butonları
+    QHBoxLayout *testLayout = new QHBoxLayout();
+    testConnectionsButton = new QPushButton("Tüm Bağlantıları Test Et");
+    testLayout->addWidget(testConnectionsButton);
+    fallbackLayout->addLayout(testLayout);
+    
+    // Fallback durum etiketi
+    fallbackStatusLabel = new QLabel("Fallback Durumu: Hazır");
+    fallbackLayout->addWidget(fallbackStatusLabel);
+    
+    // Fallback log alanı
+    fallbackLogEdit = new QTextEdit();
+    fallbackLogEdit->setMaximumHeight(120);
+    fallbackLogEdit->setPlaceholderText("Fallback işlem logları burada görünecek...");
+    fallbackLayout->addWidget(fallbackLogEdit);
+    
+    // Signal bağlantıları
+    connect(switchTypeButton, &QPushButton::clicked, this, &MainWindow::onSwitchConnectionType);
+    connect(testConnectionsButton, &QPushButton::clicked, this, &MainWindow::onTestConnections);
+}
+
+/**
+ * @brief Admin rapora cevap verme slot'u
+ */
+void MainWindow::onAdminReplyToReport()
+{
+    int reportId = reportIdSpin->value();
+    QString message = replyMessageEdit->text().trimmed();
+    
+    if (message.isEmpty()) {
+        adminLogEdit->append("<b>[HATA]</b> Cevap mesajı boş olamaz");
+        return;
+    }
+    
+    adminLogEdit->append(QString("<b>[INFO]</b> Rapor %1'e cevap gönderiliyor: %2").arg(reportId).arg(message));
+    clientWrapper->adminReplyToReport(reportId, message);
+    replyMessageEdit->clear();
+}
+
+/**
+ * @brief Kendi cevapları sorgulama slot'u
+ */
+void MainWindow::onQueryMyReplies()
+{
+    adminLogEdit->append("<b>[INFO]</b> Kendi cevaplar sorgulanıyor...");
+    clientWrapper->queryMyReplies();
+}
+
+/**
+ * @brief Bildirim dinleme slot'u
+ */
+void MainWindow::onListenForNotifications()
+{
+    adminLogEdit->append("<b>[INFO]</b> Admin bildirimleri dinleniyor...");
+    clientWrapper->listenForAdminNotifications();
+}
+
+/**
+ * @brief Bağlantı türü değiştirme slot'u
+ */
+void MainWindow::onSwitchConnectionType()
+{
+    QString typeText = connectionTypeCombo->currentText();
+    ClientWrapper::ConnectionType type;
+    
+    if (typeText == "TCP") type = ClientWrapper::ConnectionType::TCP;
+    else if (typeText == "UDP") type = ClientWrapper::ConnectionType::UDP;
+    else if (typeText == "P2P") type = ClientWrapper::ConnectionType::P2P;
+    else return;
+    
+    fallbackLogEdit->append(QString("<b>[INFO]</b> Bağlantı türü %1'e değiştiriliyor...").arg(typeText));
+    clientWrapper->switchConnectionType(type);
+}
+
+/**
+ * @brief Bağlantı testi slot'u
+ */
+void MainWindow::onTestConnections()
+{
+    fallbackLogEdit->append("<b>[INFO]</b> Tüm bağlantı türleri test ediliyor...");
+    
+    QString testJson = clientWrapper->createTacticalDataJson(selectedLatitude, selectedLongitude, 
+                                                           "connection_test", "Bağlantı testi");
+    clientWrapper->testAllConnectionTypes(testJson, true);
+}
+
+/**
+ * @brief Admin bildirimi alındığında çağrılan slot
+ */
+void MainWindow::onAdminNotificationReceived(const QString& notification)
+{
+    adminLogEdit->append(QString("<b>[BİLDİRİM]</b> %1").arg(notification));
+}
+
+/**
+ * @brief Reply sorgu sonucu alındığında çağrılan slot
+ */
+void MainWindow::onReplyQueryResultReceived(const QJsonArray& replies)
+{
+    adminLogEdit->append(QString("<b>[SORGU]</b> %1 adet cevap bulundu").arg(replies.size()));
+    
+    for (const QJsonValue& value : replies) {
+        QJsonObject reply = value.toObject();
+        adminLogEdit->append(QString("- Rapor %1: %2")
+                           .arg(reply["report_id"].toInt())
+                           .arg(reply["message"].toString()));
+    }
+}
+
+/**
+ * @brief Bağlantı türü değiştiğinde çağrılan slot
+ */
+void MainWindow::onConnectionTypeChanged(ClientWrapper::ConnectionType type)
+{
+    QString typeStr;
+    switch (type) {
+        case ClientWrapper::ConnectionType::TCP: typeStr = "TCP"; break;
+        case ClientWrapper::ConnectionType::UDP: typeStr = "UDP"; break;
+        case ClientWrapper::ConnectionType::P2P: typeStr = "P2P"; break;
+    }
+    
+    connectionTypeCombo->setCurrentText(typeStr);
+    fallbackLogEdit->append(QString("<b>[DEĞİŞİM]</b> Aktif bağlantı türü: %1").arg(typeStr));
+}
+
+/**
+ * @brief Fallback durumu değiştiğinde çağrılan slot
+ */
+void MainWindow::onFallbackStatusChanged(const QString& status)
+{
+    fallbackStatusLabel->setText(QString("Fallback Durumu: %1").arg(status));
+    fallbackLogEdit->append(QString("<b>[DURUM]</b> %1").arg(status));
 }

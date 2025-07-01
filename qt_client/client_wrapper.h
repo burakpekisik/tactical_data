@@ -129,6 +129,24 @@ public slots:
     // --- Rapor sorgulama ---
     void getReports();
 
+    // --- Admin fonksiyonları ---
+    void adminReplyToReport(int reportId, const QString& message);
+    void queryMyReplies();
+    void listenForAdminNotifications();
+
+    // --- Bağlantı türü kontrolü ---
+    void switchConnectionType(ConnectionType type);
+    QString getConnectionTypeString() const;
+    
+    // --- Fallback test fonksiyonları ---
+    bool testUdpConnection();
+    bool testP2pConnection();
+
+    // --- Gelişmiş bağlantı test fonksiyonları ---
+    bool testAllConnectionTypes(const QString& jsonString, bool encrypted);
+    bool connectToServerInternal(const QString& host, int port, ConnectionType type);
+    void handleAdvancedError(const QString& error, bool canFallback);
+
 signals:
     /**
      * @brief Bağlantı durumu değiştiğinde emit edilir
@@ -167,6 +185,30 @@ signals:
      * @brief ECDH tamamlandığında emit edilir
      */
     void ecdhHandshakeCompleted(); // <-- ECDH tamamlandığında tetiklenecek sinyal
+
+    /**
+     * @brief Admin bildirimi alındığında emit edilir
+     * @param notification Bildirim mesajı
+     */
+    void adminNotificationReceived(const QString& notification);
+
+    /**
+     * @brief Reply sorgu sonucu alındığında emit edilir
+     * @param replies Cevap listesi
+     */
+    void replyQueryResultReceived(const QJsonArray& replies);
+
+    /**
+     * @brief Bağlantı türü değiştiğinde emit edilir
+     * @param type Yeni bağlantı türü
+     */
+    void connectionTypeChanged(ConnectionType type);
+
+    /**
+     * @brief Fallback durumu değiştiğinde emit edilir
+     * @param status Durum mesajı
+     */
+    void fallbackStatusChanged(const QString& status);
 
 private slots:
     void onSocketConnected();
@@ -207,6 +249,13 @@ private:
     ConnectionType currentType = ConnectionType::TCP;
     QTcpSocket* p2pSocket = nullptr;
 
+    // Parçalı yanıt işleme için değişkenler
+    QByteArray allHexData;
+    QByteArray allPlainData;
+    int expectedParts = 0;
+    int receivedParts = 0;
+    bool isProcessingParts = false;
+
     // Yardımcı fonksiyonlar
     void initializeConnection();
     void cleanupConnection();
@@ -220,6 +269,12 @@ private:
 
     // AES256 CBC çözme fonksiyonu prototipi
     QByteArray decryptAes256Cbc(const QByteArray &cipher, const QByteArray &key, const QByteArray &iv);
+    
+    // Parçalı yanıt işleme fonksiyonları
+    void processEncryptedParts();
+    void processEncryptedResponse();
+    void resetPartProcessing();
+    void finalizePartProcessing();
 };
 
 #endif // CLIENT_WRAPPER_H

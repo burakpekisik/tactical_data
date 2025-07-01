@@ -98,7 +98,8 @@ Rectangle {
             // Mouse bırakma
             onReleased: function(mouse) {
                 if (mouse.button === Qt.LeftButton) {
-                    if (!isDragging && mapContainer.allowAddMarker === true) {
+                    console.log("[QML] Mouse released - isDragging:", isDragging, "allowAddMarker:", allowAddMarker)
+                    if (!isDragging && allowAddMarker === true) {
                         // Sadece tıklama - işaretçi koy
                         var coord = map.toCoordinate(Qt.point(mouse.x, mouse.y))
                         console.log("Tıklanan koordinat:", coord.latitude, coord.longitude)
@@ -126,6 +127,8 @@ Rectangle {
                         map.addMapItem(marker)
                         markers.push(marker)
                         mapContainer.mapClicked(coord.latitude, coord.longitude)
+                    } else if (!isDragging && allowAddMarker === false) {
+                        console.log("[QML] Marker ekleme engellendi - Dönüt yap modunda")
                     }
                     isDragging = false
                 }
@@ -141,7 +144,7 @@ Rectangle {
         }
 
         
-        // Zoom kontrolleri - Daha büyük + ve - yazıları
+        // Zoom kontrolleri - Server ile aynı tasarım
         Rectangle {
             id: zoomControls
             anchors.right: parent.right
@@ -159,22 +162,62 @@ Rectangle {
                 anchors.centerIn: parent
                 spacing: 10
                 
-                Button {
-                    text: "+"
+                Rectangle {
                     width: 40
                     height: 40
-                    font.pixelSize: 20
-                    font.bold: true
-                    onClicked: map.zoomLevel = Math.min(map.zoomLevel + 1, map.maximumZoomLevel)
+                    color: "#f0f0f0"
+                    border.color: "#aaa"
+                    border.width: 1
+                    radius: 4
+                    
+                    Text {
+                        anchors.centerIn: parent
+                        text: "+"
+                        font.pixelSize: 22
+                        font.bold: true
+                        color: "#333"
+                    }
+                    
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: map.zoomLevel = Math.min(map.zoomLevel + 1, map.maximumZoomLevel)
+                        
+                        // Hover efekti
+                        hoverEnabled: true
+                        onEntered: parent.color = "#e0e0e0"
+                        onExited: parent.color = "#f0f0f0"
+                        onPressed: parent.color = "#d0d0d0"
+                        onReleased: parent.color = "#e0e0e0"
+                    }
                 }
                 
-                Button {
-                    text: "−"
+                Rectangle {
                     width: 40
                     height: 40
-                    font.pixelSize: 24
-                    font.bold: true
-                    onClicked: map.zoomLevel = Math.max(map.zoomLevel - 1, map.minimumZoomLevel)
+                    color: "#f0f0f0"
+                    border.color: "#aaa"
+                    border.width: 1
+                    radius: 4
+                    
+                    Text {
+                        anchors.centerIn: parent
+                        text: "−"
+                        font.pixelSize: 26
+                        font.bold: true
+                        color: "#333"
+                    }
+                    
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: map.zoomLevel = Math.max(map.zoomLevel - 1, map.minimumZoomLevel)
+                        
+                        // Hover efekti
+                        hoverEnabled: true
+                        onEntered: parent.color = "#e0e0e0"
+                        onExited: parent.color = "#f0f0f0"
+                        onPressed: parent.color = "#d0d0d0"
+                        onReleased: parent.color = "#e0e0e0"
+                    }
                 }
             }
         }
@@ -411,15 +454,8 @@ Rectangle {
     // Marker yönetim fonksiyonları
     property bool visibleMarkers: true
     property var markers: []
-    property int mode: 0
-    property bool allowAddMarker: mode === 0 ? true : false
-    function setMode(modeValue) {
-        mode = modeValue;
-        console.log("[QML] Mod değiştirildi:", mode);
-        allowAddMarker = mode === 0 ? true : false;
-        console.log("[QML] Mod değiştirildi:", mode, "İzin verilen marker ekleme:", allowAddMarker);
-    }
-
+    // allowAddMarker context property olarak C++'tan geliyor
+    
     function setMarkersVisible(visible) {
         visibleMarkers = visible;
         for (var i = 0; i < markers.length; ++i) {
