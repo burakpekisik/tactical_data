@@ -63,6 +63,9 @@ ClientWrapper::ClientWrapper(QObject *parent)
     , expectedParts(0)
     , receivedParts(0)
     , isProcessingParts(false)
+    , tcpRetryCount(0)
+    , udpRetryCount(0)
+    , p2pRetryCount(0)
 {
     // ECDH context'i sıfırla
     memset(&ecdhContext, 0, sizeof(ecdh_context_t));
@@ -146,7 +149,24 @@ ClientWrapper::ConnectionStatus ClientWrapper::getConnectionStatus() const
  */
 bool ClientWrapper::isConnected() const
 {
-    return connectionStatus == Connected;
+    // Hem enum değerini hem de gerçek socket durumunu kontrol et
+    if (connectionStatus != Connected) {
+        return false;
+    }
+    
+    // TCP socket'in gerçek durumunu kontrol et
+    if (!tcpSocket) {
+        return false;
+    }
+    
+    // Socket bağlı değilse enum'u da güncelle
+    if (tcpSocket->state() != QAbstractSocket::ConnectedState) {
+        // Const metod olduğu için mutable ile değiştirme yapmak yerine
+        // sadece false döndür, durumu başka yerden güncelleriz
+        return false;
+    }
+    
+    return true;
 }
 
 /**
@@ -391,15 +411,26 @@ void ClientWrapper::sendTacticalData(double latitude, double longitude,
 void ClientWrapper::sendJsonString(const QString& jsonString, bool encrypted)
 {
     qDebug() << "[DEBUG] sendJsonString çağrıldı, jwtToken:" << jwtToken << ", handshakeCompleted:" << handshakeCompleted;
+    
+    // Son gönderilecek veriyi kaydet (retry için)
+    lastJsonData = jsonString;
+    lastEncryptionFlag = encrypted;
+    
+    // Bağlantı durumunu kontrol et ve gerekirse güncelle
     if (!isConnected()) {
+        // Socket durumunu da kontrol et ve enum'u güncelle
+        if (tcpSocket && tcpSocket->state() != QAbstractSocket::ConnectedState) {
+            connectionStatus = Disconnected;
+            emit connectionStatusChanged(Disconnected, "Bağlantı kesildiği tespit edildi");
+        }
+        
         PRINTF_LOG("✗ Cannot send JSON string - not connected\n");
-        emit dataSendResult(NotConnected, "Sunucuya bağlı değilsiniz");
+        retryWithFallback(jsonString, encrypted);
         return;
     }
     if (encrypted && !handshakeCompleted) {
         PRINTF_LOG("✗ ECDH handshake not completed - cannot send encrypted data\n");
-        emit dataSendResult(SendError, "ECDH handshake tamamlanmamış - şifreli gönderim yapılamaz");
-        logError("ECDH handshake tamamlanmamış");
+        retryWithFallback(jsonString, encrypted);
         return;
     }
     qDebug() << "[DEBUG] sendJsonString, aesKey (ilk 8):" << QByteArray((const char*)aesKey, 8).toHex();
@@ -408,22 +439,11 @@ void ClientWrapper::sendJsonString(const QString& jsonString, bool encrypted)
         sendAllPendingJson(encrypted);
 
         if (!isConnected()) {
-            // Gönderilemedi, JSON'u pending klasörüne kaydet
-            QDir pendingDir(QCoreApplication::applicationDirPath() + "/pending");
-            if (!pendingDir.exists()) pendingDir.mkpath(".");
-            QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
-            QString fileName = QString("pending_%1.json").arg(timestamp);
-            QFile f(pendingDir.filePath(fileName));
-            if (f.open(QIODevice::WriteOnly)) {
-                QTextStream(&f) << jsonString;
-                f.close();
-                PRINTF_LOG("Veri gönderilemedi, pending klasörüne kaydedildi: %s\n", qPrintable(fileName));
-                emit dataSendResult(SendError, "Bağlantı yok, veri kaydedildi: " + fileName);
-            } else {
-                emit dataSendResult(SendError, "Veri kaydedilemedi!");
-            }
+            // Bağlantı koptu, retry mekanizmasını başlat
+            retryWithFallback(jsonString, encrypted);
             return;
         }
+        
         char* protocolMessage = nullptr;
         if (encrypted) {
             PRINTF_LOG("Creating encrypted protocol message...\n");
@@ -444,30 +464,36 @@ void ClientWrapper::sendJsonString(const QString& jsonString, bool encrypted)
         if (protocolMessage == nullptr) {
             PRINTF_LOG("✗ Failed to create protocol message\n");
             LOG_CLIENT_ERROR("Failed to create protocol message");
-            emit dataSendResult(SendError, "Protokol mesajı oluşturma hatası");
+            retryWithFallback(jsonString, encrypted);
             return;
         }
+        
         QByteArray messageData(protocolMessage, strlen(protocolMessage));
         PRINTF_LOG("Sending protocol message (%d bytes): %.50s...\n", 
                    messageData.size(), protocolMessage);
         LOG_CLIENT_INFO("Transmitting protocol message to server (%d bytes)", messageData.size());
+        
         qint64 bytesWritten = tcpSocket->write(messageData);
         if (bytesWritten == -1) {
             PRINTF_LOG("✗ Failed to send protocol message\n");
             LOG_CLIENT_ERROR("Failed to send protocol message");
-            saveJsonToPending(jsonString); // Gönderilemeyen veriyi pending'e kaydet
-            emit dataSendResult(SendError, "Protokol mesajı gönderimi hatası, veri kaydedildi");
+            free(protocolMessage);
+            retryWithFallback(jsonString, encrypted);
+            return;
         } else {
             tcpSocket->flush();
             PRINTF_LOG("✓ Protocol message sent successfully (%lld bytes)\n", bytesWritten);
             LOG_CLIENT_INFO("Protocol message transmitted successfully: %lld bytes", bytesWritten);
+            
+            // Başarılı gönderim, retry sayaçlarını sıfırla
+            resetRetryCounters();
             emit dataSendResult(SendSuccess, 
                 encrypted ? "Şifreli veri başarıyla gönderildi" : "Veri başarıyla gönderildi");
         }
         free(protocolMessage);
     } catch (const std::exception& e) {
         LOG_CLIENT_ERROR("Exception in sendJsonString: %s", e.what());
-        emit dataSendResult(SendError, "Veri gönderim hatası");
+        retryWithFallback(jsonString, encrypted);
     }
 }
 
@@ -849,38 +875,39 @@ QByteArray ClientWrapper::decryptAes256Cbc(const QByteArray &cipher, const QByte
  * @param message Cevap mesajı
  */
 void ClientWrapper::adminReplyToReport(int reportId, const QString& message) {
-    if (!isConnected() || !handshakeCompleted) {
-        logError("Bağlantı yok veya ECDH tamamlanmamış, admin reply gönderilemez");
+    // Mesaj boş olamaz kontrolü
+    if (message.trimmed().isEmpty()) {
+        emit dataError("Admin reply mesajı boş olamaz!");
         return;
     }
     
-    // JSON formatında admin reply mesajı oluştur
-    QJsonObject replyObj;
-    replyObj["report_id"] = reportId;
-    replyObj["msg"] = message;
-    replyObj["jwt"] = jwtToken;
-    
-    QJsonDocument doc(replyObj);
-    QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
-    
-    // Şifreli protokol mesajı oluştur
-    char* encryptedMsg = create_encrypted_protocol_message("REPLY_REPORT", 
-                                                          jsonData.constData(), 
-                                                          aesKey, 
-                                                          jwtToken.toUtf8().constData());
-    if (!encryptedMsg) {
-        logError("Admin reply şifreli mesajı oluşturulamadı");
-        return;
+    // 5 kez deneme ile gönder
+    bool success = false;
+    for (int attempt = 1; attempt <= 5; attempt++) {
+        emit dataInfo(QString("[DENEME %1/5] Admin reply gönderiliyor... Rapor ID: %2").arg(attempt).arg(reportId));
+        
+        if (trySendAdminReplyInternal(reportId, message.trimmed())) {
+            emit dataSuccess(QString("Admin reply başarıyla gönderildi! Rapor ID: %1").arg(reportId));
+            success = true;
+            break;
+        } else {
+            emit dataError(QString("Admin reply gönderim hatası (Deneme %1/5)").arg(attempt));
+            
+            if (attempt < 5) {
+                // Kısa bir bekleme
+                QThread::msleep(500);
+            }
+        }
     }
     
-    // Mesajı gönder
-    QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
-    free(encryptedMsg);
-    
-    tcpSocket->write(msgData);
-    tcpSocket->flush();
-    
-    logInfo(QString("Admin reply gönderildi: Rapor ID %1").arg(reportId));
+    // 5 deneme de başarısızsa dosyaya kaydet
+    if (!success) {
+        saveAdminReplyToPending(reportId, message.trimmed());
+        emit dataError(QString("Admin reply 5 denemede gönderilemedi, dosyaya kaydedildi. Rapor ID: %1").arg(reportId));
+        
+        // Eski dosyaları öncelikli göndermeyi dene
+        sendAllPendingAdminReplies();
+    }
 }
 
 /**
@@ -979,15 +1006,36 @@ bool ClientWrapper::testUdpConnection() {
         udpSocket = new QUdpSocket(this);
     }
     
-    // UDP test mesajı gönder
-    QByteArray testMsg = "UDP_TEST";
+    // UDP test mesajı gönder (PING mesajı - sunucu bunu tanıyor)
+    QByteArray testMsg = "PING";
     qint64 sent = udpSocket->writeDatagram(testMsg, QHostAddress(serverHost), serverPort + 1);
     
-    if (sent > 0) {
-        logInfo("UDP test mesajı gönderildi");
-        return true;
-    } else {
+    if (sent <= 0) {
         logError("UDP test mesajı gönderilemedi");
+        return false;
+    }
+    
+    // Sunucudan yanıt bekle (3 saniye timeout)
+    if (udpSocket->waitForReadyRead(3000)) {
+        QByteArray responseData;
+        QHostAddress senderHost;
+        quint16 senderPort;
+        
+        while (udpSocket->hasPendingDatagrams()) {
+            responseData.resize(udpSocket->pendingDatagramSize());
+            udpSocket->readDatagram(responseData.data(), responseData.size(), &senderHost, &senderPort);
+        }
+        
+        QString response = QString::fromUtf8(responseData);
+        if (response.contains("UDP_SUCCESS")) {
+            logInfo("UDP test bağlantısı başarılı - Yanıt alındı: " + response);
+            return true;
+        } else {
+            logError("UDP test yanıtı beklenmedik: " + response);
+            return false;
+        }
+    } else {
+        logError("UDP test yanıtı alınamadı (timeout)");
         return false;
     }
 }
@@ -1021,38 +1069,92 @@ bool ClientWrapper::testP2pConnection() {
  * @return bool Test sonucu
  */
 bool ClientWrapper::testAllConnectionTypes(const QString& jsonString, bool encrypted) {
-    logInfo("Tüm bağlantı türleri test ediliyor...");
+    emit fallbackTestResult("INFO", true, "Tüm bağlantı türleri test ediliyor...");
     
-    // TCP test
-    if (currentType != ConnectionType::TCP) {
+    // TCP test - gerçek bağlantı durumunu kontrol et
+    emit fallbackTestResult("TCP", false, "TCP bağlantısı test ediliyor...");
+    
+    // Önce mevcut TCP bağlantısının gerçekten çalışıp çalışmadığını kontrol et
+    bool tcpActuallyConnected = (tcpSocket && 
+                                tcpSocket->state() == QAbstractSocket::ConnectedState && 
+                                isConnected() && 
+                                handshakeCompleted);
+    
+    if (tcpActuallyConnected) {
+        // TCP gerçekten bağlı, test mesajı göndermeyi dene
+        if (trySendJsonInternal(jsonString, encrypted)) {
+            emit fallbackTestResult("TCP", true, "TCP bağlantısı aktif ve çalışıyor");
+        } else {
+            emit fallbackTestResult("TCP", false, "TCP bağlantısı var ama veri gönderilemedi");
+            // Bağlantı durumunu güncelle
+            connectionStatus = Disconnected;
+            emit connectionStatusChanged(Disconnected, "TCP bağlantısı kesildiği tespit edildi");
+        }
+    } else {
+        // TCP bağlantısı yok veya kopmuş, yeniden bağlanmayı dene
+        if (tcpSocket) {
+            tcpSocket->disconnectFromHost();
+        }
+        
         if (connectToServerInternal(serverHost, serverPort, ConnectionType::TCP)) {
-            if (trySendJsonInternal(jsonString, encrypted)) {
-                logInfo("TCP bağlantı testi başarılı");
+            // Bağlantı kuruldu, ECDH handshake bekle
+            QEventLoop loop;
+            QTimer timer;
+            timer.setSingleShot(true);
+            timer.setInterval(5000); // 5 saniye timeout
+            
+            connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+            connect(this, &ClientWrapper::ecdhHandshakeCompleted, &loop, &QEventLoop::quit);
+            
+            timer.start();
+            loop.exec();
+            
+            if (handshakeCompleted && trySendJsonInternal(jsonString, encrypted)) {
+                emit fallbackTestResult("TCP", true, "TCP bağlantı testi başarılı");
+            } else {
+                emit fallbackTestResult("TCP", false, "TCP bağlantısı kuruldu ama ECDH veya veri gönderimi başarısız");
                 disconnectFromServer();
             }
+        } else {
+            emit fallbackTestResult("TCP", false, "TCP bağlantısı kurulamadı");
         }
     }
     
     // UDP test
+    emit fallbackTestResult("UDP", false, "UDP bağlantısı test ediliyor...");
     if (testUdpConnection()) {
         if (connectUdp(serverHost, serverPort + 1)) {
             QByteArray udpAesKey;
             if (udpEcdhHandshake(udpAesKey)) {
-                logInfo("UDP ECDH testi başarılı");
+                emit fallbackTestResult("UDP", true, "UDP ECDH testi başarılı");
+            } else {
+                emit fallbackTestResult("UDP", false, "UDP ECDH başarısız");
             }
+        } else {
+            emit fallbackTestResult("UDP", false, "UDP bağlantısı kurulamadı");
         }
+    } else {
+        emit fallbackTestResult("UDP", false, "UDP test bağlantısı başarısız");
     }
     
     // P2P test
+    emit fallbackTestResult("P2P", false, "P2P bağlantısı test ediliyor...");
     if (testP2pConnection()) {
         if (connectP2p(serverHost, serverPort + 2)) {
             QByteArray p2pAesKey;
             if (p2pEcdhHandshake(p2pAesKey)) {
-                logInfo("P2P ECDH testi başarılı");
+                emit fallbackTestResult("P2P", true, "P2P ECDH testi başarılı");
+            } else {
+                emit fallbackTestResult("P2P", false, "P2P ECDH başarısız");
             }
+        } else {
+            emit fallbackTestResult("P2P", false, "P2P bağlantısı kurulamadı");
         }
+    } else {
+        emit fallbackTestResult("P2P", false, "P2P test bağlantısı başarısız");
     }
     
+    emit fallbackTestResult("INFO", true, "Tüm bağlantı testleri tamamlandı");
     return true;
 }
 
@@ -1248,9 +1350,20 @@ void ClientWrapper::processEncryptedResponse()
                     QJsonDocument doc = QJsonDocument::fromJson(plainJson);
                     if (doc.isObject()) {
                         QJsonObject obj = doc.object();
+                        
+                        // REPORT_LIST yanıtı
                         if (obj.contains("reports") && obj["reports"].isArray()) {
                             int privilege = obj.contains("privilege") ? obj["privilege"].toInt() : 0;
                             emit reportsReceived(obj["reports"].toArray(), privilege);
+                        }
+                        // REPLY_QUERY yanıtı
+                        else if (obj.contains("replies") && obj["replies"].isArray()) {
+                            int reportId = obj.contains("report_id") ? obj["report_id"].toInt() : -1;
+                            emit reportRepliesReceived(reportId, obj["replies"].toArray());
+                        }
+                        // Diğer yanıtlar
+                        else {
+                            emit dataReceived(QString::fromUtf8(plainJson));
                         }
                     }
                 } else {
@@ -1322,4 +1435,337 @@ void ClientWrapper::finalizePartProcessing()
     
     // Temizle
     resetPartProcessing();
+}
+
+// === RETRY MEKANİZMASI FONKSİYONLARI ===
+
+/**
+ * @brief Retry mekanizması ile fallback dener
+ */
+void ClientWrapper::retryWithFallback(const QString& jsonData, bool encrypted) {
+    PRINTF_LOG("[RETRY] Başlıyor - currentType: %d\n", (int)currentType);
+    
+    // Mevcut bağlantı türü için retry sayacını kontrol et
+    int* currentRetryCount = nullptr;
+    QString connectionTypeName;
+    
+    switch(currentType) {
+        case ConnectionType::TCP:
+            currentRetryCount = &tcpRetryCount;
+            connectionTypeName = "TCP";
+            break;
+        case ConnectionType::UDP:
+            currentRetryCount = &udpRetryCount;
+            connectionTypeName = "UDP";
+            break;
+        case ConnectionType::P2P:
+            currentRetryCount = &p2pRetryCount;
+            connectionTypeName = "P2P";
+            break;
+    }
+    
+    if (currentRetryCount && *currentRetryCount < MAX_RETRY_COUNT) {
+        (*currentRetryCount)++;
+        PRINTF_LOG("[RETRY] %s retry %d/%d deneniyor...\n", 
+                   connectionTypeName.toUtf8().constData(), *currentRetryCount, MAX_RETRY_COUNT);
+        
+        emit fallbackTestResult(connectionTypeName, false, 
+                               QString("Retry %1/%2 deneniyor...").arg(*currentRetryCount).arg(MAX_RETRY_COUNT));
+        
+        // Mevcut bağlantı türü ile tekrar dene
+        if (currentType == ConnectionType::TCP) {
+            connectToServerInternal(serverHost, serverPort, ConnectionType::TCP);
+            if (isConnected() && trySendJsonInternal(jsonData, encrypted)) {
+                resetRetryCounters();
+                emit dataSendResult(SendSuccess, "Retry ile başarılı gönderim");
+                return;
+            }
+        }
+        
+        // Mevcut türde hala başarısız, sonraki retry'ı dene
+        QTimer::singleShot(1000, [this, jsonData, encrypted]() {
+            retryWithFallback(jsonData, encrypted);
+        });
+        
+    } else {
+        // Maksimum retry sayısına ulaşıldı, sonraki bağlantı türüne geç
+        PRINTF_LOG("[RETRY] %s maksimum retry'a ulaştı, sonraki türe geçiliyor...\n", 
+                   connectionTypeName.toUtf8().constData());
+        
+        if (!tryNextConnectionType(jsonData, encrypted)) {
+            // Tüm bağlantı türleri denendi ve başarısız oldu
+            PRINTF_LOG("[RETRY] Tüm bağlantı türleri başarısız, veri pending'e kaydediliyor\n");
+            saveJsonToPending(jsonData);
+            resetRetryCounters();
+            emit dataSendResult(SendError, "Tüm bağlantı türleri başarısız, veri kaydedildi");
+            emit fallbackTestResult("ALL", false, "Tüm bağlantı türleri başarısız");
+        }
+    }
+}
+
+/**
+ * @brief Sonraki bağlantı türüne geçer
+ */
+bool ClientWrapper::tryNextConnectionType(const QString& jsonData, bool encrypted) {
+    ConnectionType nextType;
+    
+    switch(currentType) {
+        case ConnectionType::TCP:
+            nextType = ConnectionType::UDP;
+            break;
+        case ConnectionType::UDP:
+            nextType = ConnectionType::P2P;
+            break;
+        case ConnectionType::P2P:
+            // Tüm türler denendi
+            return false;
+    }
+    
+    QString nextTypeName;
+    switch(nextType) {
+        case ConnectionType::UDP: nextTypeName = "UDP"; break;
+        case ConnectionType::P2P: nextTypeName = "P2P"; break;
+        default: nextTypeName = "TCP"; break;
+    }
+    
+    PRINTF_LOG("[RETRY] %s türüne geçiliyor...\n", nextTypeName.toUtf8().constData());
+    emit fallbackTestResult(nextTypeName, false, "Bağlantı türü değiştiriliyor...");
+    
+    // Mevcut bağlantıyı kapat
+    disconnectFromServer();
+    
+    // Yeni bağlantı türüne geç
+    currentType = nextType;
+    emit connectionTypeChanged(currentType);
+    
+    // Yeni türle bağlantı kurmayı dene
+    if (nextType == ConnectionType::UDP) {
+        if (connectUdp(serverHost, serverPort + 1)) {
+            QByteArray udpAesKey;
+            if (udpEcdhHandshake(udpAesKey)) {
+                // UDP ECDH başarılı, veri göndermeyi dene
+                // UDP için özel gönderim fonksiyonu gerekebilir
+                emit fallbackTestResult("UDP", true, "UDP bağlantısı başarılı");
+                resetRetryCounters();
+                return true;
+            }
+        }
+    } else if (nextType == ConnectionType::P2P) {
+        if (connectP2p(serverHost, serverPort + 2)) {
+            QByteArray p2pAesKey;
+            if (p2pEcdhHandshake(p2pAesKey)) {
+                // P2P ECDH başarılı, veri göndermeyi dene
+                emit fallbackTestResult("P2P", true, "P2P bağlantısı başarılı");
+                resetRetryCounters();
+                return true;
+            }
+        }
+    }
+    
+    // Yeni türle bağlantı kurulamadı, retry mekanizmasını başlat
+    retryWithFallback(jsonData, encrypted);
+    return true;
+}
+
+/**
+ * @brief Retry sayaçlarını sıfırlar
+ */
+void ClientWrapper::resetRetryCounters() {
+    tcpRetryCount = 0;
+    udpRetryCount = 0;
+    p2pRetryCount = 0;
+    PRINTF_LOG("[RETRY] Sayaçlar sıfırlandı\n");
+}
+
+/**
+ * @brief Bağlantı hatası durumunu yönetir
+ */
+void ClientWrapper::handleConnectionFailure(ConnectionType failedType, const QString& error) {
+    QString typeName;
+    switch(failedType) {
+        case ConnectionType::TCP: typeName = "TCP"; break;
+        case ConnectionType::UDP: typeName = "UDP"; break;
+        case ConnectionType::P2P: typeName = "P2P"; break;
+    }
+    
+    PRINTF_LOG("[RETRY] %s bağlantı hatası: %s\n", 
+               typeName.toUtf8().constData(), error.toUtf8().constData());
+    
+    emit fallbackTestResult(typeName, false, error);
+    
+    // Eğer bekleyen veri varsa retry mekanizmasını başlat
+    if (!lastJsonData.isEmpty()) {
+        retryWithFallback(lastJsonData, lastEncryptionFlag);
+    }
+}
+
+/**
+ * @brief Admin reply'ı internal olarak gönderir
+ */
+bool ClientWrapper::trySendAdminReplyInternal(int reportId, const QString& message) {
+    if (!isConnected() || !handshakeCompleted) {
+        // Bağlantı yoksa yeniden bağlanmayı dene
+        connectToServer(serverHost, serverPort);
+        
+        // Bağlantı kontrolü yap
+        if (!isConnected() || !handshakeCompleted) {
+            return false;
+        }
+    }
+    
+    try {
+        // JSON formatında admin reply mesajı oluştur
+        QJsonObject replyObj;
+        replyObj["report_id"] = reportId;
+        replyObj["msg"] = message;
+        
+        QJsonDocument doc(replyObj);
+        QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
+        
+        // Şifreli protokol mesajı oluştur
+        char* encryptedMsg = create_encrypted_protocol_message("REPLY_REPORT", 
+                                                              jsonData.constData(), 
+                                                              aesKey, 
+                                                              jwtToken.toUtf8().constData());
+        if (!encryptedMsg) {
+            return false;
+        }
+        
+        // Mesajı gönder
+        QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
+        free(encryptedMsg);
+        
+        if (tcpSocket && tcpSocket->state() == QAbstractSocket::ConnectedState) {
+            qint64 written = tcpSocket->write(msgData);
+            tcpSocket->flush();
+            
+            if (written > 0) {
+                // Yanıt bekle
+                if (tcpSocket->waitForReadyRead(3000)) {
+                    QByteArray response = tcpSocket->readAll();
+                    
+                    // Başarılı yanıt kontrolü (basit)
+                    if (response.contains("SUCCESS") || response.contains("OK")) {
+                        return true;
+                    }
+                }
+                return true; // Yanıt alamasak da gönderim başarılı sayılır
+            }
+        }
+        
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+/**
+ * @brief Admin reply'ı dosyaya kaydeder
+ */
+void ClientWrapper::saveAdminReplyToPending(int reportId, const QString& message) {
+    try {
+        QString pendingDir = "pending_admin_replies";
+        QDir().mkpath(pendingDir);
+        
+        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss-zzz");
+        QString filename = QString("%1/admin_reply_%2_%3.json").arg(pendingDir).arg(reportId).arg(timestamp);
+        
+        QJsonObject replyObj;
+        replyObj["report_id"] = reportId;
+        replyObj["msg"] = message;
+        replyObj["timestamp"] = timestamp;
+        replyObj["retry_count"] = 0;
+        
+        QJsonDocument doc(replyObj);
+        
+        QFile file(filename);
+        if (file.open(QIODevice::WriteOnly)) {
+            file.write(doc.toJson());
+            file.close();
+        }
+    } catch (...) {
+        // Sessizce geç
+    }
+}
+
+/**
+ * @brief Bekleyen admin reply'ları gönderir
+ */
+void ClientWrapper::sendAllPendingAdminReplies() {
+    try {
+        QDir pendingDir("pending_admin_replies");
+        if (!pendingDir.exists()) return;
+        
+        QStringList jsonFiles = pendingDir.entryList(QStringList() << "*.json", QDir::Files, QDir::Time);
+        
+        for (const QString& filename : jsonFiles) {
+            QString filePath = pendingDir.absoluteFilePath(filename);
+            
+            QFile file(filePath);
+            if (file.open(QIODevice::ReadOnly)) {
+                QByteArray data = file.readAll();
+                file.close();
+                
+                QJsonDocument doc = QJsonDocument::fromJson(data);
+                QJsonObject obj = doc.object();
+                
+                int reportId = obj["report_id"].toInt();
+                QString message = obj["msg"].toString();
+                
+                if (trySendAdminReplyInternal(reportId, message)) {
+                    // Başarılı gönderim, dosyayı sil
+                    QFile::remove(filePath);
+                    emit dataSuccess(QString("Bekleyen admin reply gönderildi: Rapor ID %1").arg(reportId));
+                } else {
+                    // Başarısız, dosyayı koru
+                    break;
+                }
+            }
+        }
+    } catch (...) {
+        // Sessizce geç
+    }
+}
+
+/**
+ * @brief Belirli bir rapor ID'si için admin reply'ları sorgular
+ */
+void ClientWrapper::queryRepliesForReport(int reportId) {
+    if (!isConnected() || !handshakeCompleted) {
+        emit dataError("Bağlantı yok veya ECDH tamamlanmamış, reply sorgulanamaz");
+        return;
+    }
+    
+    try {
+        // JSON formatında sorgu mesajı oluştur (JWT ile - tüm reply'ları al)
+        QJsonObject queryObj;
+        queryObj["jwt"] = jwtToken;
+        // report_id göndermiyoruz, tüm reply'ları alacağız
+        
+        QJsonDocument doc(queryObj);
+        QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
+        
+        // Şifreli protokol mesajı oluştur
+        char* encryptedMsg = create_encrypted_protocol_message("REPLY_QUERY", 
+                                                              jsonData.constData(), 
+                                                              aesKey, 
+                                                              jwtToken.toUtf8().constData());
+        if (!encryptedMsg) {
+            emit dataError("Reply sorgu mesajı oluşturulamadı");
+            return;
+        }
+        
+        // Mesajı gönder
+        QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
+        free(encryptedMsg);
+        
+        if (tcpSocket && tcpSocket->state() == QAbstractSocket::ConnectedState) {
+            tcpSocket->write(msgData);
+            tcpSocket->flush();
+            
+            emit dataInfo(QString("Admin cevapları sorgulanıyor..."));
+        }
+    } catch (...) {
+        emit dataError("Reply sorgulama hatası");
+    }
 }

@@ -18,6 +18,7 @@ public:
     Q_INVOKABLE void clearMapItems();
     Q_INVOKABLE void setMarkersVisible(bool visible);
     Q_INVOKABLE void setMode(int modeValue);
+    Q_INVOKABLE void setCurrentLocation(double latitude, double longitude);
 
 signals:
     void pointClicked(double latitude, double longitude);

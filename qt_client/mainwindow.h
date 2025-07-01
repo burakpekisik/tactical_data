@@ -14,6 +14,11 @@
 #include <QSplitter>
 #include <QCheckBox>
 #include <QProgressBar>
+#include <QTimer>
+#include <QTabWidget>
+#include <QGeoPositionInfoSource>
+#include <QGeoPositionInfo>
+#include <QGeoCoordinate>
 #include "mapwidget.h"
 #include "client_wrapper.h"
 
@@ -43,12 +48,18 @@ private slots:
     void onAdminReplyToReport();
     void onQueryMyReplies();
     void onListenForNotifications();
-    void onSwitchConnectionType();
     void onTestConnections();
     void onAdminNotificationReceived(const QString& notification);
     void onReplyQueryResultReceived(const QJsonArray& replies);
     void onConnectionTypeChanged(ClientWrapper::ConnectionType type);
     void onFallbackStatusChanged(const QString& status);
+    void onFallbackTestResult(const QString& connectionType, bool success, const QString& message);
+    void onPeriodicConnectionCheck(); // Periyodik bağlantı kontrolü
+    
+    // Konum servisleri slots
+    void onFindMyLocation();
+    void onPositionUpdated(const QGeoPositionInfo &info);
+    void onPositionError(QGeoPositionInfoSource::Error error);
 
 private:
     void setupUI();
@@ -83,7 +94,6 @@ private:
     QPushButton *connectButton;
     QPushButton *disconnectButton;
     QLabel *connectionStatusLabel;
-    QComboBox *connectionTypeCombo;  // --- Bağlantı türü seçici ---
     
     // Veri kontrolleri
     QComboBox *dataTypeCombo;
@@ -109,6 +119,24 @@ private:
     QLabel *fallbackStatusLabel;
     QTextEdit *fallbackLogEdit;
     
+    // Periyodik bağlantı kontrolü
+    QTimer *connectionCheckTimer;
+    QLabel *tcpStatusLabel;
+    QLabel *udpStatusLabel;
+    QLabel *p2pStatusLabel;
+    QCheckBox *periodicCheckBox;
+    
+    // Periyodik kontrol durumu
+    bool autoCheckEnabled = true;  // Default olarak açık
+    
+    // Konum servisleri
+    QGeoPositionInfoSource *positionSource;
+    QPushButton *findLocationButton;
+    QLabel *currentLocationLabel;
+    bool hasCurrentLocation = false;
+    double currentLatitude = 0.0;
+    double currentLongitude = 0.0;
+    
     // Client wrapper
     ClientWrapper *clientWrapper;
     
@@ -120,6 +148,7 @@ private:
     // Yardımcı fonksiyonlar
     void updateUIState();
     void showStatusMessage(const QString& message, int timeout = 5000);
+    void updateConnectionStatus(const QString& connectionType, bool isConnected, const QString& details = "");
 
     QPushButton *toggleMarkersButton;
 
@@ -130,6 +159,10 @@ private:
     Mode currentMode = SendMode;
     QPushButton *modeSwitchButton; // Admin için mod değiştirici buton
     int userPrivilege = 0;
+
+    // Dialog fonksiyonları
+    void showAdminReplyDialog(int id, double latitude, double longitude);
+    void showMarkerRepliesDialog(int id, double latitude, double longitude);
 };
 
 #endif // MAINWINDOW_H

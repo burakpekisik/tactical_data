@@ -4,9 +4,6 @@
 #include <cjson/cJSON.h>
 #include "database.h"  // Database fonksiyonları için
 
-// Forward declaration - tactical_data_t database.h'de tanımlı
-// struct tanımı database.h'de mevcut
-
 // Function prototypes
 char* parse_json_to_string(const char* json_content, const char* filename);
 tactical_data_t* parse_json_to_tactical_data(const char* json_content, const char* filename, const char* user_id);

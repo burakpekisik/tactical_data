@@ -58,34 +58,49 @@ void admin_reply_manager_remove_user(int user_socket) {
 // Admin reply fonksiyonu: report_id'den user_id'yi bul, aktifse mesajı ilet
 bool admin_reply_manager_send_reply(int report_id, const char* message, int admin_socket) {
     printf("[ADMIN_REPLY][send_reply] Çağrıldı: report_id=%d, message=%s, admin_socket=%d\n", report_id, message, admin_socket);
-    // 1. REPORTS tablosundan user_id'yi bul
+    
+    // 1. Admin'in user_id'sini bul (reply'ı gönderen kişi)
+    int admin_user_id = -1;
+    for (int i = 0; i < user_map_count; ++i) {
+        if (user_map[i].user_socket == admin_socket) {
+            admin_user_id = user_map[i].user_id;
+            break;
+        }
+    }
+    if (admin_user_id == -1) {
+        printf("[ADMIN_REPLY][send_reply] HATA: admin_socket %d için user_id bulunamadı!\n", admin_socket);
+        return false;
+    }
+    printf("[ADMIN_REPLY][send_reply] admin_socket=%d -> admin_user_id=%d\n", admin_socket, admin_user_id);
+    
+    // 2. REPORTS tablosundan report sahibinin user_id'sini bul
     report_t report;
     if (db_get_report_by_id(report_id, &report) != 0) {
         printf("[ADMIN_REPLY][send_reply] HATA: report_id %d için kayıt bulunamadı!\n", report_id);
         return false;
     }
-    int user_id = report.user_id;
-    printf("[ADMIN_REPLY][send_reply] report_id=%d -> user_id=%d\n", report_id, user_id);
-    // 2. Aktif user_id <-> socket mapping'den bul
+    int report_owner_user_id = report.user_id;
+    printf("[ADMIN_REPLY][send_reply] report_id=%d -> report_owner_user_id=%d\n", report_id, report_owner_user_id);
+    // 3. Report sahibinin aktif bağlantısını bul
     int user_socket = -1;
     for (int i = 0; i < user_map_count; ++i) {
-        if (user_map[i].user_id == user_id) {
+        if (user_map[i].user_id == report_owner_user_id) {
             user_socket = user_map[i].user_socket;
             break;
         }
     }
     if (user_socket == -1) {
-        printf("[ADMIN_REPLY][send_reply] user_id %d için aktif bağlantı yok, veri tabanına kaydedildi (offline)\n", user_id);
+        printf("[ADMIN_REPLY][send_reply] report_owner_user_id %d için aktif bağlantı yok, veri tabanına kaydedildi (offline)\n", report_owner_user_id);
         reply_t reply;
         memset(&reply, 0, sizeof(reply));
-        reply.user_id = user_id;
+        reply.user_id = admin_user_id;  // Reply'ı gönderen admin'in user_id'si
         reply.report_id = report_id;
         strncpy(reply.message, message, sizeof(reply.message) - 1);
         reply.timestamp = time(NULL);
         db_insert_reply(&reply);
         return false;
     }
-    // 3. Mesajı ilet
+    // 4. Mesajı report sahibine ilet
     char reply_msg[1024];
     snprintf(reply_msg, sizeof(reply_msg), "REPORT_REPLY:%d:%s\n", report_id, message);
     ssize_t sent = send(user_socket, reply_msg, strlen(reply_msg), 0);
@@ -94,7 +109,7 @@ bool admin_reply_manager_send_reply(int report_id, const char* message, int admi
         printf("[ADMIN_REPLY][send_reply] Report %d için kullanıcıya dönüt gönderildi (socket=%d, sent=%zd)\n", report_id, user_socket, sent);
         reply_t reply;
         memset(&reply, 0, sizeof(reply));
-        reply.user_id = user_id;
+        reply.user_id = admin_user_id;  // Reply'ı gönderen admin'in user_id'si
         reply.report_id = report_id;
         strncpy(reply.message, message, sizeof(reply.message) - 1);
         reply.timestamp = time(NULL);

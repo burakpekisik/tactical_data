@@ -996,7 +996,7 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         return error_msg;
     }
     PRINTF_LOG("[DEBUG] Decrypted JSON: %s\n", decrypted_json);
-    // Eğer dosya adı REPORT_QUERY ise, rapor sorgulama işlemi yap
+    // Eğer dosya adı REPORT_QUERY veya REPLY_QUERY ise, rapor sorgulama işlemi yap
     if (strcmp(filename, "REPORT_QUERY") == 0 || strcmp(filename, "REPLY_QUERY") == 0) {
         cJSON* root = cJSON_Parse(decrypted_json);
         char* jwt_from_json = NULL;
@@ -1059,6 +1059,89 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
             free(hex_data);
             free(decrypted_json);
             return result;
+        }
+    } else if (strcmp(filename, "REPLY_REPORT") == 0) {
+        // Admin reply işlemi - json_utils.c'deki parse_admin_reply_json kullan
+        PRINTF_LOG("[DEBUG] REPLY_REPORT işlemi başlatılıyor\n");
+        admin_reply_t* reply_data = parse_admin_reply_json(decrypted_json);
+        
+        if (reply_data != NULL && reply_data->is_valid) {
+            PRINTF_LOG("[DEBUG] Admin reply parse edildi: report_id=%d, msg=%s\n", reply_data->report_id, reply_data->msg);
+            
+            // Admin'in user_id'sini JWT'den al
+            int admin_user_id = -1;
+            if (jwt_token) {
+                jwt_t *jwt_ptr = NULL;
+                if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                    const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                    if (sub) admin_user_id = atoi(sub);
+                    jwt_free(jwt_ptr);
+                }
+            }
+            
+            if (admin_user_id <= 0) {
+                char* error_msg = malloc(256);
+                strcpy(error_msg, "HATA: Admin kullanıcı kimliği belirlenemedi");
+                free(reply_data);
+                free(decrypted_json);
+                return error_msg;
+            }
+            
+            // admin_reply_t'yi reply_t'ye dönüştür
+            reply_t db_reply;
+            db_reply.user_id = admin_user_id;  // ÖNEMLİ: Admin'in user_id'si kullanılıyor
+            db_reply.report_id = reply_data->report_id;
+            strncpy(db_reply.message, reply_data->msg, sizeof(db_reply.message) - 1);
+            db_reply.message[sizeof(db_reply.message) - 1] = '\0';
+            db_reply.timestamp = time(NULL);
+            
+            // Veritabanına kaydet
+            int insert_result = db_insert_reply(&db_reply);
+            
+            char* current_time = get_current_time();
+            char* result = malloc(1024);  // Buffer boyutunu artır
+            if (insert_result > 0) {  // row ID döndürüldü - başarılı
+                snprintf(result, 1024, 
+                    "Admin Reply Processing Result\n"
+                    "============================\n"
+                    "File: %s\n"
+                    "Processing Time: %s\n"
+                    "Reply Saved to Database:\n"
+                    "-----------------------\n"
+                    "Admin User ID: %d\n"
+                    "Report ID: %d\n"
+                    "Message: %s\n"
+                    "Timestamp: %ld\n"
+                    "\n"
+                    "✓ Database Operation: SUCCESS\n"
+                    "✓ Reply ID: %d\n"
+                    "✓ Reply successfully stored\n"
+                    "============================",
+                    filename,
+                    current_time,
+                    admin_user_id,
+                    reply_data->report_id,
+                    reply_data->msg,
+                    db_reply.timestamp,
+                    insert_result
+                );
+            } else {  // -1 döndürüldü - hata
+                snprintf(result, 512, 
+                    "HATA: Admin reply veritabanına kaydedilemedi (Hata kodu: %d)", 
+                    insert_result
+                );
+            }
+            free(current_time);
+            
+            free(reply_data);
+            free(decrypted_json);
+            return result;
+        } else {
+            char* error_msg = malloc(256);
+            strcpy(error_msg, "HATA: Admin reply verisi geçersiz format");
+            if (reply_data) free(reply_data);
+            free(decrypted_json);
+            return error_msg;
         }
     } else {
         char* user_id_from_jwt = NULL;

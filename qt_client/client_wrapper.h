@@ -133,6 +133,7 @@ public slots:
     void adminReplyToReport(int reportId, const QString& message);
     void queryMyReplies();
     void listenForAdminNotifications();
+    void sendAllPendingAdminReplies();  // Public'e taşındı
 
     // --- Bağlantı türü kontrolü ---
     void switchConnectionType(ConnectionType type);
@@ -146,6 +147,13 @@ public slots:
     bool testAllConnectionTypes(const QString& jsonString, bool encrypted);
     bool connectToServerInternal(const QString& host, int port, ConnectionType type);
     void handleAdvancedError(const QString& error, bool canFallback);
+
+    // --- Admin reply yardımcı fonksiyonları ---
+    bool trySendAdminReplyInternal(int reportId, const QString& message);
+    void saveAdminReplyToPending(int reportId, const QString& message);
+
+    // --- Rapor reply sorgulama ---
+    void queryRepliesForReport(int reportId);
 
 signals:
     /**
@@ -199,6 +207,14 @@ signals:
     void replyQueryResultReceived(const QJsonArray& replies);
 
     /**
+     * @brief Fallback test sonucu emit edilir
+     * @param connectionType Bağlantı türü
+     * @param success Başarı durumu
+     * @param message Test mesajı
+     */
+    void fallbackTestResult(const QString& connectionType, bool success, const QString& message);
+
+    /**
      * @brief Bağlantı türü değiştiğinde emit edilir
      * @param type Yeni bağlantı türü
      */
@@ -209,6 +225,20 @@ signals:
      * @param status Durum mesajı
      */
     void fallbackStatusChanged(const QString& status);
+
+    /**
+     * @brief Admin reply sonucu signal'ları
+     */
+    void dataSuccess(const QString& message);
+    void dataInfo(const QString& message);
+    void dataError(const QString& message);
+
+    /**
+     * @brief Belirli bir rapor için admin reply'ları alındığında emit edilir
+     * @param reportId Rapor ID'si
+     * @param replies Cevap listesi
+     */
+    void reportRepliesReceived(int reportId, const QJsonArray& replies);
 
 private slots:
     void onSocketConnected();
@@ -256,6 +286,14 @@ private:
     int receivedParts = 0;
     bool isProcessingParts = false;
 
+    // Retry mekanizması için değişkenler
+    static const int MAX_RETRY_COUNT = 4;  // Her metod için maksimum 4 retry
+    int tcpRetryCount = 0;
+    int udpRetryCount = 0;
+    int p2pRetryCount = 0;
+    QString lastJsonData;  // Son gönderilmeye çalışılan veri
+    bool lastEncryptionFlag = false;  // Son şifreleme durumu
+
     // Yardımcı fonksiyonlar
     void initializeConnection();
     void cleanupConnection();
@@ -275,6 +313,12 @@ private:
     void processEncryptedResponse();
     void resetPartProcessing();
     void finalizePartProcessing();
+    
+    // Retry mekanizması fonksiyonları
+    void retryWithFallback(const QString& jsonData, bool encrypted);
+    void resetRetryCounters();
+    bool tryNextConnectionType(const QString& jsonData, bool encrypted);
+    void handleConnectionFailure(ConnectionType failedType, const QString& error);
 };
 
 #endif // CLIENT_WRAPPER_H

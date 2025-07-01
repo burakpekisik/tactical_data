@@ -16,6 +16,11 @@ Rectangle {
     function emitMarkerClicked(markerId, lat, lon) {
         mapContainer.markerClicked(markerId, lat, lon);
     }
+    
+    // Mevcut konum için değişkenler
+    property bool hasCurrentLocation: false
+    property double currentLat: 0.0
+    property double currentLon: 0.0
 
     // OpenStreetMap Plugin
     Plugin {
@@ -389,18 +394,101 @@ Rectangle {
                     default: return "#757575"; // Tanımsız/gri
                 }
             }
+            function formatTimestamp(timestamp) {
+                // Unix timestamp'ini JavaScript Date objesine çevir
+                var date = new Date(parseInt(timestamp) * 1000); // Unix timestamp saniye cinsinden
+                
+                // GG-AA-YYYY HH:MM:SS formatında formatla
+                var day = ("0" + date.getDate()).slice(-2);
+                var month = ("0" + (date.getMonth() + 1)).slice(-2);
+                var year = date.getFullYear();
+                var hours = ("0" + date.getHours()).slice(-2);
+                var minutes = ("0" + date.getMinutes()).slice(-2);
+                var seconds = ("0" + date.getSeconds()).slice(-2);
+                
+                return day + "." + month + "." + year + " " + hours + ":" + minutes + ":" + seconds;
+            }
+            
             function showDetails() {
+                var formattedTime = timestamp ? formatTimestamp(timestamp) : "Bilinmiyor";
                 var details =
                     "<b>ID:</b> " + id + "<br>" +
                     "<b>Durum:</b> " + status + "<br>" +
                     "<b>Açıklama:</b> " + description + "<br>" +
-                    "<b>Zaman:</b> " + timestamp;
+                    "<b>Zaman:</b> " + formattedTime;
                 Qt.createQmlObject(
                     'import QtQuick 2.15; import QtQuick.Controls 2.15; Popup { width: 320; height: 120; modal: false; focus: true; contentItem: Text { text: "' + details.replace(/"/g, '\\"') + '"; wrapMode: Text.Wrap; anchors.centerIn: parent; font.pixelSize: 13; textFormat: Text.RichText; } }',
                     map,
                     "dynamicPopup"
                 ).open();
             }
+        }
+    }
+    
+    // Mevcut konum işaretçisi komponenti
+    Component {
+        id: currentLocationComponent
+        MapQuickItem {
+            id: currentLocationMarker
+            sourceItem: Rectangle {
+                width: 24
+                height: 24
+                radius: 12
+                color: "#2196F3"
+                border.color: "white"
+                border.width: 4
+                
+                // İç nokta
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 8
+                    height: 8
+                    radius: 4
+                    color: "white"
+                }
+                
+                // Nabız efekti
+                SequentialAnimation on scale {
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 1.3; duration: 1000 }
+                    NumberAnimation { from: 1.3; to: 1.0; duration: 1000 }
+                }
+                
+                // Dış halka efekti
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 50
+                    height: 50
+                    radius: 25
+                    color: "transparent"
+                    border.color: "#2196F3"
+                    border.width: 2
+                    opacity: 0.6
+                    
+                    SequentialAnimation on scale {
+                        loops: Animation.Infinite
+                        NumberAnimation { from: 0.5; to: 2.0; duration: 2000 }
+                    }
+                    SequentialAnimation on opacity {
+                        loops: Animation.Infinite
+                        NumberAnimation { from: 0.8; to: 0.0; duration: 2000 }
+                    }
+                }
+                
+                // Tooltip görevi görecek MouseArea
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        Qt.createQmlObject(
+                            'import QtQuick 2.15; import QtQuick.Controls 2.15; Popup { width: 280; height: 80; modal: false; focus: true; contentItem: Text { text: "<b>📍 Mevcut Konumum</b><br>Koordinat: ' + coordinate.latitude.toFixed(6) + ', ' + coordinate.longitude.toFixed(6) + '"; wrapMode: Text.Wrap; anchors.centerIn: parent; font.pixelSize: 13; textFormat: Text.RichText; horizontalAlignment: Text.AlignHCenter; } }',
+                            map,
+                            "currentLocationPopup"
+                        ).open();
+                    }
+                }
+            }
+            coordinate: QtPositioning.coordinate(0, 0)
         }
     }
     
@@ -454,6 +542,7 @@ Rectangle {
     // Marker yönetim fonksiyonları
     property bool visibleMarkers: true
     property var markers: []
+    property var currentLocationMarker: null
     // allowAddMarker context property olarak C++'tan geliyor
     
     function setMarkersVisible(visible) {
@@ -489,6 +578,45 @@ Rectangle {
             markers[i].destroy();
         }
         markers = [];
+        
+        // Mevcut konum marker'ını da temizle
+        if (currentLocationMarker) {
+            map.removeMapItem(currentLocationMarker);
+            currentLocationMarker.destroy();
+            currentLocationMarker = null;
+            hasCurrentLocation = false;
+        }
+        
         console.log("[QML] [RESP] Tüm markerlar temizlendi");
+    }
+    
+    function setCurrentLocation(lat, lon) {
+        console.log("[QML] [REQ] Mevcut konum ayarlanıyor:", lat, lon);
+        
+        // Önceki mevcut konum marker'ını temizle
+        if (currentLocationMarker) {
+            map.removeMapItem(currentLocationMarker);
+            currentLocationMarker.destroy();
+        }
+        
+        // Mevcut konum marker'ını oluştur - diğer markerlardan farklı görünüm
+        currentLocationMarker = currentLocationComponent.createObject(map, {
+            coordinate: QtPositioning.coordinate(lat, lon)
+        });
+        
+        if (currentLocationMarker) {
+            map.addMapItem(currentLocationMarker);
+            hasCurrentLocation = true;
+            currentLat = lat;
+            currentLon = lon;
+            
+            // Haritayı mevcut konuma odakla
+            map.center = QtPositioning.coordinate(lat, lon);
+            map.zoomLevel = Math.max(map.zoomLevel, 14); // En az zoom level 14
+            
+            console.log("[QML] [RESP] Mevcut konum marker'ı eklendi:", lat, lon);
+        } else {
+            console.log("[QML] [ERROR] Mevcut konum marker'ı oluşturulamadı");
+        }
     }
 }

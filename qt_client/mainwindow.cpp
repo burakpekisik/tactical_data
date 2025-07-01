@@ -18,6 +18,8 @@
 #include <QCheckBox>
 #include <QProgressBar>
 #include <QJsonArray>
+#include <QScrollArea>
+#include <QFrame>
 #include <QJsonObject>
 #include <QJsonValue>
 
@@ -53,18 +55,66 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onLogMessage);
     connect(clientWrapper, &ClientWrapper::reportsReceived,
             this, &MainWindow::onReportsReceived);
+    connect(clientWrapper, &ClientWrapper::fallbackTestResult,
+            this, &MainWindow::onFallbackTestResult);
+    // Admin reply signal'ları
+    connect(clientWrapper, &ClientWrapper::dataSuccess, this, [this](const QString& message) {
+        logTextEdit->append(QString("<span style='color: #27ae60;'><b>[BAŞARILI]</b></span> %1").arg(message));
+    });
+    connect(clientWrapper, &ClientWrapper::dataInfo, this, [this](const QString& message) {
+        logTextEdit->append(QString("<span style='color: #3498db;'><b>[BİLGİ]</b></span> %1").arg(message));
+    });
+    connect(clientWrapper, &ClientWrapper::dataError, this, [this](const QString& message) {
+        logTextEdit->append(QString("<span style='color: #e74c3c;'><b>[HATA]</b></span> %1").arg(message));
+    });
     connect(clientWrapper, &ClientWrapper::ecdhHandshakeCompleted, this, [this](){
         logTextEdit->append("<b>[INFO]</b> ECDH tamamlandı, otomatik rapor sorgulanıyor...");
         clientWrapper->getReports();
+        
+        // Bekleyen admin reply'ları gönder
+        QTimer::singleShot(1000, this, [this]() {
+            logTextEdit->append("<b>[INFO]</b> Bekleyen admin reply'lar kontrol ediliyor...");
+            clientWrapper->sendAllPendingAdminReplies();
+        });
+        
+        // Login sonrası hemen bağlantı durumunu kontrol et
+        QTimer::singleShot(2000, this, [this]() {
+            logTextEdit->append("<b>[INFO]</b> Login sonrası bağlantı durumu kontrol ediliyor...");
+            onPeriodicConnectionCheck();
+        });
     });
+    
+    // Periyodik bağlantı kontrolü timer'ı
+    connectionCheckTimer = new QTimer(this);
+    connect(connectionCheckTimer, &QTimer::timeout, this, &MainWindow::onPeriodicConnectionCheck);
+    connectionCheckTimer->setInterval(30000); // 30 saniye
+    
+    // Konum servisleri başlat
+    positionSource = QGeoPositionInfoSource::createDefaultSource(this);
+    if (positionSource) {
+        connect(positionSource, &QGeoPositionInfoSource::positionUpdated,
+                this, &MainWindow::onPositionUpdated);
+        connect(positionSource, &QGeoPositionInfoSource::errorOccurred,
+                this, &MainWindow::onPositionError);
+        positionSource->setUpdateInterval(5000); // 5 saniye güncelleme
+    }
     
     setupUI();
     setWindowTitle("Tactical Data Client - Harita Arayüzü");
     setMinimumSize(1200, 800);
-    resize(1400, 900);
+    resize(1400, 1000);
     
     // Status bar ekle
     statusBar()->showMessage("Hazır");
+    
+    // Otomatik durum kontrolünü başlat (UI kurulumundan sonra)
+    QTimer::singleShot(1000, this, [this]() {
+        // UI tamamen yüklenince otomatik kontrolü başlat
+        if (autoCheckEnabled) {
+            connectionCheckTimer->start();
+            logTextEdit->append("<b>[INFO]</b> Otomatik bağlantı kontrolü başlatıldı (30 saniye aralık)");
+        }
+    });
 }
 
 /**
@@ -138,9 +188,24 @@ void MainWindow::setupMapPanel()
         logTextEdit->append(QString("<b>[KULLANICI]</b> Markerlar %1").arg(checked ? "gösterildi" : "gizlendi"));
     });
     
+    // Konum bulma butonu
+    findLocationButton = new QPushButton("📍 Şu Anki Konumumu Bul");
+    findLocationButton->setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 8px; }");
+    connect(findLocationButton, &QPushButton::clicked, this, &MainWindow::onFindMyLocation);
+    
+    // Mevcut konum bilgisi
+    currentLocationLabel = new QLabel("Mevcut Konum: Henüz belirlenmedi");
+    currentLocationLabel->setStyleSheet("QLabel { background-color: #E3F2FD; padding: 5px; border: 1px solid #2196F3; border-radius: 3px; }");
+    
+    // Butonlar için yatay layout
+    QHBoxLayout *buttonLayout = new QHBoxLayout();
+    buttonLayout->addWidget(toggleMarkersButton);
+    buttonLayout->addWidget(findLocationButton);
+    
     mapLayout->addWidget(mapWidget, 1); // Haritaya genişleme faktörü ekle
     mapLayout->addWidget(coordinatesLabel);
-    mapLayout->addWidget(toggleMarkersButton); // Butonu ekle
+    mapLayout->addWidget(currentLocationLabel);
+    mapLayout->addLayout(buttonLayout);
     mapLayout->setContentsMargins(5, 5, 5, 5);
 }
 
@@ -343,26 +408,362 @@ void MainWindow::onMapClicked(double latitude, double longitude)
 void MainWindow::onMarkerClicked(int id, double latitude, double longitude)
 {
     if (currentMode == ReplyMode) {
-        // Sadece marker tıklanınca dönüt menüsü aç
-        QDialog dialog(this);
-        dialog.setWindowTitle("Dönüt Gönder");
-        QVBoxLayout* layout = new QVBoxLayout(&dialog);
-        QLabel* info = new QLabel(QString("Seçili Marker ID: %1\nKoordinat: %2, %3").arg(id).arg(latitude, 0, 'f', 6).arg(longitude, 0, 'f', 6));
-        layout->addWidget(info);
-        QLabel* det = new QLabel("Buraya rapor detayları eklenebilir.");
-        layout->addWidget(det);
-        QLineEdit* replyEdit = new QLineEdit();
-        replyEdit->setPlaceholderText("Dönüt mesajınızı yazın...");
-        layout->addWidget(replyEdit);
-        QPushButton* sendBtn = new QPushButton("Dönütü Kaydet (simülasyon)");
-        layout->addWidget(sendBtn);
-        connect(sendBtn, &QPushButton::clicked, &dialog, [&](){
-            logTextEdit->append(QString("<b>[DÖNÜT]</b> Marker ID %1 (%2, %3) için mesaj: %4")
-                .arg(id).arg(latitude, 0, 'f', 6).arg(longitude, 0, 'f', 6).arg(replyEdit->text()));
-            dialog.accept();
-        });
-        dialog.exec();
+        // Admin dönüt modunda: Dönüt gönder menüsü aç
+        showAdminReplyDialog(id, latitude, longitude);
+    } else {
+        // Normal modda: Bu marker için mevcut reply'ları göster
+        showMarkerRepliesDialog(id, latitude, longitude);
     }
+}
+
+void MainWindow::showAdminReplyDialog(int id, double latitude, double longitude)
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QString("Marker %1 - Admin İşlemleri").arg(id));
+    dialog.setModal(true);
+    dialog.resize(650, 450);
+    
+    QVBoxLayout* mainLayout = new QVBoxLayout(&dialog);
+    
+    // Marker bilgileri
+    QLabel* info = new QLabel(QString("Marker ID: %1\nKoordinat: %2, %3").arg(id).arg(latitude, 0, 'f', 6).arg(longitude, 0, 'f', 6));
+    info->setStyleSheet("font-weight: bold; color: #2c3e50; padding: 10px; background-color: #ecf0f1; border-radius: 4px; margin-bottom: 10px;");
+    mainLayout->addWidget(info);
+    
+    // Tab widget oluştur
+    QTabWidget* tabWidget = new QTabWidget();
+    tabWidget->setStyleSheet("QTabWidget::pane { border: 1px solid #bdc3c7; } QTabBar::tab { padding: 8px 16px; margin-right: 2px; } QTabBar::tab:selected { background-color: #3498db; color: white; }");
+    
+    // Tab 1: Mevcut Cevapları Görüntüle
+    QWidget* repliesTab = new QWidget();
+    QVBoxLayout* repliesTabLayout = new QVBoxLayout(repliesTab);
+    
+    QScrollArea* scrollArea = new QScrollArea();
+    QWidget* repliesWidget = new QWidget();
+    QVBoxLayout* repliesLayout = new QVBoxLayout(repliesWidget);
+    
+    // Yükleniyor mesajı
+    QLabel* loadingLabel = new QLabel("Admin cevapları yükleniyor...");
+    loadingLabel->setStyleSheet("color: #7f8c8d; font-style: italic; padding: 20px; text-align: center;");
+    loadingLabel->setAlignment(Qt::AlignCenter);
+    repliesLayout->addWidget(loadingLabel);
+    
+    scrollArea->setWidget(repliesWidget);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setStyleSheet("QScrollArea { border: 1px solid #bdc3c7; border-radius: 4px; }");
+    repliesTabLayout->addWidget(scrollArea);
+    
+    // Yenile butonu
+    QPushButton* refreshBtn = new QPushButton("Yenile");
+    refreshBtn->setStyleSheet("QPushButton { background-color: #3498db; color: white; border: none; padding: 8px 16px; border-radius: 4px; } QPushButton:hover { background-color: #2980b9; }");
+    repliesTabLayout->addWidget(refreshBtn);
+    
+    tabWidget->addTab(repliesTab, "Mevcut Cevaplar");
+    
+    // Tab 2: Yeni Cevap Gönder
+    QWidget* sendReplyTab = new QWidget();
+    QVBoxLayout* sendReplyLayout = new QVBoxLayout(sendReplyTab);
+    
+    QLabel* instructionLabel = new QLabel("Bu rapor için admin dönütü gönderebilirsiniz:");
+    instructionLabel->setStyleSheet("color: #7f8c8d; margin-bottom: 15px; font-size: 14px;");
+    sendReplyLayout->addWidget(instructionLabel);
+    
+    QTextEdit* replyTextEdit = new QTextEdit();
+    replyTextEdit->setPlaceholderText("Dönüt mesajınızı buraya yazın...\n\nDetaylı açıklamalar için birden fazla satır kullanabilirsiniz.");
+    replyTextEdit->setStyleSheet("padding: 12px; border: 2px solid #bdc3c7; border-radius: 6px; font-size: 12px; min-height: 120px;");
+    sendReplyLayout->addWidget(replyTextEdit);
+    
+    // Karakter sayacı
+    QLabel* charCountLabel = new QLabel("0 karakter");
+    charCountLabel->setStyleSheet("color: #7f8c8d; font-size: 11px; margin-top: 5px;");
+    connect(replyTextEdit, &QTextEdit::textChanged, [replyTextEdit, charCountLabel]() {
+        int charCount = replyTextEdit->toPlainText().length();
+        charCountLabel->setText(QString("%1 karakter").arg(charCount));
+        if (charCount > 500) {
+            charCountLabel->setStyleSheet("color: #e74c3c; font-size: 11px; margin-top: 5px;");
+        } else {
+            charCountLabel->setStyleSheet("color: #7f8c8d; font-size: 11px; margin-top: 5px;");
+        }
+    });
+    sendReplyLayout->addWidget(charCountLabel);
+    
+    sendReplyLayout->addStretch();
+    
+    QPushButton* sendBtn = new QPushButton("Dönütü Gönder");
+    sendBtn->setStyleSheet("QPushButton { background-color: #27ae60; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; } QPushButton:hover { background-color: #2ecc71; }");
+    sendReplyLayout->addWidget(sendBtn);
+    
+    tabWidget->addTab(sendReplyTab, "Yeni Cevap Gönder");
+    
+    mainLayout->addWidget(tabWidget);
+    
+    // Ana butonlar
+    QHBoxLayout* buttonLayout = new QHBoxLayout();
+    QPushButton* closeBtn = new QPushButton("Kapat");
+    closeBtn->setStyleSheet("QPushButton { background-color: #95a5a6; color: white; border: none; padding: 10px 20px; border-radius: 4px; } QPushButton:hover { background-color: #7f8c8d; }");
+    
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(closeBtn);
+    mainLayout->addLayout(buttonLayout);
+    
+    // Signal bağlantıları
+    connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+    
+    // Dönüt gönder butonu
+    connect(sendBtn, &QPushButton::clicked, [&dialog, replyTextEdit, id, this](){
+        QString message = replyTextEdit->toPlainText().trimmed();
+        
+        if (message.isEmpty()) {
+            QMessageBox::warning(&dialog, "Uyarı", "Dönüt mesajı boş olamaz!");
+            return;
+        }
+        
+        if (message.length() > 500) {
+            QMessageBox::warning(&dialog, "Uyarı", "Dönüt mesajı 500 karakterden uzun olamaz!");
+            return;
+        }
+        
+        // Admin reply gönder
+        logTextEdit->append(QString("<span style='color: #e67e22;'><b>[ADMIN REPLY]</b></span> Marker ID %1 için dönüt gönderiliyor...").arg(id));
+        
+        if (clientWrapper) {
+            clientWrapper->adminReplyToReport(id, message);
+        }
+        
+        // Mesajı temizle ve başarı mesajı göster
+        replyTextEdit->clear();
+        QMessageBox::information(&dialog, "Bilgi", "Dönüt mesajı gönderildi!");
+    });
+    
+    // Reply'ları alma signal'ını bağla
+    QMetaObject::Connection replyConnection = connect(clientWrapper, &ClientWrapper::reportRepliesReceived, 
+        [id, repliesLayout, loadingLabel](int reportId, const QJsonArray& replies) {
+            // Eski widget'ları temizle
+            QLayoutItem* item;
+            while ((item = repliesLayout->takeAt(0)) != nullptr) {
+                delete item->widget();
+                delete item;
+            }
+            
+            // Bu marker'a ait reply'ları filtrele
+            QJsonArray relevantReplies;
+            for (const QJsonValue& replyVal : replies) {
+                QJsonObject reply = replyVal.toObject();
+                if (reply["report_id"].toInt() == id) {
+                    relevantReplies.append(replyVal);
+                }
+            }
+            
+            if (relevantReplies.isEmpty()) {
+                QLabel* noRepliesLabel = new QLabel("Bu marker için henüz admin cevabı bulunmuyor.");
+                noRepliesLabel->setStyleSheet("color: #7f8c8d; font-style: italic; padding: 20px; text-align: center;");
+                noRepliesLabel->setAlignment(Qt::AlignCenter);
+                repliesLayout->addWidget(noRepliesLabel);
+            } else {
+                for (const QJsonValue& replyVal : relevantReplies) {
+                    QJsonObject reply = replyVal.toObject();
+                    
+                    QFrame* replyFrame = new QFrame();
+                    replyFrame->setStyleSheet("QFrame { background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; margin: 5px; }");
+                    
+                    QVBoxLayout* replyLayout = new QVBoxLayout(replyFrame);
+                    
+                    // Admin bilgisi ve tarih
+                    QString adminInfo = QString("Admin: %1").arg(reply["admin_name"].toString("Bilinmeyen"));
+                    
+                    // Timestamp'i okunabilir formata çevir
+                    qint64 timestamp = reply["timestamp"].toVariant().toLongLong();
+                    if (timestamp > 0) {
+                        QDateTime dateTime = QDateTime::fromSecsSinceEpoch(timestamp);
+                        QString formattedDate = dateTime.toString("dd-MM-yyyy hh:mm:ss");
+                        adminInfo += QString(" - %1").arg(formattedDate);
+                    }
+                    
+                    QLabel* adminLabel = new QLabel(adminInfo);
+                    adminLabel->setStyleSheet("font-weight: bold; color: #495057; margin-bottom: 5px;");
+                    replyLayout->addWidget(adminLabel);
+                    
+                    // Cevap mesajı
+                    QString replyMsg = reply["message"].toString();
+                    QLabel* msgLabel = new QLabel(replyMsg);
+                    msgLabel->setStyleSheet("color: #212529; padding: 12px; background-color: white; border-radius: 4px; border: 1px solid #e9ecef;");
+                    msgLabel->setWordWrap(true);
+                    replyLayout->addWidget(msgLabel);
+                    
+                    repliesLayout->addWidget(replyFrame);
+                }
+            }
+            
+            repliesLayout->addStretch();
+        });
+    
+    // Refresh butonuna basınca yeniden sorgu
+    connect(refreshBtn, &QPushButton::clicked, [this, id, loadingLabel, repliesLayout]() {
+        // Önce loading mesajını göster
+        QLayoutItem* item;
+        while ((item = repliesLayout->takeAt(0)) != nullptr) {
+            delete item->widget();
+            delete item;
+        }
+        
+        QLabel* newLoadingLabel = new QLabel("Admin cevapları yenileniyor...");
+        newLoadingLabel->setStyleSheet("color: #7f8c8d; font-style: italic; padding: 20px; text-align: center;");
+        newLoadingLabel->setAlignment(Qt::AlignCenter);
+        repliesLayout->addWidget(newLoadingLabel);
+        
+        if (clientWrapper) {
+            clientWrapper->queryRepliesForReport(id);
+        }
+    });
+    
+    // Dialog kapanınca connection'ı kaldır
+    connect(&dialog, &QDialog::finished, [replyConnection]() {
+        QObject::disconnect(replyConnection);
+    });
+    
+    // İlk sorguyu başlat
+    if (clientWrapper) {
+        clientWrapper->queryRepliesForReport(id);
+    }
+    
+    dialog.exec();
+}
+
+void MainWindow::showMarkerRepliesDialog(int id, double latitude, double longitude)
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QString("Marker %1 - Admin Cevapları").arg(id));
+    dialog.setModal(true);
+    dialog.resize(600, 400);
+    
+    QVBoxLayout* layout = new QVBoxLayout(&dialog);
+    
+    // Marker bilgileri
+    QLabel* info = new QLabel(QString("Marker ID: %1\nKoordinat: %2, %3").arg(id).arg(latitude, 0, 'f', 6).arg(longitude, 0, 'f', 6));
+    info->setStyleSheet("font-weight: bold; color: #2c3e50; padding: 10px; background-color: #ecf0f1; border-radius: 4px; margin-bottom: 10px;");
+    layout->addWidget(info);
+    
+    // Cevaplar için scroll area
+    QScrollArea* scrollArea = new QScrollArea();
+    QWidget* repliesWidget = new QWidget();
+    QVBoxLayout* repliesLayout = new QVBoxLayout(repliesWidget);
+    
+    // Yükleniyor mesajı
+    QLabel* loadingLabel = new QLabel("Admin cevapları yükleniyor...");
+    loadingLabel->setStyleSheet("color: #7f8c8d; font-style: italic; padding: 20px; text-align: center;");
+    loadingLabel->setAlignment(Qt::AlignCenter);
+    repliesLayout->addWidget(loadingLabel);
+    
+    scrollArea->setWidget(repliesWidget);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setStyleSheet("QScrollArea { border: 1px solid #bdc3c7; border-radius: 4px; }");
+    layout->addWidget(scrollArea);
+    
+    // Yenile butonu
+    QHBoxLayout* buttonLayout = new QHBoxLayout();
+    QPushButton* refreshBtn = new QPushButton("Yenile");
+    refreshBtn->setStyleSheet("QPushButton { background-color: #3498db; color: white; border: none; padding: 8px 16px; border-radius: 4px; } QPushButton:hover { background-color: #2980b9; }");
+    QPushButton* closeBtn = new QPushButton("Kapat");
+    closeBtn->setStyleSheet("QPushButton { background-color: #95a5a6; color: white; border: none; padding: 8px 16px; border-radius: 4px; } QPushButton:hover { background-color: #7f8c8d; }");
+    
+    buttonLayout->addWidget(refreshBtn);
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(closeBtn);
+    layout->addLayout(buttonLayout);
+    
+    // Signal bağlantıları
+    connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+    
+    // Reply'ları alma signal'ını bağla
+    QMetaObject::Connection replyConnection = connect(clientWrapper, &ClientWrapper::reportRepliesReceived, 
+        [&dialog, repliesLayout, loadingLabel, id](int reportId, const QJsonArray& replies) {
+            // Gelen reply'ları filtrele (sadece bu marker'a ait olanları göster)
+            QJsonArray filteredReplies;
+            for (const QJsonValue& replyVal : replies) {
+                QJsonObject reply = replyVal.toObject();
+                int replyReportId = reply["report_id"].toInt();
+                if (replyReportId == id) {
+                    filteredReplies.append(replyVal);
+                }
+            }
+            
+            // Eski widget'ları temizle
+            QLayoutItem* item;
+            while ((item = repliesLayout->takeAt(0)) != nullptr) {
+                delete item->widget();
+                delete item;
+            }
+            
+            if (filteredReplies.isEmpty()) {
+                QLabel* noRepliesLabel = new QLabel("Bu marker için henüz admin cevabı bulunmuyor.");
+                noRepliesLabel->setStyleSheet("color: #7f8c8d; font-style: italic; padding: 20px; text-align: center;");
+                noRepliesLabel->setAlignment(Qt::AlignCenter);
+                repliesLayout->addWidget(noRepliesLabel);
+            } else {
+                for (const QJsonValue& replyVal : filteredReplies) {
+                    QJsonObject reply = replyVal.toObject();
+                    
+                    QFrame* replyFrame = new QFrame();
+                    replyFrame->setStyleSheet("QFrame { background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; margin: 5px; }");
+                    
+                    QVBoxLayout* replyLayout = new QVBoxLayout(replyFrame);
+                    
+                    // Admin bilgisi ve tarih
+                    QString adminInfo = QString("Admin ID: %1").arg(reply["user_id"].toInt());
+                    qint64 timestamp = reply["timestamp"].toVariant().toLongLong();
+                    if (timestamp > 0) {
+                        QDateTime dateTime = QDateTime::fromSecsSinceEpoch(timestamp);
+                        adminInfo += QString(" - %1").arg(dateTime.toString("dd-MM-yyyy hh:mm:ss"));
+                    }
+                    
+                    QLabel* adminLabel = new QLabel(adminInfo);
+                    adminLabel->setStyleSheet("font-weight: bold; color: #495057; margin-bottom: 5px;");
+                    replyLayout->addWidget(adminLabel);
+                    
+                    // Cevap mesajı
+                    QString replyMsg = reply["message"].toString();
+                    QLabel* msgLabel = new QLabel(replyMsg);
+                    msgLabel->setStyleSheet("color: #212529; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #e9ecef;");
+                    msgLabel->setWordWrap(true);
+                    replyLayout->addWidget(msgLabel);
+                    
+                    repliesLayout->addWidget(replyFrame);
+                }
+            }
+            
+            repliesLayout->addStretch();
+        });
+    
+    // Refresh butonuna basınca yeniden sorgu
+    connect(refreshBtn, &QPushButton::clicked, [this, id, loadingLabel, repliesLayout]() {
+        // Önce loading mesajını göster
+        QLayoutItem* item;
+        while ((item = repliesLayout->takeAt(0)) != nullptr) {
+            delete item->widget();
+            delete item;
+        }
+        
+        QLabel* newLoadingLabel = new QLabel("Admin cevapları yenileniyor...");
+        newLoadingLabel->setStyleSheet("color: #7f8c8d; font-style: italic; padding: 20px; text-align: center;");
+        newLoadingLabel->setAlignment(Qt::AlignCenter);
+        repliesLayout->addWidget(newLoadingLabel);
+        
+        if (clientWrapper) {
+            clientWrapper->queryRepliesForReport(id);
+        }
+    });
+    
+    // Dialog kapanınca connection'ı kaldır
+    connect(&dialog, &QDialog::finished, [replyConnection]() {
+        QObject::disconnect(replyConnection);
+    });
+    
+    // İlk sorguyu başlat
+    if (clientWrapper) {
+        clientWrapper->queryRepliesForReport(id);
+    }
+    
+    dialog.exec();
 }
 
 /**
@@ -638,16 +1039,45 @@ void MainWindow::setupFallbackPanel()
     fallbackGroup = new QGroupBox("Bağlantı Yönetimi", this);
     QVBoxLayout *fallbackLayout = new QVBoxLayout(fallbackGroup);
     
-    // Bağlantı türü seçimi
-    QHBoxLayout *typeLayout = new QHBoxLayout();
-    typeLayout->addWidget(new QLabel("Bağlantı Türü:"));
-    connectionTypeCombo = new QComboBox();
-    connectionTypeCombo->addItems({"TCP", "UDP", "P2P"});
-    typeLayout->addWidget(connectionTypeCombo);
+    // Bağlantı durumu göstergeleri
+    QGroupBox *statusGroup = new QGroupBox("Bağlantı Durumları");
+    QVBoxLayout *statusLayout = new QVBoxLayout(statusGroup);
     
-    QPushButton *switchTypeButton = new QPushButton("Türü Değiştir");
-    typeLayout->addWidget(switchTypeButton);
-    fallbackLayout->addLayout(typeLayout);
+    // TCP durum göstergesi
+    QHBoxLayout *tcpStatusLayout = new QHBoxLayout();
+    tcpStatusLayout->addWidget(new QLabel("TCP:"));
+    tcpStatusLabel = new QLabel("Bilinmiyor");
+    tcpStatusLabel->setStyleSheet("QLabel { padding: 4px; border: 1px solid #ccc; border-radius: 3px; background-color: #f0f0f0; }");
+    tcpStatusLayout->addWidget(tcpStatusLabel);
+    tcpStatusLayout->addStretch();
+    statusLayout->addLayout(tcpStatusLayout);
+    
+    // UDP durum göstergesi
+    QHBoxLayout *udpStatusLayout = new QHBoxLayout();
+    udpStatusLayout->addWidget(new QLabel("UDP:"));
+    udpStatusLabel = new QLabel("Bilinmiyor");
+    udpStatusLabel->setStyleSheet("QLabel { padding: 4px; border: 1px solid #ccc; border-radius: 3px; background-color: #f0f0f0; }");
+    udpStatusLayout->addWidget(udpStatusLabel);
+    udpStatusLayout->addStretch();
+    statusLayout->addLayout(udpStatusLayout);
+    
+    // P2P durum göstergesi
+    QHBoxLayout *p2pStatusLayout = new QHBoxLayout();
+    p2pStatusLayout->addWidget(new QLabel("P2P:"));
+    p2pStatusLabel = new QLabel("Bilinmiyor");
+    p2pStatusLabel->setStyleSheet("QLabel { padding: 4px; border: 1px solid #ccc; border-radius: 3px; background-color: #f0f0f0; }");
+    p2pStatusLayout->addWidget(p2pStatusLabel);
+    p2pStatusLayout->addStretch();
+    statusLayout->addLayout(p2pStatusLayout);
+    
+    fallbackLayout->addWidget(statusGroup);
+    
+    // Periyodik kontrol ayarları
+    QHBoxLayout *periodicLayout = new QHBoxLayout();
+    periodicCheckBox = new QCheckBox("Otomatik durum kontrolü (30 saniye)");
+    periodicCheckBox->setChecked(true);  // Default olarak açık
+    periodicLayout->addWidget(periodicCheckBox);
+    fallbackLayout->addLayout(periodicLayout);
     
     // Test butonları
     QHBoxLayout *testLayout = new QHBoxLayout();
@@ -666,8 +1096,17 @@ void MainWindow::setupFallbackPanel()
     fallbackLayout->addWidget(fallbackLogEdit);
     
     // Signal bağlantıları
-    connect(switchTypeButton, &QPushButton::clicked, this, &MainWindow::onSwitchConnectionType);
     connect(testConnectionsButton, &QPushButton::clicked, this, &MainWindow::onTestConnections);
+    connect(periodicCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        autoCheckEnabled = checked;  // Değişkeni güncelle
+        if (checked) {
+            connectionCheckTimer->start();
+            fallbackLogEdit->append("[INFO] Otomatik durum kontrolü başlatıldı (30 saniye aralık)");
+        } else {
+            connectionCheckTimer->stop();
+            fallbackLogEdit->append("[INFO] Otomatik durum kontrolü durduruldu");
+        }
+    });
 }
 
 /**
@@ -707,28 +1146,12 @@ void MainWindow::onListenForNotifications()
 }
 
 /**
- * @brief Bağlantı türü değiştirme slot'u
- */
-void MainWindow::onSwitchConnectionType()
-{
-    QString typeText = connectionTypeCombo->currentText();
-    ClientWrapper::ConnectionType type;
-    
-    if (typeText == "TCP") type = ClientWrapper::ConnectionType::TCP;
-    else if (typeText == "UDP") type = ClientWrapper::ConnectionType::UDP;
-    else if (typeText == "P2P") type = ClientWrapper::ConnectionType::P2P;
-    else return;
-    
-    fallbackLogEdit->append(QString("<b>[INFO]</b> Bağlantı türü %1'e değiştiriliyor...").arg(typeText));
-    clientWrapper->switchConnectionType(type);
-}
-
-/**
  * @brief Bağlantı testi slot'u
  */
 void MainWindow::onTestConnections()
 {
-    fallbackLogEdit->append("<b>[INFO]</b> Tüm bağlantı türleri test ediliyor...");
+    fallbackLogEdit->clear(); // Önceki logları temizle
+    fallbackLogEdit->append("<b>[TEST]</b> Bağlantı testleri başlatılıyor...");
     
     QString testJson = clientWrapper->createTacticalDataJson(selectedLatitude, selectedLongitude, 
                                                            "connection_test", "Bağlantı testi");
@@ -770,7 +1193,6 @@ void MainWindow::onConnectionTypeChanged(ClientWrapper::ConnectionType type)
         case ClientWrapper::ConnectionType::P2P: typeStr = "P2P"; break;
     }
     
-    connectionTypeCombo->setCurrentText(typeStr);
     fallbackLogEdit->append(QString("<b>[DEĞİŞİM]</b> Aktif bağlantı türü: %1").arg(typeStr));
 }
 
@@ -781,4 +1203,183 @@ void MainWindow::onFallbackStatusChanged(const QString& status)
 {
     fallbackStatusLabel->setText(QString("Fallback Durumu: %1").arg(status));
     fallbackLogEdit->append(QString("<b>[DURUM]</b> %1").arg(status));
+}
+
+/**
+ * @brief Fallback test sonucu slot'u
+ */
+void MainWindow::onFallbackTestResult(const QString& connectionType, bool success, const QString& message)
+{
+    QString colorStyle;
+    QString prefix;
+    
+    if (connectionType == "INFO") {
+        colorStyle = "color: blue; font-weight: bold;";
+        prefix = "[BİLGİ]";
+    } else if (success) {
+        colorStyle = "color: green; font-weight: bold;";
+        prefix = QString("[%1 ✓]").arg(connectionType);
+        // Başarılı bağlantı durumunu güncelle
+        updateConnectionStatus(connectionType, true, "Test başarılı");
+    } else {
+        colorStyle = "color: red; font-weight: bold;";
+        prefix = QString("[%1 ✗]").arg(connectionType);
+        // Başarısız bağlantı durumunu güncelle
+        updateConnectionStatus(connectionType, false, "Test başarısız");
+    }
+    
+    QString logEntry = QString("<span style='%1'>%2</span> %3")
+                       .arg(colorStyle)
+                       .arg(prefix)
+                       .arg(message);
+    
+    fallbackLogEdit->append(logEntry);
+    
+    // Otomatik scroll
+    QTextCursor cursor = fallbackLogEdit->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    fallbackLogEdit->setTextCursor(cursor);
+}
+
+/**
+ * @brief Periyodik bağlantı kontrolü slot'u
+ */
+void MainWindow::onPeriodicConnectionCheck()
+{
+    if (!periodicCheckBox->isChecked()) {
+        return; // Checkbox kapalıysa çalışma
+    }
+    
+    fallbackLogEdit->append("[AUTO] Otomatik bağlantı kontrolü başlatılıyor...");
+    
+    // Test JSON verisi - basit bir test mesajı
+    QString testJson = R"({"type":"connection_test","timestamp":")" + 
+                      QString::number(QDateTime::currentSecsSinceEpoch()) + R"("})";
+    
+    // Tüm bağlantı türlerini test et
+    clientWrapper->testAllConnectionTypes(testJson, false);
+}
+
+/**
+ * @brief Bağlantı durumu günceller
+ */
+void MainWindow::updateConnectionStatus(const QString& connectionType, bool isConnected, const QString& details)
+{
+    QLabel* statusLabel = nullptr;
+    
+    if (connectionType == "TCP") {
+        statusLabel = tcpStatusLabel;
+    } else if (connectionType == "UDP") {
+        statusLabel = udpStatusLabel;
+    } else if (connectionType == "P2P") {
+        statusLabel = p2pStatusLabel;
+    }
+    
+    if (statusLabel) {
+        QString statusText;
+        QString styleSheet;
+        
+        if (isConnected) {
+            statusText = "Bağlı ✓";
+            styleSheet = "QLabel { padding: 4px; border: 1px solid #4CAF50; border-radius: 3px; background-color: #E8F5E8; color: #2E7D32; font-weight: bold; }";
+        } else {
+            statusText = "Bağlı Değil ✗";
+            styleSheet = "QLabel { padding: 4px; border: 1px solid #F44336; border-radius: 3px; background-color: #FFEBEE; color: #C62828; font-weight: bold; }";
+        }
+        
+        if (!details.isEmpty()) {
+            statusText += QString(" (%1)").arg(details);
+        }
+        
+        statusLabel->setText(statusText);
+        statusLabel->setStyleSheet(styleSheet);
+        statusLabel->setToolTip(details);
+    }
+}
+
+/**
+ * @brief Şu anki konumu bulma slot'u
+ */
+void MainWindow::onFindMyLocation()
+{
+    if (!positionSource) {
+        QMessageBox::warning(this, "Hata", "Konum servisi kullanılamıyor!");
+        logTextEdit->append("<b>[KONUM]</b> Konum servisi kullanılamıyor");
+        return;
+    }
+    
+    findLocationButton->setEnabled(false);
+    findLocationButton->setText("📍 Konum Alınıyor...");
+    currentLocationLabel->setText("Mevcut Konum: Konum belirleniyor...");
+    currentLocationLabel->setStyleSheet("QLabel { background-color: #FFF3E0; padding: 5px; border: 1px solid #FF9800; border-radius: 3px; }");
+    
+    logTextEdit->append("<b>[KONUM]</b> GPS konumu alınıyor...");
+    
+    // Tek seferlik konum talebi
+    positionSource->requestUpdate(10000); // 10 saniye timeout
+}
+
+/**
+ * @brief Konum güncellendiğinde çağrılan slot
+ */
+void MainWindow::onPositionUpdated(const QGeoPositionInfo &info)
+{
+    if (!info.isValid()) {
+        onPositionError(QGeoPositionInfoSource::UnknownSourceError);
+        return;
+    }
+    
+    QGeoCoordinate coord = info.coordinate();
+    currentLatitude = coord.latitude();
+    currentLongitude = coord.longitude();
+    hasCurrentLocation = true;
+    
+    // UI güncelle
+    findLocationButton->setEnabled(true);
+    findLocationButton->setText("📍 Şu Anki Konumumu Bul");
+    
+    QString locationText = QString("Mevcut Konum: %1, %2 (GPS)")
+                          .arg(currentLatitude, 0, 'f', 6)
+                          .arg(currentLongitude, 0, 'f', 6);
+    currentLocationLabel->setText(locationText);
+    currentLocationLabel->setStyleSheet("QLabel { background-color: #E8F5E8; padding: 5px; border: 1px solid #4CAF50; border-radius: 3px; }");
+    
+    // Haritada mevcut konumu göster (farklı şekilde)
+    if (mapWidget) {
+        QMetaObject::invokeMethod(mapWidget, "setCurrentLocation",
+                                Q_ARG(double, currentLatitude),
+                                Q_ARG(double, currentLongitude));
+    }
+    
+    logTextEdit->append(QString("<b>[KONUM]</b> GPS konumu bulundu: %1, %2")
+                       .arg(currentLatitude, 0, 'f', 6)
+                       .arg(currentLongitude, 0, 'f', 6));
+}
+
+/**
+ * @brief Konum hatası durumunda çağrılan slot
+ */
+void MainWindow::onPositionError(QGeoPositionInfoSource::Error error)
+{
+    findLocationButton->setEnabled(true);
+    findLocationButton->setText("📍 Şu Anki Konumumu Bul");
+    
+    QString errorText;
+    switch (error) {
+        case QGeoPositionInfoSource::AccessError:
+            errorText = "Konum erişim izni yok";
+            break;
+        case QGeoPositionInfoSource::ClosedError:
+            errorText = "Konum servisi kapalı";
+            break;
+        case QGeoPositionInfoSource::UnknownSourceError:
+        default:
+            errorText = "Konum belirlenemedi";
+            break;
+    }
+    
+    currentLocationLabel->setText("Mevcut Konum: " + errorText);
+    currentLocationLabel->setStyleSheet("QLabel { background-color: #FFEBEE; padding: 5px; border: 1px solid #F44336; border-radius: 3px; }");
+    
+    logTextEdit->append("<b>[KONUM]</b> GPS hatası: " + errorText);
 }

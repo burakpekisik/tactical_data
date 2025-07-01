@@ -119,3 +119,12 @@ void MapWidget::setMode(int modeValue)
         QMetaObject::invokeMethod(qmlWidget->rootObject(), "setMode");
     }
 }
+
+void MapWidget::setCurrentLocation(double latitude, double longitude)
+{
+    if (!qmlWidget) return;
+    QMetaObject::invokeMethod(qmlWidget->rootObject(), "setCurrentLocation",
+        Q_ARG(QVariant, latitude),
+        Q_ARG(QVariant, longitude));
+    logToConsole(QString("setCurrentLocation çağrıldı: %1, %2").arg(latitude).arg(longitude));
+}

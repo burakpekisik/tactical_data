@@ -66,15 +66,12 @@ int get_report_list_by_user(client_connection_t* conn, const char* jwt_token) {
             // Bu tek parça yanıt
             is_single_response = 1;
             char* data_start = NULL;
-            char* header_type = NULL;
             
             if (encrypted_header) {
                 data_start = encrypted_header + 10; // "ENCRYPTED:" uzunluğu
-                header_type = "ENCRYPTED";
                 PRINTF_LOG("[CLIENT][SINGLE] Tek parça ENCRYPTED yanıt tespit edildi\n");
             } else if (report_query_header) {
                 data_start = report_query_header + 13; // "REPORT_QUERY:" uzunluğu
-                header_type = "REPORT_QUERY";
                 PRINTF_LOG("[CLIENT][SINGLE] Tek parça REPORT_QUERY yanıt tespit edildi\n");
             }
             
