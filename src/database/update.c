@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <sqlite3.h>
 #include <string.h>
-#include "../../include/database.h"
+#include "database.h"
 #include "logger.h"
 
 /**

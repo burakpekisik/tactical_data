@@ -7,7 +7,6 @@
  * ECDH key exchange ve encrypted data processing desteği.
  */
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

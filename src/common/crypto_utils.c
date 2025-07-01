@@ -647,4 +647,46 @@ void ecdh_cleanup_context(ecdh_context_t* ctx) {
     }
 }
 
-/** @} */ // ecdh_functions group sonu
+/**
+ * @brief Şifreli protokol mesajını çözer (IV+ciphertext, hex string)
+ * @details Mesajın ilk 32 karakteri IV (16 byte), kalanı ciphertext (hex). AES anahtarı ile çözer.
+ * @param encrypted_msg Şifreli mesaj (hex string, IV+ciphertext)
+ * @param aes_key 32 byte AES anahtarı
+ * @return char* Çözülen plaintext (free ile serbest bırakılmalı)
+ */
+char* decrypt_protocol_message(const char* encrypted_msg, const uint8_t* aes_key) {
+    if (!encrypted_msg || !aes_key) return NULL;
+    size_t msg_len = strlen(encrypted_msg);
+    if (msg_len < 32) return NULL; // IV yok
+    char iv_hex[33] = {0};
+    strncpy(iv_hex, encrypted_msg, 32);
+    size_t ciphertext_hex_len = msg_len - 32;
+    const char* ciphertext_hex = encrypted_msg + 32;
+    // IV'yi binary'ye çevir
+    size_t iv_bin_len = 0;
+    uint8_t* iv_bin = hex_to_bytes(iv_hex, &iv_bin_len);
+    printf("[CLIENT][decrypt_protocol_message] IV hex: %s\n", iv_hex);
+    printf("[CLIENT][decrypt_protocol_message] IV bin len: %zu\n", iv_bin_len);
+    printf("[CLIENT][decrypt_protocol_message] Ciphertext hex len: %zu\n", ciphertext_hex_len);
+    // Ciphertext'i binary'ye çevir
+    size_t ciphertext_bin_len = 0;
+    uint8_t* ciphertext_bin = hex_to_bytes(ciphertext_hex, &ciphertext_bin_len);
+    printf("[CLIENT][decrypt_protocol_message] Ciphertext bin len: %zu\n", ciphertext_bin_len);
+    if (!iv_bin || iv_bin_len != 16) {
+        if (iv_bin) free(iv_bin);
+        printf("[CLIENT][decrypt_protocol_message] IV decode hatası!\n");
+        return NULL;
+    }
+    if (!ciphertext_bin || ciphertext_bin_len == 0) {
+        free(iv_bin);
+        if (ciphertext_bin) free(ciphertext_bin);
+        printf("[CLIENT][decrypt_protocol_message] Ciphertext decode hatası!\n");
+        return NULL;
+    }
+    // Çöz
+    char* plaintext = decrypt_data(ciphertext_bin, ciphertext_bin_len, aes_key, iv_bin);
+    if (!plaintext) printf("[CLIENT][decrypt_protocol_message] decrypt_data NULL döndü!\n");
+    free(iv_bin);
+    free(ciphertext_bin);
+    return plaintext;
+}

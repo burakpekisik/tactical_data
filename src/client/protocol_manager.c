@@ -15,6 +15,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <errno.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <arpa/inet.h>
@@ -379,17 +380,24 @@ int send_p2p_message(client_connection_t* conn, const char* message) {
  * @note recv() blocking çağrı - timeout ayarlanabilir
  */
 int receive_tcp_response(client_connection_t* conn, char* buffer, size_t buffer_size) {
+    PRINTF_LOG("[CLIENT][TCP_RECV] recv() çağrılıyor, buffer_size=%zu\n", buffer_size);
     ssize_t bytes_received = recv(conn->socket, buffer, buffer_size - 1, 0);
+    
     if (bytes_received < 0) {
+        PRINTF_LOG("[CLIENT][TCP_RECV] HATA: recv() başarısız, errno=%d\n", errno);
         perror("TCP receive hatasi");
         return -1;
     } else if (bytes_received == 0) {
+        PRINTF_LOG("[CLIENT][TCP_RECV] Bağlantı kapatıldı (0 bytes alındı)\n");
         PRINTF_LOG("TCP baglanti kapatildi\n");
         return -1;
     }
     
     buffer[bytes_received] = '\0';
+    PRINTF_LOG("[CLIENT][TCP_RECV] Başarılı: %zd bytes alındı\n", bytes_received);
     PRINTF_LOG("TCP yanit alindi (%zd bytes)\n", bytes_received);
+    PRINTF_LOG("[CLIENT][TCP_RECV] İlk 200 karakter: %.200s\n", buffer);
+    
     return bytes_received;
 }
 

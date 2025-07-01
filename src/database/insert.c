@@ -15,11 +15,11 @@
 #include <stdlib.h>
 #include <sqlite3.h>
 #include <string.h>
-#include "../../include/database.h"
-#include "../../include/json_utils.h"
-#include "../../include/logger.h"
-#include "../../include/argon2.h"
-#include "../../include/config.h"
+#include "database.h"
+#include "json_utils.h"
+#include "logger.h"
+#include "argon2.h"
+#include "config.h"
 
 /**
  * @brief External global veritabanı bağlantısı

@@ -36,5 +36,6 @@ void watch_report_replies(client_connection_t* conn);
 int send_hello_after_ecdh(client_connection_t* conn, const char* jwt_token);
 void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token);
 int admin_reply_to_report(client_connection_t* conn, const char* jwt_token);
+ssize_t recv_full(int sock, char* buf, size_t maxlen);
 
 #endif /* ENCRYPTED_CLIENT_H */

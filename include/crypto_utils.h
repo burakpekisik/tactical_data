@@ -47,5 +47,6 @@ void ecdh_cleanup_context(ecdh_context_t* ctx);
 
 // Güvenli rastgele sayı üretimi
 int generate_secure_random(uint8_t* buffer, size_t length);
+char* decrypt_protocol_message(const char* encrypted_msg, const uint8_t* aes_key);
 
 #endif // _CRYPTO_UTILS_H_

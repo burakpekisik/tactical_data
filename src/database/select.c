@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <sqlite3.h>
 #include <string.h>
-#include "../../include/database.h"
+#include "database.h"
 #include "logger.h"
 #include "jwt_manager.h"
 #include "argon2.h"

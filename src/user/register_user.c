@@ -1,9 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../../include/database.h"
-#include "../../include/config.h"
-#include "../../include/argon2.h"
+#include "database.h"
+#include "config.h"
+#include "argon2.h"
 #include "config.h"
 
 #define INPUT_SIZE 128

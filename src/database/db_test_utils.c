@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
-#include "../include/database.h"
+#include "database.h"
 #include "logger.h"
 
 /**
