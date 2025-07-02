@@ -19,6 +19,9 @@ public:
     Q_INVOKABLE void setMarkersVisible(bool visible);
     Q_INVOKABLE void setMode(int modeValue);
     Q_INVOKABLE void setCurrentLocation(double latitude, double longitude);
+    Q_INVOKABLE void applyFilters(const QString& dataTypeFilter, const QString& replyStatusFilter, const QString& timeFilter);
+    Q_INVOKABLE void clearFilters();
+    Q_INVOKABLE void setReplyIdList(const QVariantList& idList);
 
 signals:
     void pointClicked(double latitude, double longitude);

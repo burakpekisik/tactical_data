@@ -55,6 +55,8 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onLogMessage);
     connect(clientWrapper, &ClientWrapper::reportsReceived,
             this, &MainWindow::onReportsReceived);
+    connect(clientWrapper, &ClientWrapper::replyQueryResultReceived,
+            this, &MainWindow::onReplyQueryResultReceived);
     connect(clientWrapper, &ClientWrapper::fallbackTestResult,
             this, &MainWindow::onFallbackTestResult);
     // Admin reply signal'ları
@@ -225,12 +227,14 @@ void MainWindow::setupControlPanel()
     
     setupConnectionPanel();
     setupDataPanel();
+    setupFilterPanel();     // Filtreleme paneli oluştur
     setupAdminPanel();      // Admin paneli oluştur
     setupFallbackPanel();   // Fallback paneli oluştur  
     setupLogPanel();
     
     controlLayout->addWidget(connectionGroup);
     controlLayout->addWidget(dataGroup);
+    controlLayout->addWidget(filterGroup);     // Filtreleme paneli
     controlLayout->addWidget(adminGroup);       // Admin paneli
     controlLayout->addWidget(fallbackGroup);    // Fallback paneli
     controlLayout->addWidget(logGroup);
@@ -621,12 +625,68 @@ void MainWindow::showAdminReplyDialog(int id, double latitude, double longitude)
         QObject::disconnect(replyConnection);
     });
     
-    // İlk sorguyu başlat
-    if (clientWrapper) {
-        clientWrapper->queryRepliesForReport(id);
-    }
+    // Admin dialog'unda gereksiz sorgu yapmıyoruz
     
     dialog.exec();
+}
+
+void MainWindow::displayRepliesForMarker(int id, QVBoxLayout* repliesLayout)
+{
+    // Cache'den bu marker için reply'ları filtrele
+    QJsonArray filteredReplies;
+    for (const QJsonValue& replyVal : cachedReplies) {
+        QJsonObject reply = replyVal.toObject();
+        int replyReportId = reply["report_id"].toInt();
+        if (replyReportId == id) {
+            filteredReplies.append(replyVal);
+        }
+    }
+    
+    // Eski widget'ları temizle
+    QLayoutItem* item;
+    while ((item = repliesLayout->takeAt(0)) != nullptr) {
+        delete item->widget();
+        delete item;
+    }
+    
+    if (filteredReplies.isEmpty()) {
+        QLabel* noRepliesLabel = new QLabel("Bu marker için henüz admin cevabı bulunmuyor.");
+        noRepliesLabel->setStyleSheet("color: #7f8c8d; font-style: italic; padding: 20px; text-align: center;");
+        noRepliesLabel->setAlignment(Qt::AlignCenter);
+        repliesLayout->addWidget(noRepliesLabel);
+    } else {
+        for (const QJsonValue& replyVal : filteredReplies) {
+            QJsonObject reply = replyVal.toObject();
+            
+            QFrame* replyFrame = new QFrame();
+            replyFrame->setStyleSheet("QFrame { background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; margin: 5px; }");
+            
+            QVBoxLayout* replyLayout = new QVBoxLayout(replyFrame);
+            
+            // Admin bilgisi ve tarih
+            QString adminInfo = QString("Admin ID: %1").arg(reply["user_id"].toInt());
+            qint64 timestamp = reply["timestamp"].toVariant().toLongLong();
+            if (timestamp > 0) {
+                QDateTime dateTime = QDateTime::fromSecsSinceEpoch(timestamp);
+                adminInfo += QString(" - %1").arg(dateTime.toString("dd-MM-yyyy hh:mm:ss"));
+            }
+            
+            QLabel* adminLabel = new QLabel(adminInfo);
+            adminLabel->setStyleSheet("font-weight: bold; color: #495057; margin-bottom: 5px;");
+            replyLayout->addWidget(adminLabel);
+            
+            // Cevap mesajı
+            QString replyMsg = reply["message"].toString();
+            QLabel* msgLabel = new QLabel(replyMsg);
+            msgLabel->setStyleSheet("color: #212529; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #e9ecef;");
+            msgLabel->setWordWrap(true);
+            replyLayout->addWidget(msgLabel);
+            
+            repliesLayout->addWidget(replyFrame);
+        }
+    }
+    
+    repliesLayout->addStretch();
 }
 
 void MainWindow::showMarkerRepliesDialog(int id, double latitude, double longitude)
@@ -648,11 +708,8 @@ void MainWindow::showMarkerRepliesDialog(int id, double latitude, double longitu
     QWidget* repliesWidget = new QWidget();
     QVBoxLayout* repliesLayout = new QVBoxLayout(repliesWidget);
     
-    // Yükleniyor mesajı
-    QLabel* loadingLabel = new QLabel("Admin cevapları yükleniyor...");
-    loadingLabel->setStyleSheet("color: #7f8c8d; font-style: italic; padding: 20px; text-align: center;");
-    loadingLabel->setAlignment(Qt::AlignCenter);
-    repliesLayout->addWidget(loadingLabel);
+    // Cache'deki verilerle direkt reply'ları göster
+    this->displayRepliesForMarker(id, repliesLayout);
     
     scrollArea->setWidget(repliesWidget);
     scrollArea->setWidgetResizable(true);
@@ -674,94 +731,12 @@ void MainWindow::showMarkerRepliesDialog(int id, double latitude, double longitu
     // Signal bağlantıları
     connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
     
-    // Reply'ları alma signal'ını bağla
-    QMetaObject::Connection replyConnection = connect(clientWrapper, &ClientWrapper::reportRepliesReceived, 
-        [&dialog, repliesLayout, loadingLabel, id](int reportId, const QJsonArray& replies) {
-            // Gelen reply'ları filtrele (sadece bu marker'a ait olanları göster)
-            QJsonArray filteredReplies;
-            for (const QJsonValue& replyVal : replies) {
-                QJsonObject reply = replyVal.toObject();
-                int replyReportId = reply["report_id"].toInt();
-                if (replyReportId == id) {
-                    filteredReplies.append(replyVal);
-                }
-            }
-            
-            // Eski widget'ları temizle
-            QLayoutItem* item;
-            while ((item = repliesLayout->takeAt(0)) != nullptr) {
-                delete item->widget();
-                delete item;
-            }
-            
-            if (filteredReplies.isEmpty()) {
-                QLabel* noRepliesLabel = new QLabel("Bu marker için henüz admin cevabı bulunmuyor.");
-                noRepliesLabel->setStyleSheet("color: #7f8c8d; font-style: italic; padding: 20px; text-align: center;");
-                noRepliesLabel->setAlignment(Qt::AlignCenter);
-                repliesLayout->addWidget(noRepliesLabel);
-            } else {
-                for (const QJsonValue& replyVal : filteredReplies) {
-                    QJsonObject reply = replyVal.toObject();
-                    
-                    QFrame* replyFrame = new QFrame();
-                    replyFrame->setStyleSheet("QFrame { background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; margin: 5px; }");
-                    
-                    QVBoxLayout* replyLayout = new QVBoxLayout(replyFrame);
-                    
-                    // Admin bilgisi ve tarih
-                    QString adminInfo = QString("Admin ID: %1").arg(reply["user_id"].toInt());
-                    qint64 timestamp = reply["timestamp"].toVariant().toLongLong();
-                    if (timestamp > 0) {
-                        QDateTime dateTime = QDateTime::fromSecsSinceEpoch(timestamp);
-                        adminInfo += QString(" - %1").arg(dateTime.toString("dd-MM-yyyy hh:mm:ss"));
-                    }
-                    
-                    QLabel* adminLabel = new QLabel(adminInfo);
-                    adminLabel->setStyleSheet("font-weight: bold; color: #495057; margin-bottom: 5px;");
-                    replyLayout->addWidget(adminLabel);
-                    
-                    // Cevap mesajı
-                    QString replyMsg = reply["message"].toString();
-                    QLabel* msgLabel = new QLabel(replyMsg);
-                    msgLabel->setStyleSheet("color: #212529; padding: 8px; background-color: white; border-radius: 4px; border: 1px solid #e9ecef;");
-                    msgLabel->setWordWrap(true);
-                    replyLayout->addWidget(msgLabel);
-                    
-                    repliesLayout->addWidget(replyFrame);
-                }
-            }
-            
-            repliesLayout->addStretch();
-        });
-    
-    // Refresh butonuna basınca yeniden sorgu
-    connect(refreshBtn, &QPushButton::clicked, [this, id, loadingLabel, repliesLayout]() {
-        // Önce loading mesajını göster
-        QLayoutItem* item;
-        while ((item = repliesLayout->takeAt(0)) != nullptr) {
-            delete item->widget();
-            delete item;
-        }
-        
-        QLabel* newLoadingLabel = new QLabel("Admin cevapları yenileniyor...");
-        newLoadingLabel->setStyleSheet("color: #7f8c8d; font-style: italic; padding: 20px; text-align: center;");
-        newLoadingLabel->setAlignment(Qt::AlignCenter);
-        repliesLayout->addWidget(newLoadingLabel);
-        
-        if (clientWrapper) {
-            clientWrapper->queryRepliesForReport(id);
-        }
+    // Refresh butonuna basınca mevcut cache'den verileri yenile
+    connect(refreshBtn, &QPushButton::clicked, [this, id, repliesLayout]() {
+        this->displayRepliesForMarker(id, repliesLayout);
     });
-    
-    // Dialog kapanınca connection'ı kaldır
-    connect(&dialog, &QDialog::finished, [replyConnection]() {
-        QObject::disconnect(replyConnection);
-    });
-    
-    // İlk sorguyu başlat
-    if (clientWrapper) {
-        clientWrapper->queryRepliesForReport(id);
-    }
+
+    // Marker dialog'unda gereksiz sorgu yapmıyoruz - mevcut verileri kullanıyoruz
     
     dialog.exec();
 }
@@ -938,9 +913,29 @@ void MainWindow::onReportsReceived(const QJsonArray& reports, int privilege)
         QMetaObject::invokeMethod(mapWidget, "addMarker",
             Q_ARG(double, lat), Q_ARG(double, lon), Q_ARG(QString, desc), Q_ARG(QString, status), Q_ARG(int, id), Q_ARG(qint64, timestamp), Q_ARG(bool, false));
     }
+    
+    // Marker'lar eklendikten sonra mevcut filtreleri uygula
+    if (filterGroup && filterGroup->isVisible()) {
+        // Filtreler aktifse bunları yeniden uygula
+        if (dataTypeFilterCombo->currentText() != "Tümü" || 
+            replyStatusFilterCombo->currentText() != "Tümü" || 
+            timeFilterCombo->currentText() != "Tümü") {
+            applyMarkerFilters();
+        }
+    }
+    
     // Admin ise mod switch butonunu göster
     if (userPrivilege == 1 && modeSwitchButton) {
         modeSwitchButton->show();
+        
+        // Sadece ilk kez reply'ları sorgula
+        if (!initialReplyQueryDone) {
+            initialReplyQueryDone = true;
+            QTimer::singleShot(1000, this, [this]() {
+                logTextEdit->append("<b>[AUTO]</b> İlk kez reply'lar sorgulanıyor...");
+                clientWrapper->queryMyReplies();
+            });
+        }
     } else if (modeSwitchButton) {
         modeSwitchButton->hide();
     }
@@ -1171,14 +1166,32 @@ void MainWindow::onAdminNotificationReceived(const QString& notification)
  */
 void MainWindow::onReplyQueryResultReceived(const QJsonArray& replies)
 {
+    // Reply verilerini cache'e kaydet
+    cachedReplies = replies;
+    
     adminLogEdit->append(QString("<b>[SORGU]</b> %1 adet cevap bulundu").arg(replies.size()));
     
+    // REPLY_QUERY'den dönen report_id'leri QML'e aktar
+    QVariantList idList;
     for (const QJsonValue& value : replies) {
         QJsonObject reply = value.toObject();
+        int reportId = reply["report_id"].toInt();
         adminLogEdit->append(QString("- Rapor %1: %2")
-                           .arg(reply["report_id"].toInt())
+                           .arg(reportId)
                            .arg(reply["message"].toString()));
+        
+        // Report ID'yi listeye ekle
+        idList << reportId;
+        qDebug() << "[DEBUG] Reply bulunan report ID:" << reportId;
     }
+    
+    // QML'e reply ID listesini gönder
+    if (mapWidget) {
+        mapWidget->setReplyIdList(idList);
+        qDebug() << "[DEBUG] QML'e gönderilen reply ID listesi:" << idList;
+    }
+    
+    logTextEdit->append(QString("<b>[REPLY]</b> %1 adet reply QML'e aktarıldı").arg(idList.size()));
 }
 
 /**
@@ -1252,12 +1265,11 @@ void MainWindow::onPeriodicConnectionCheck()
     
     fallbackLogEdit->append("[AUTO] Otomatik bağlantı kontrolü başlatılıyor...");
     
-    // Test JSON verisi - basit bir test mesajı
-    QString testJson = R"({"type":"connection_test","timestamp":")" + 
-                      QString::number(QDateTime::currentSecsSinceEpoch()) + R"("})";
+    // Basit ping testi - tactical data gönderme
+    QString pingMessage = "PING_TEST";
     
-    // Tüm bağlantı türlerini test et
-    clientWrapper->testAllConnectionTypes(testJson, false);
+    // Tüm bağlantı türlerini test et (ping formatında)
+    clientWrapper->testAllConnectionTypes(pingMessage, false);
 }
 
 /**
@@ -1382,4 +1394,204 @@ void MainWindow::onPositionError(QGeoPositionInfoSource::Error error)
     currentLocationLabel->setStyleSheet("QLabel { background-color: #FFEBEE; padding: 5px; border: 1px solid #F44336; border-radius: 3px; }");
     
     logTextEdit->append("<b>[KONUM]</b> GPS hatası: " + errorText);
+}
+
+/**
+ * @brief Marker filtreleme panelini kurar
+ * @details Veri tipi, reply durumu ve zaman bazlı filtreleme kontrolleri oluşturur
+ */
+void MainWindow::setupFilterPanel()
+{
+    filterGroup = new QGroupBox("Marker Filtreleme");
+    QVBoxLayout *filterLayout = new QVBoxLayout(filterGroup);
+    
+    // Veri tipi filtresi
+    QHBoxLayout *dataTypeFilterLayout = new QHBoxLayout();
+    dataTypeFilterLayout->addWidget(new QLabel("Veri Tipi:"));
+    dataTypeFilterCombo = new QComboBox();
+    dataTypeFilterCombo->addItems({"Tümü", "Tactical Position", "Enemy Contact", "Friendly Unit", "Objective", "Hazard"});
+    connect(dataTypeFilterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), 
+            this, &MainWindow::updateFilterStatus);
+    dataTypeFilterLayout->addWidget(dataTypeFilterCombo);
+    
+    // Reply durumu filtresi
+    QHBoxLayout *replyFilterLayout = new QHBoxLayout();
+    replyFilterLayout->addWidget(new QLabel("Reply Durumu:"));
+    replyStatusFilterCombo = new QComboBox();
+    replyStatusFilterCombo->addItems({"Tümü", "Reply Var", "Reply Yok"});
+    connect(replyStatusFilterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), 
+            this, &MainWindow::updateFilterStatus);
+    replyFilterLayout->addWidget(replyStatusFilterCombo);
+    
+    // Zaman filtresi
+    QHBoxLayout *timeFilterLayout = new QHBoxLayout();
+    timeFilterLayout->addWidget(new QLabel("Zaman:"));
+    timeFilterCombo = new QComboBox();
+    timeFilterCombo->addItems({"Tümü", "Son 1 Saat", "Son 24 Saat", "Son 7 Gün", "Son 30 Gün"});
+    connect(timeFilterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), 
+            this, &MainWindow::updateFilterStatus);
+    timeFilterLayout->addWidget(timeFilterCombo);
+    
+    // Filtre butonları
+    QHBoxLayout *filterButtonLayout = new QHBoxLayout();
+    applyFiltersButton = new QPushButton("Filtreleri Uygula");
+    applyFiltersButton->setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 5px; }");
+    connect(applyFiltersButton, &QPushButton::clicked, this, &MainWindow::applyMarkerFilters);
+    
+    clearFiltersButton = new QPushButton("Filtreleri Temizle");
+    clearFiltersButton->setStyleSheet("QPushButton { background-color: #757575; color: white; font-weight: bold; padding: 5px; }");
+    connect(clearFiltersButton, &QPushButton::clicked, this, &MainWindow::clearMarkerFilters);
+    
+    filterButtonLayout->addWidget(applyFiltersButton);
+    filterButtonLayout->addWidget(clearFiltersButton);
+    
+    // Filtre durumu
+    filterStatusLabel = new QLabel("Filtre: Aktif değil");
+    filterStatusLabel->setStyleSheet("QLabel { background-color: #f0f0f0; padding: 3px; font-size: 10px; }");
+    
+    // Layout'a ekle
+    filterLayout->addLayout(dataTypeFilterLayout);
+    filterLayout->addLayout(replyFilterLayout);
+    filterLayout->addLayout(timeFilterLayout);
+    filterLayout->addLayout(filterButtonLayout);
+    filterLayout->addWidget(filterStatusLabel);
+    filterLayout->setContentsMargins(5, 5, 5, 5);
+}
+
+/**
+ * @brief Marker filtrelerini uygular
+ * @details Seçili filtrelere göre marker'ları gösterir/gizler
+ */
+void MainWindow::applyMarkerFilters()
+{
+    if (!mapWidget) return;
+    
+    // Reply filtresi seçildiğinde ve admin ise reply'ları sorgula
+    if (replyStatusFilterCombo->currentText() != "Tümü" && userPrivilege == 1) {
+        logTextEdit->append("<b>[FİLTRE]</b> Reply filtresi için reply'lar sorgulanıyor...");
+        clientWrapper->queryMyReplies();
+    }
+    
+    // QML metodunu çağır
+    QMetaObject::invokeMethod(mapWidget, "applyFilters",
+                            Q_ARG(QString, dataTypeFilterCombo->currentText()),
+                            Q_ARG(QString, replyStatusFilterCombo->currentText()),
+                            Q_ARG(QString, timeFilterCombo->currentText()));
+    
+    updateFilterStatus();
+    
+    logTextEdit->append(QString("<b>[FİLTRE]</b> Marker filtreleri uygulandı: %1, %2, %3")
+                       .arg(dataTypeFilterCombo->currentText())
+                       .arg(replyStatusFilterCombo->currentText())
+                       .arg(timeFilterCombo->currentText()));
+}
+
+/**
+ * @brief Tüm marker filtrelerini temizler
+ * @details Filtreleri sıfırlar ve tüm marker'ları gösterir
+ */
+void MainWindow::clearMarkerFilters()
+{
+    dataTypeFilterCombo->setCurrentText("Tümü");
+    replyStatusFilterCombo->setCurrentText("Tümü");
+    timeFilterCombo->setCurrentText("Tümü");
+    
+    if (mapWidget) {
+        QMetaObject::invokeMethod(mapWidget, "clearFilters");
+    }
+    
+    updateFilterStatus();
+    
+    logTextEdit->append("<b>[FİLTRE]</b> Tüm marker filtreleri temizlendi");
+}
+
+/**
+ * @brief Filtre durumu etiketini günceller
+ * @details Aktif filtreleri gösterir
+ */
+void MainWindow::updateFilterStatus()
+{
+    QStringList activeFilters;
+    
+    if (dataTypeFilterCombo->currentText() != "Tümü") {
+        activeFilters << QString("Tip: %1").arg(dataTypeFilterCombo->currentText());
+    }
+    if (replyStatusFilterCombo->currentText() != "Tümü") {
+        activeFilters << QString("Reply: %1").arg(replyStatusFilterCombo->currentText());
+    }
+    if (timeFilterCombo->currentText() != "Tümü") {
+        activeFilters << QString("Zaman: %1").arg(timeFilterCombo->currentText());
+    }
+    
+    if (activeFilters.isEmpty()) {
+        filterStatusLabel->setText("Filtre: Aktif değil");
+        filterStatusLabel->setStyleSheet("QLabel { background-color: #f0f0f0; padding: 3px; font-size: 10px; }");
+    } else {
+        filterStatusLabel->setText("Filtre: " + activeFilters.join(", "));
+        filterStatusLabel->setStyleSheet("QLabel { background-color: #E3F2FD; padding: 3px; font-size: 10px; color: #1976D2; }");
+    }
+}
+
+/**
+ * @brief Marker'ın filtrelere göre görünür olup olmadığını kontrol eder
+ * @param marker Kontrol edilecek marker JSON objesi
+ * @return true eğer marker görünür olmalıysa, false aksi halde
+ */
+bool MainWindow::isMarkerVisible(const QJsonObject& marker)
+{
+    // Veri tipi filtresi
+    if (dataTypeFilterCombo->currentText() != "Tümü") {
+        QString markerType = marker.value("data_type").toString();
+        if (markerType != dataTypeFilterCombo->currentText()) {
+            return false;
+        }
+    }
+    
+    // Reply durumu filtresi
+    if (replyStatusFilterCombo->currentText() != "Tümü") {
+        bool hasReply = marker.value("has_reply").toBool();
+        if (replyStatusFilterCombo->currentText() == "Reply Var" && !hasReply) {
+            return false;
+        }
+        if (replyStatusFilterCombo->currentText() == "Reply Yok" && hasReply) {
+            return false;
+        }
+    }
+    
+    // Zaman filtresi
+    if (timeFilterCombo->currentText() != "Tümü") {
+        // Unix timestamp'i al (QJsonValue.toVariant().toLongLong() kullanarak)
+        qint64 timestamp = marker.value("timestamp").toVariant().toLongLong();
+        if (timestamp > 0) {
+            QDateTime markerTime = QDateTime::fromSecsSinceEpoch(timestamp);
+            QDateTime currentTime = QDateTime::currentDateTime();
+            
+            int hours = 0;
+            if (timeFilterCombo->currentText() == "Son 1 Saat") {
+                hours = 1;
+            } else if (timeFilterCombo->currentText() == "Son 24 Saat") {
+                hours = 24;
+            } else if (timeFilterCombo->currentText() == "Son 7 Gün") {
+                hours = 24 * 7;
+            } else if (timeFilterCombo->currentText() == "Son 30 Gün") {
+                hours = 24 * 30;
+            }
+            
+            if (hours > 0) {
+                QDateTime cutoffTime = currentTime.addSecs(-hours * 3600);
+                qDebug() << "[DEBUG] Zaman filtresi - Marker time:" << markerTime.toString() 
+                         << ", Cutoff time:" << cutoffTime.toString() 
+                         << ", Filter:" << timeFilterCombo->currentText();
+                if (markerTime < cutoffTime) {
+                    return false;
+                }
+            }
+        } else {
+            qDebug() << "[DEBUG] Geçersiz timestamp değeri:" << timestamp;
+            // Timestamp geçersizse marker'ı gizle
+            return false;
+        }
+    }
+    
+    return true;
 }

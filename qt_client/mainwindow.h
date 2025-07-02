@@ -19,6 +19,8 @@
 #include <QGeoPositionInfoSource>
 #include <QGeoPositionInfo>
 #include <QGeoCoordinate>
+#include <QJsonArray>
+#include <QVBoxLayout>
 #include "mapwidget.h"
 #include "client_wrapper.h"
 
@@ -70,6 +72,7 @@ private:
     void setupLogPanel();
     void setupAdminPanel();      // --- Yeni admin panel ---
     void setupFallbackPanel();   // --- Yeni fallback panel ---
+    void setupFilterPanel();     // --- Filtreleme paneli ---
 
     // UI bileşenleri
     QWidget *centralWidget;
@@ -87,6 +90,7 @@ private:
     QGroupBox *logGroup;
     QGroupBox *adminGroup;      // --- Yeni admin grup ---
     QGroupBox *fallbackGroup;   // --- Yeni fallback grup ---
+    QGroupBox *filterGroup;     // --- Filtreleme grubu ---
     
     // Bağlantı kontrolleri
     QLineEdit *serverAddressEdit;
@@ -151,6 +155,14 @@ private:
     void updateConnectionStatus(const QString& connectionType, bool isConnected, const QString& details = "");
 
     QPushButton *toggleMarkersButton;
+    
+    // Marker filtreleme kontrolleri
+    QComboBox *dataTypeFilterCombo;
+    QComboBox *replyStatusFilterCombo;
+    QComboBox *timeFilterCombo;
+    QPushButton *applyFiltersButton;
+    QPushButton *clearFiltersButton;
+    QLabel *filterStatusLabel;
 
     enum Mode {
         SendMode,
@@ -159,10 +171,19 @@ private:
     Mode currentMode = SendMode;
     QPushButton *modeSwitchButton; // Admin için mod değiştirici buton
     int userPrivilege = 0;
+    bool initialReplyQueryDone = false; // İlk reply query yapıldı mı?
+    QJsonArray cachedReplies; // Cached reply verilerini saklamak için
 
     // Dialog fonksiyonları
     void showAdminReplyDialog(int id, double latitude, double longitude);
     void showMarkerRepliesDialog(int id, double latitude, double longitude);
+    void displayRepliesForMarker(int id, QVBoxLayout* repliesLayout);
+    
+    // Filtreleme fonksiyonları
+    void applyMarkerFilters();
+    void clearMarkerFilters();
+    void updateFilterStatus();
+    bool isMarkerVisible(const QJsonObject& marker);
 };
 
 #endif // MAINWINDOW_H

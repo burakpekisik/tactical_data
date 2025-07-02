@@ -128,3 +128,28 @@ void MapWidget::setCurrentLocation(double latitude, double longitude)
         Q_ARG(QVariant, longitude));
     logToConsole(QString("setCurrentLocation çağrıldı: %1, %2").arg(latitude).arg(longitude));
 }
+
+void MapWidget::applyFilters(const QString& dataTypeFilter, const QString& replyStatusFilter, const QString& timeFilter)
+{
+    if (!qmlWidget) return;
+    QMetaObject::invokeMethod(qmlWidget->rootObject(), "applyFilters",
+        Q_ARG(QVariant, dataTypeFilter),
+        Q_ARG(QVariant, replyStatusFilter),
+        Q_ARG(QVariant, timeFilter));
+    logToConsole(QString("applyFilters çağrıldı: %1, %2, %3").arg(dataTypeFilter).arg(replyStatusFilter).arg(timeFilter));
+}
+
+void MapWidget::clearFilters()
+{
+    if (!qmlWidget) return;
+    QMetaObject::invokeMethod(qmlWidget->rootObject(), "clearFilters");
+    logToConsole("clearFilters çağrıldı");
+}
+
+void MapWidget::setReplyIdList(const QVariantList& idList)
+{
+    if (!qmlWidget) return;
+    QMetaObject::invokeMethod(qmlWidget->rootObject(), "setReplyIdList",
+        Q_ARG(QVariant, idList));
+    logToConsole("setReplyIdList çağrıldı");
+}

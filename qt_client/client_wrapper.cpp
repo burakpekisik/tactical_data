@@ -1345,7 +1345,8 @@ void ClientWrapper::processEncryptedResponse()
                 QByteArray plainJson = decryptAes256Cbc(enc, QByteArray(reinterpret_cast<const char*>(aesKey), 32), iv);
                 
                 if (!plainJson.isEmpty()) {
-                    qDebug() << "[DEBUG] Decrypt başarılı, JSON:" << QString(plainJson.left(200));
+                    qDebug() << "[DEBUG] Decrypt başarılı, JSON size:" << plainJson.size();
+                    qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
                     
                     QJsonDocument doc = QJsonDocument::fromJson(plainJson);
                     if (doc.isObject()) {
@@ -1358,8 +1359,8 @@ void ClientWrapper::processEncryptedResponse()
                         }
                         // REPLY_QUERY yanıtı
                         else if (obj.contains("replies") && obj["replies"].isArray()) {
-                            int reportId = obj.contains("report_id") ? obj["report_id"].toInt() : -1;
-                            emit reportRepliesReceived(reportId, obj["replies"].toArray());
+                            qDebug() << "[DEBUG] REPLY_QUERY yanıtı bulundu, replies array size:" << obj["replies"].toArray().size();
+                            emit replyQueryResultReceived(obj["replies"].toArray());
                         }
                         // Diğer yanıtlar
                         else {
@@ -1410,18 +1411,28 @@ void ClientWrapper::finalizePartProcessing()
         QByteArray plainJson = decryptAes256Cbc(enc, QByteArray(reinterpret_cast<const char*>(aesKey), 32), iv);
         
         if (!plainJson.isEmpty()) {
-            qDebug() << "[DEBUG] Parçalı decrypt başarılı, JSON:" << QString(plainJson.left(200));
+            qDebug() << "[DEBUG] Parçalı decrypt başarılı, JSON size:" << plainJson.size();
+            qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
             
             // JSON parse et ve raporları emit et
             QJsonDocument doc = QJsonDocument::fromJson(plainJson);
             if (doc.isObject()) {
                 QJsonObject obj = doc.object();
+                
+                // REPORT_LIST yanıtı
                 if (obj.contains("reports") && obj["reports"].isArray()) {
                     int privilege = obj.contains("privilege") ? obj["privilege"].toInt() : 0;
                     emit reportsReceived(obj["reports"].toArray(), privilege);
                     qDebug() << "[DEBUG] Raporlar emit edildi, sayı:" << obj["reports"].toArray().size();
-                } else {
-                    qDebug() << "[DEBUG] JSON'da reports array bulunamadı";
+                }
+                // REPLY_QUERY yanıtı  
+                else if (obj.contains("replies") && obj["replies"].isArray()) {
+                    qDebug() << "[DEBUG] REPLY_QUERY yanıtı bulundu (parçalı), replies array size:" << obj["replies"].toArray().size();
+                    emit replyQueryResultReceived(obj["replies"].toArray());
+                }
+                else {
+                    qDebug() << "[DEBUG] JSON'da bilinen format bulunamadı";
+                    emit dataReceived(QString::fromUtf8(plainJson));
                 }
             } else {
                 qDebug() << "[DEBUG] JSON parse edilemedi";

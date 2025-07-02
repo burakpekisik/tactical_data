@@ -381,6 +381,7 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
     }
     memset(data, 0, sizeof(tactical_data_t));
     data->is_valid = 0;
+    
     cJSON *json = cJSON_Parse(json_content);
     if (json == NULL) {
         PRINTF_LOG("HATA: JSON parse edilemedi - %s\n", filename);
@@ -390,6 +391,17 @@ tactical_data_t* parse_json_to_tactical_data(const char* json_content, const cha
         }
         free(data);
         return NULL;
+    }
+    
+    // Connection test türündeki mesajları kontrol et
+    cJSON *type = cJSON_GetObjectItemCaseSensitive(json, "type");
+    if (cJSON_IsString(type) && type->valuestring != NULL) {
+        if (strcmp(type->valuestring, "connection_test") == 0) {
+            PRINTF_LOG("INFO: Connection test mesajı algılandı, tactical data parse edilmiyor\n");
+            cJSON_Delete(json);
+            free(data);
+            return NULL; // Connection test için data döndürme
+        }
     }
     
     if (user_id && strlen(user_id) > 0) {

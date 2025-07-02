@@ -22,6 +22,22 @@ Rectangle {
     property double currentLat: 0.0
     property double currentLon: 0.0
 
+    // REPLY_QUERY'den dönen id listesi
+    property var replyIdList: []
+    function setReplyIdList(idList) {
+        replyIdList = idList;
+        console.log("[QML] replyIdList güncellendi, boyut:", replyIdList.length, "liste:", JSON.stringify(replyIdList));
+        
+        // Mevcut marker'ları kontrol et
+        for (var i = 0; i < markers.length; ++i) {
+            var marker = markers[i];
+            if (!marker.isTemporary && marker.id !== undefined) {
+                var hasReply = replyIdList.indexOf(marker.id) !== -1;
+                console.log("[QML] Marker ID:", marker.id, "hasReply:", hasReply);
+            }
+        }
+    }
+
     // OpenStreetMap Plugin
     Plugin {
         id: mapPlugin
@@ -618,5 +634,113 @@ Rectangle {
         } else {
             console.log("[QML] [ERROR] Mevcut konum marker'ı oluşturulamadı");
         }
+    }
+    
+    // Marker filtreleme fonksiyonları
+    function applyFilters(dataTypeFilter, replyStatusFilter, timeFilter) {
+        console.log("[QML] Filtreler uygulanıyor:", dataTypeFilter, replyStatusFilter, timeFilter);
+        
+        var visibleCount = 0;
+        for (var i = 0; i < markers.length; ++i) {
+            var marker = markers[i];
+            if (!marker.isTemporary) {
+                var markerDataType = getMarkerDataType(marker.description);
+                var visible = isMarkerVisibleByFilter(marker, dataTypeFilter, replyStatusFilter, timeFilter);
+                marker.visible = visible;
+                
+                console.log("[QML] Marker", i, "- ID:", marker.id, "Type:", markerDataType, "Description:", marker.description, "Visible:", visible);
+                if (visible) visibleCount++;
+            }
+        }
+        console.log("[QML] Marker filtreleri uygulandı. Görünür marker sayısı:", visibleCount);
+    }
+    
+    function clearFilters() {
+        console.log("[QML] Tüm filtreler temizleniyor");
+        
+        for (var i = 0; i < markers.length; ++i) {
+            var marker = markers[i];
+            if (!marker.isTemporary) {
+                marker.visible = visibleMarkers;
+            }
+        }
+        console.log("[QML] Tüm filtreler temizlendi");
+    }
+    
+    function isMarkerVisibleByFilter(marker, dataTypeFilter, replyStatusFilter, timeFilter) {
+        // Veri tipi filtresi
+        if (dataTypeFilter !== "Tümü") {
+            var markerDataType = getMarkerDataType(marker.status);
+            console.log("[QML] Filtreleme - Marker Type:", markerDataType, "Filter:", dataTypeFilter, "Status:", marker.status);
+            if (markerDataType !== dataTypeFilter) {
+                console.log("[QML] Marker gizlendi - veri tipi uyuşmuyor");
+                return false;
+            }
+        }
+        
+        // Reply durumu filtresi
+        if (replyStatusFilter !== "Tümü") {
+            var hasReply = false;
+            if (replyIdList && replyIdList.length > 0 && marker.id !== undefined) {
+                hasReply = replyIdList.indexOf(marker.id) !== -1;
+            } else {
+                hasReply = marker.status.indexOf("Reply") !== -1 || marker.status.indexOf("REPLYED") !== -1;
+            }
+            console.log("[QML] Filtreleme - Reply Status:", marker.status, "Has Reply:", hasReply, "Filter:", replyStatusFilter, "ID:", marker.id, "replyIdList:", replyIdList);
+            if (replyStatusFilter === "Reply Var" && !hasReply) {
+                return false;
+            }
+            if (replyStatusFilter === "Reply Yok" && hasReply) {
+                return false;
+            }
+        }
+        
+        // Zaman filtresi
+        if (timeFilter !== "Tümü") {
+            // Unix timestamp kontrol ve çevirme
+            var timestamp = parseInt(marker.timestamp);
+            if (!timestamp || timestamp <= 0) {
+                console.log("[QML] Geçersiz timestamp:", marker.timestamp);
+                return true; // Geçersiz timestamp'li marker'ları göster
+            }
+            
+            var timestampMs = timestamp * 1000;
+            var markerTime = new Date(timestampMs);
+            var currentTime = new Date();
+            var timeDiff = currentTime.getTime() - markerTime.getTime();
+            var hours = timeDiff / (1000 * 60 * 60);
+            
+            console.log("[QML] Filtreleme - Timestamp:", timestamp, "Marker Time:", markerTime, "Hours ago:", hours, "Filter:", timeFilter);
+            
+            var maxHours = 0;
+            if (timeFilter === "Son 1 Saat") {
+                maxHours = 1;
+            } else if (timeFilter === "Son 24 Saat") {
+                maxHours = 24;
+            } else if (timeFilter === "Son 7 Gün") {
+                maxHours = 24 * 7;
+            } else if (timeFilter === "Son 30 Gün") {
+                maxHours = 24 * 30;
+            }
+            
+            if (maxHours > 0 && hours > maxHours) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+    
+    function getMarkerDataType(status) {
+        // Status'tan veri tipini çıkar
+        if (status.indexOf("Tactical Position") !== -1) return "Tactical Position";
+        if (status.indexOf("Enemy Contact") !== -1) return "Enemy Contact";
+        if (status.indexOf("Friendly Unit") !== -1) return "Friendly Unit";
+        if (status.indexOf("Objective") !== -1) return "Objective";
+        if (status.indexOf("Hazard") !== -1) return "Hazard";
+        
+        // Debug için status değerini yazdır
+        console.log("[QML DEBUG] Status değeri:", status);
+        return "Unknown"; // Bilinmeyen tipler için
     }
 }
