@@ -232,6 +232,9 @@ void MainWindow::setupControlPanel()
     setupFallbackPanel();   // Fallback paneli oluştur  
     setupLogPanel();
     
+    // Panel toggle butonları için yardımcı fonksiyon
+    setupPanelToggles();
+    
     controlLayout->addWidget(connectionGroup);
     controlLayout->addWidget(dataGroup);
     controlLayout->addWidget(filterGroup);     // Filtreleme paneli
@@ -1594,4 +1597,89 @@ bool MainWindow::isMarkerVisible(const QJsonObject& marker)
     }
     
     return true;
+}
+
+/**
+ * @brief Panel toggle butonlarını kurar
+ * @details Her grup box için collapse/expand toggle butonu ekler
+ */
+void MainWindow::setupPanelToggles()
+{
+    // Panel toggle butonları için yardımcı lambda fonksiyonu
+    auto addToggleButton = [this](QGroupBox* groupBox, const QString& title) {
+        if (!groupBox) return;
+        
+        // Grup box'ın checkable özelliğini kapatıyoruz (tick box istemiyoruz)
+        groupBox->setCheckable(false);
+        groupBox->setTitle("▼ " + title); // Başlangıçta açık simgesi
+        
+        // Manuel toggle için bir flag tutacağız
+        groupBox->setProperty("isExpanded", true);
+        
+        // Mouse press event'ini yakala
+        groupBox->installEventFilter(this);
+        
+        // Toggle fonksiyonu için property olarak kaydet
+        groupBox->setProperty("originalTitle", title);
+    };
+    
+    // Her panel için toggle butonu ekle
+    addToggleButton(connectionGroup, "Bağlantı Ayarları");
+    addToggleButton(dataGroup, "Veri Gönderimi");
+    addToggleButton(filterGroup, "Marker Filtreleme");
+    addToggleButton(adminGroup, "Admin İşlemleri");
+    addToggleButton(fallbackGroup, "Fallback Bağlantı");
+    addToggleButton(logGroup, "İşlem Günlüğü");
+}
+
+bool MainWindow::eventFilter(QObject *obj, QEvent *event)
+{
+    // QGroupBox başlık alanına tıklama kontrolü
+    if (event->type() == QEvent::MouseButtonPress) {
+        QGroupBox* groupBox = qobject_cast<QGroupBox*>(obj);
+        if (groupBox && groupBox->property("originalTitle").isValid()) {
+            QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+            
+            // Başlık alanına tıklanıp tıklanmadığını kontrol et
+            // GroupBox'ın title alanı üst kısmıdır
+            if (mouseEvent->pos().y() <= 20) { // Başlık yüksekliği yaklaşık 20px
+                togglePanel(groupBox);
+                return true; // Event'i işledik
+            }
+        }
+    }
+    
+    return QMainWindow::eventFilter(obj, event);
+}
+
+void MainWindow::togglePanel(QGroupBox* groupBox)
+{
+    if (!groupBox) return;
+    
+    bool isExpanded = groupBox->property("isExpanded").toBool();
+    QString originalTitle = groupBox->property("originalTitle").toString();
+    
+    // Durumu tersine çevir
+    isExpanded = !isExpanded;
+    groupBox->setProperty("isExpanded", isExpanded);
+    
+    // Başlığı güncelle
+    groupBox->setTitle((isExpanded ? "▼ " : "▶ ") + originalTitle);
+    
+    if (isExpanded) {
+        // Açık duruma geç - normal boyut
+        groupBox->setMaximumHeight(QWIDGETSIZE_MAX);
+        groupBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    } else {
+        // Kapalı duruma geç - sadece başlık görünsün
+        int titleHeight = groupBox->fontMetrics().height() + 20; // Başlık yüksekliği + padding
+        groupBox->setMaximumHeight(titleHeight);
+        groupBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    }
+    
+    // Layout'u güncelle
+    groupBox->updateGeometry();
+    if (groupBox->parentWidget()) {
+        groupBox->parentWidget()->updateGeometry();
+    }
 }

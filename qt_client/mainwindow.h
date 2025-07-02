@@ -21,6 +21,8 @@
 #include <QGeoCoordinate>
 #include <QJsonArray>
 #include <QVBoxLayout>
+#include <QEvent>
+#include <QMouseEvent>
 #include "mapwidget.h"
 #include "client_wrapper.h"
 
@@ -73,6 +75,11 @@ private:
     void setupAdminPanel();      // --- Yeni admin panel ---
     void setupFallbackPanel();   // --- Yeni fallback panel ---
     void setupFilterPanel();     // --- Filtreleme paneli ---
+    void setupPanelToggles(); // Panel toggle butonlarını kurar
+
+    // Event handling
+    bool eventFilter(QObject *obj, QEvent *event) override;
+    void togglePanel(QGroupBox* groupBox); // Panel açma/kapama
 
     // UI bileşenleri
     QWidget *centralWidget;
