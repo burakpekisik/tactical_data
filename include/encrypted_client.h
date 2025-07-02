@@ -41,5 +41,7 @@ int admin_reply_to_report(client_connection_t* conn, const char* jwt_token);
 ssize_t recv_full(int sock, char* buf, size_t maxlen);
 int send_json_file(client_connection_t* conn, const char* filename, int encrypt, const char* jwt_token);
 void query_my_replies(client_connection_t* conn, const char* jwt_token);
+void query_replies_to_one_report(client_connection_t* conn, const char* jwt_token);
+
 
 #endif /* ENCRYPTED_CLIENT_H */

@@ -151,7 +151,7 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
     }
     PRINTF_LOG("[DEBUG] Decrypted JSON: %s\n", decrypted_json);
     // Eğer dosya adı REPORT_QUERY, REPLY_QUERY veya QUERY_MY_REPLIES ise, rapor sorgulama işlemi yap
-    if (strcmp(filename, "REPORT_QUERY") == 0 || strcmp(filename, "REPLY_QUERY") == 0 || strcmp(filename, "QUERY_MY_REPLIES") == 0) {
+    if (strcmp(filename, "REPORT_QUERY") == 0 || strcmp(filename, "REPLY_QUERY") == 0 || strcmp(filename, "QUERY_MY_REPLIES") == 0 || strcmp(filename, "QUERY_REPLIES_ONE_REPORT") == 0) {
         cJSON* root = cJSON_Parse(decrypted_json);
         char* jwt_from_json = NULL;
         if (root) {
@@ -182,6 +182,28 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
             } else {
                 snprintf(plain_result, 65536, "{\"error\":\"JWT bulunamadı\"}");
             }
+        } else if (strcmp(filename, "QUERY_REPLIES_ONE_REPORT") == 0) {
+            if (jwt_from_json) {
+                int report_id_from_json = -1;
+
+                cJSON* report_id = cJSON_GetObjectItem(root, "report_id");
+                if (report_id && cJSON_IsNumber(report_id)) {
+                    report_id_from_json = report_id->valueint;
+                } else if (report_id && cJSON_IsString(report_id)) {
+                    report_id_from_json = atoi(report_id->valuestring);
+                }
+
+                if (report_id_from_json <= 0) {
+                    snprintf(plain_result, 65536, "{\"error\":\"report_id bulunamadı veya geçersiz\"}");
+                } else {
+                    handle_query_replies_to_one_report(jwt_from_json, plain_result, 65536, report_id_from_json);
+                    PRINTF_LOG("[SERVER][ENCRYPTED] QUERY_REPLIES_ONE_REPORT işlendi, report_id=%d, yanıt uzunluğu: %zu\n", report_id_from_json, strlen(plain_result));
+                }
+            } else {
+                snprintf(plain_result, 65536, "{\"error\":\"JWT bulunamadı\"}");
+            }
+        } else {
+            snprintf(plain_result, 65536, "{\"error\":\"Geçersiz işlem adı\"}");
         }
         if (root) cJSON_Delete(root);
         uint8_t iv[CRYPTO_IV_SIZE];

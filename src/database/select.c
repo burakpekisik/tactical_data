@@ -643,3 +643,89 @@ int db_select_replies_for_user_reports(int user_id, reply_t **replies, int *coun
 
     return 0;
 }
+
+/**
+ * @brief ID'ye göre tek bir raporu getirir
+ * @details Verilen ID'ye sahip raporu REPORTS tablosundan getirir.
+ *          Güvenlik kontrollerinde kullanılır.
+ * 
+ * @param id Getirilecek raporun ID'si
+ * @param report Rapor bilgilerinin yazılacağı report_t yapısı
+ * @return 0 başarı durumunda, -1 hata durumunda
+ * 
+ * @note Rapor bulunamazsa -1 döndürür
+ * @warning report parametresi NULL olmamalıdır
+ */
+int db_get_report_by_id(int id, report_t *report) {
+    if (!report) {
+        fprintf(stderr, "Hata: report parametresi NULL\n");
+        return -1;
+    }
+    
+    if (!g_db) {
+        fprintf(stderr, "Veritabanı bağlantısı yok\n");
+        return -1;
+    }
+    
+    char sql[512];
+    snprintf(sql, sizeof(sql), 
+        "SELECT id, user_id, status, latitude, longitude, description, timestamp, created_at "
+        "FROM REPORTS WHERE id = %d", id);
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL prepare hatası: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+    
+    rc = sqlite3_step(stmt);
+    
+    if (rc == SQLITE_ROW) {
+        // Rapor bulundu, verileri kopyala
+        report->id = sqlite3_column_int(stmt, 0);
+        report->user_id = sqlite3_column_int(stmt, 1);
+        
+        const char* status = (const char*)sqlite3_column_text(stmt, 2);
+        if (status) {
+            strncpy(report->status, status, sizeof(report->status) - 1);
+            report->status[sizeof(report->status) - 1] = '\0';
+        } else {
+            strcpy(report->status, "UNKNOWN");
+        }
+        
+        report->latitude = sqlite3_column_double(stmt, 3);
+        report->longitude = sqlite3_column_double(stmt, 4);
+        
+        const char* description = (const char*)sqlite3_column_text(stmt, 5);
+        if (description) {
+            strncpy(report->description, description, sizeof(report->description) - 1);
+            report->description[sizeof(report->description) - 1] = '\0';
+        } else {
+            strcpy(report->description, "Açıklama yok");
+        }
+        
+        report->timestamp = sqlite3_column_int64(stmt, 6);
+        
+        const char* created_at = (const char*)sqlite3_column_text(stmt, 7);
+        if (created_at) {
+            strncpy(report->created_at, created_at, sizeof(report->created_at) - 1);
+            report->created_at[sizeof(report->created_at) - 1] = '\0';
+        } else {
+            strcpy(report->created_at, "");
+        }
+        
+        sqlite3_finalize(stmt);
+        return 0; // Başarılı
+    } else if (rc == SQLITE_DONE) {
+        // Rapor bulunamadı
+        sqlite3_finalize(stmt);
+        return -1;
+    } else {
+        // SQL hatası
+        fprintf(stderr, "SQL step hatası: %s\n", sqlite3_errmsg(g_db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+}

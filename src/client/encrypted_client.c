@@ -158,7 +158,10 @@ int main() {
             case 8: // Reportlarıma gelen cevapları sorgula
                 query_my_replies(conn, jwt_token);
                 break;
-            case 9: // Cikis
+            case 9:
+                query_replies_to_one_report(conn, jwt_token);
+                break;
+            case 10: // Cikis
             {
                 LOG_CLIENT_INFO("User requested shutdown");
                 PRINTF_CLIENT("Baglanti kapatiliyor...\n");
@@ -198,7 +201,8 @@ void show_menu(void) {
     PRINTF_LOG("6. Gelen admin cevaplarını görüntüle\n");
     PRINTF_LOG("7. Kendi cevaplarımı sorgula (JWT ile)\n");
     PRINTF_LOG("8. Reportlarıma gelen cevapları sorgula\n");
-    PRINTF_LOG("9. Cikis\n");
+    PRINTF_LOG("9. Bir reporta gelen cevapları sorgula\n");
+    PRINTF_LOG("10. Cikis\n");
     PRINTF_LOG("============\n");
 }
 
@@ -1190,6 +1194,139 @@ void query_my_replies(client_connection_t* conn, const char* jwt_token) {
                 all_hex_data[hex_len] = '\0';
                 all_hex_len = hex_len;
                 PRINTF_LOG("[CLIENT][SINGLE_ENC] Tek parça ENCRYPTED:QUERY_MY_REPLIES yanıtı alındı, hex_len=%zu\n", hex_len);
+                done = 1;
+            }
+        } else {
+            // Başka format veya veri bekleniyor
+            PRINTF_LOG("[CLIENT] Beklenen format bulunamadı, daha fazla veri bekleniyor...\n");
+            continue;
+        }
+    }
+    
+    // Decrypt işlemi
+    if (all_hex_data && all_hex_len > 0) {
+        PRINTF_LOG("[CLIENT][DECRYPT] Hex veri decrypt ediliyor...\n");
+        
+        size_t encrypted_length;
+        uint8_t* encrypted_bytes = hex_to_bytes(all_hex_data, &encrypted_length);
+        if (!encrypted_bytes || encrypted_length < CRYPTO_IV_SIZE) {
+            PRINTF_LOG("[CLIENT][DECRYPT] Hex decode hatası!\n");
+            if (encrypted_bytes) free(encrypted_bytes);
+            free(all_hex_data);
+            return;
+        }
+        
+        uint8_t iv[CRYPTO_IV_SIZE];
+        memcpy(iv, encrypted_bytes, CRYPTO_IV_SIZE);
+        
+        char* decrypted_json = decrypt_data(
+            encrypted_bytes + CRYPTO_IV_SIZE,
+            encrypted_length - CRYPTO_IV_SIZE,
+            conn->ecdh_ctx.aes_key,
+            iv
+        );
+        
+        free(encrypted_bytes);
+        free(all_hex_data);
+        
+        if (decrypted_json) {
+            PRINTF_LOG("[CLIENT][DECRYPT] Decrypt başarılı!\n");
+            PRINTF_LOG("\n=== RAPORLARIMA GELEN CEVAPLAR ===\n");
+            PRINTF_LOG("%s\n", decrypted_json);
+            PRINTF_LOG("=====================================\n");
+            free(decrypted_json);
+        } else {
+            PRINTF_LOG("[CLIENT][DECRYPT] Decrypt hatası!\n");
+        }
+    } else {
+        PRINTF_LOG("[CLIENT] Hex veri alınamadı!\n");
+    }
+}
+
+void query_replies_to_one_report(client_connection_t* conn, const char* jwt_token) {
+    if (!conn || !jwt_token || strlen(jwt_token) == 0) {
+        PRINTF_CLIENT("JWT token veya bağlantı hatalı!\n");
+        return;
+    }
+    if (!conn->ecdh_initialized) {
+        PRINTF_CLIENT("ECDH başlatılmamış - şifreli sorgu yapılamaz!\n");
+        return;
+    }
+    
+    PRINTF_LOG("[CLIENT][QUERY_REPLIES_ONE_REPORT] Rapora gelen cevapları sorgulama başlatılıyor...\n");
+    
+    printf("Lütfen rapor ID'sini girin: ");
+    int report_id;
+    scanf("%d", &report_id);
+
+    // JSON komutu oluştur
+    char cmd_json[2048];
+    snprintf(cmd_json, sizeof(cmd_json), "{\"report_id\":%d,\"jwt\":\"%s\"}", report_id, jwt_token);
+    
+    // QUERY_MY_REPLIES komutu şifrele ve gönder
+    char* protocol_message = create_encrypted_protocol_message("QUERY_REPLIES_ONE_REPORT", cmd_json, conn->ecdh_ctx.aes_key, jwt_token);
+    if (!protocol_message) {
+        PRINTF_CLIENT("Şifreleme hatası!\n");
+        return;
+    }
+    
+    // Mesajı socket'a direkt gönder
+    ssize_t bytes_sent = send(conn->socket, protocol_message, strlen(protocol_message), 0);
+    free(protocol_message);
+    if (bytes_sent < 0) {
+        PRINTF_CLIENT("Şifreli sorgu gönderilemedi!\n");
+        return;
+    }
+    
+    PRINTF_LOG("QUERY_REPLIES_ONE_REPORT komutu gönderildi (%zd bytes), yanıt bekleniyor...\n", bytes_sent);
+    
+    // --- Parçalı yanıt toplama (QUERY_REPLIES_ONE_REPORT için) ---
+    char* all_hex_data = NULL;
+    size_t all_hex_len = 0;
+    int recv_count = 0;
+    int done = 0;
+    char streambuf[65536];
+    size_t streambuf_len = 0;
+    
+    while (!done) {
+        // Eğer streambuf'da yeterli veri yoksa, recv ile tamamla
+        if (streambuf_len < 4096) {
+            ssize_t pn = recv(conn->socket, streambuf + streambuf_len, sizeof(streambuf) - streambuf_len - 1, 0);
+            recv_count++;
+            PRINTF_LOG("[CLIENT][RECV] recv_count=%d, bytes_received=%zd, buffer_len=%zu\n", recv_count, pn, streambuf_len);
+            if (pn <= 0) {
+                PRINTF_LOG("[CLIENT][RECV] recv hatası veya bağlantı kapatıldı: %zd\n", pn);
+                break;
+            }
+            streambuf_len += pn;
+            streambuf[streambuf_len] = '\0';
+            PRINTF_LOG("[CLIENT][RECV] Toplam buffer: %zu bytes\n", streambuf_len);
+        }
+        
+        // ENCRYPTED:QUERY_REPLIES_ONE_REPORT: formatı kontrol et (tek parça encrypted)
+        const char* single_encrypted_prefix = "ENCRYPTED:QUERY_REPLIES_ONE_REPORT:";
+        if (strncmp(streambuf, single_encrypted_prefix, strlen(single_encrypted_prefix)) == 0) {
+            const char* hex_data = streambuf + strlen(single_encrypted_prefix);
+            char* newline = strchr(hex_data, '\n');
+            size_t hex_len;
+            
+            if (newline) {
+                hex_len = newline - hex_data;
+            } else {
+                hex_len = strlen(hex_data);
+                if (hex_len > 0 && hex_data[hex_len-1] == '\n') {
+                    hex_len--;
+                }
+            }
+            
+            PRINTF_LOG("[CLIENT][SINGLE_ENC] Hex veri uzunluğu: %zu\n", hex_len);
+            
+            if (hex_len > 0) {
+                all_hex_data = malloc(hex_len + 1);
+                memcpy(all_hex_data, hex_data, hex_len);
+                all_hex_data[hex_len] = '\0';
+                all_hex_len = hex_len;
+                PRINTF_LOG("[CLIENT][SINGLE_ENC] Tek parça ENCRYPTED:QUERY_REPLIES_ONE_REPORT yanıtı alındı, hex_len=%zu\n", hex_len);
                 done = 1;
             }
         } else {
