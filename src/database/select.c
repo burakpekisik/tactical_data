@@ -523,7 +523,7 @@ char* login_user_with_argon2(const char *username, const char *password) {
 
 int db_select_replies_by_user(int user_id, reply_t **replies, int *count) {
     char *zErrMsg = 0;
-    char sql[256];
+    char sql[512];
     int rc;
 
     if (!g_db) {
@@ -531,8 +531,13 @@ int db_select_replies_by_user(int user_id, reply_t **replies, int *count) {
         return -1;
     }
 
+    // JOIN kullanarak kullanıcının raporlarına gelen reply'ları çek
     snprintf(sql, sizeof(sql), 
-        "SELECT * FROM REPLIES WHERE USER_ID = %d ORDER BY TIMESTAMP DESC", user_id);
+        "SELECT r.ID, r.USER_ID, r.REPORT_ID, r.MESSAGE, r.TIMESTAMP "
+        "FROM REPLIES r "
+        "JOIN REPORTS rep ON r.REPORT_ID = rep.ID "
+        "WHERE rep.USER_ID = %d "
+        "ORDER BY r.TIMESTAMP DESC", user_id);
 
     *count = 0;
     int capacity = 10;
@@ -575,6 +580,62 @@ int db_select_replies_by_report(int report_id, reply_t **replies, int *count) {
     
     if(rc != SQLITE_OK) {
         fprintf(stderr, "SQL error selecting replies by report: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        free(*replies);
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Kullanıcının raporlarına gelen reply'ları JOIN kullanarak sorgular
+ * @details REPLIES ve REPORTS tablolarını JOIN ederek belirli bir kullanıcının
+ *          raporlarına gelen tüm admin cevaplarını getirir.
+ * 
+ * SQL Sorgusu:
+ * SELECT r.* FROM REPLIES r 
+ * JOIN REPORTS rep ON r.report_id = rep.id 
+ * WHERE rep.user_id = ? 
+ * ORDER BY r.timestamp DESC
+ * 
+ * @param user_id Kullanıcı ID'si
+ * @param replies [OUT] Reply array pointer'ı (malloc ile tahsis edilir)
+ * @param count [OUT] Dönen reply sayısı
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı sorgulama
+ * @retval -1 Sorgu hatası
+ * 
+ * @note replies array'i çağıran tarafından free() edilmelidir
+ * @warning replies ve count pointer'ları NULL olmamalıdır
+ */
+int db_select_replies_for_user_reports(int user_id, reply_t **replies, int *count) {
+    char *zErrMsg = 0;
+    int rc;
+    char sql[512];
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql), 
+        "SELECT r.id, r.user_id, r.report_id, r.message, r.timestamp, r.created_at "
+        "FROM REPLIES r "
+        "JOIN REPORTS rep ON r.report_id = rep.id " 
+        "WHERE rep.user_id = %d "
+        "ORDER BY r.timestamp DESC", user_id);
+
+    *count = 0;
+    int capacity = 10;
+    *replies = malloc(capacity * sizeof(reply_t));
+
+    void *callback_data[] = {replies, count, &capacity};
+    
+    rc = sqlite3_exec(g_db, sql, reply_callback, callback_data, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error selecting replies for user reports: %s\n", zErrMsg);
         sqlite3_free(zErrMsg);
         free(*replies);
         return -1;

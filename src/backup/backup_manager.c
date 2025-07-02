@@ -3,9 +3,12 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <signal.h>
 #include "config.h"
-
+#include "backup_manager.h"
+#include "logger.h"
 /**
+ * 
  * @brief Veritabanı dosyasını zaman damgalı olarak yedekler.
  *
  * Bu fonksiyon, 'data/tactical_data.db' dosyasını 'data/backup/' klasörüne
@@ -61,4 +64,28 @@ int backup_database() {
     fclose(fptr1);
     fclose(fptr2);
     return 0;
+}
+
+/**
+ * @brief Her iki saatte bir veritabanı yedeği alan thread fonksiyonu.
+ *
+ * Bu thread, sunucu çalıştığı sürece her iki saatte bir backup_database() fonksiyonunu çağırır.
+ * Yedekleme işlemi tamamlandığında veya hata oluştuğunda log mesajı basar.
+ *
+ * @param arg Kullanılmıyor.
+ * @return NULL
+ */
+void* periodic_backup_thread(int backup_enabled, int backup_period_seconds, sig_atomic_t server_running) {
+    while (server_running) {
+        if (backup_enabled) {
+            int status = backup_database();
+            if (status != 0) {
+                PRINTF_LOG("Yedekleme başlatılamadı!\n");
+            } else {
+                PRINTF_LOG("Yedekleme tamamlandı (backup_manager).\n");
+            }
+        }
+        for (int i = 0; i < backup_period_seconds && server_running; ++i) sleep(1);
+    }
+    return NULL;
 }

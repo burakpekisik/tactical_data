@@ -26,7 +26,7 @@
 #include "database.h"
 #include "json_utils.h"
 #include "logger.h"
-#include "encrypted_server.h"
+#include "handle_manager.h"
 
 /// @brief Aktif peer bilgilerini tutan global array
 static p2p_peer_t peers[CONFIG_MAX_CLIENTS];

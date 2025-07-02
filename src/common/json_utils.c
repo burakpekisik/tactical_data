@@ -43,6 +43,7 @@
 #include <time.h>
 #include "json_utils.h"
 #include "logger.h"
+#include "encrypted_client.h"
 
 /**
  * @brief JSON içeriğini parse edip formatlanmış string'e dönüştürür

@@ -46,7 +46,4 @@ int get_queue_size(void);
 void log_queue_stats(void);
 void clear_queue(void);
 
-// Forward declaration - encrypted_server.c'de tanımlanacak
-void* handle_client(void* arg);
-
 #endif // _THREAD_MONITOR_H_

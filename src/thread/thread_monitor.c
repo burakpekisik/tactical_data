@@ -41,6 +41,7 @@
 #include "thread_monitor.h"
 #include "config.h"
 #include "logger.h"
+#include "handle_manager.h"
 
 /// @brief Aktif thread bilgilerini tutan static array - CONFIG_MAX_CLIENTS kadar
 static thread_info_t active_threads[CONFIG_MAX_CLIENTS];

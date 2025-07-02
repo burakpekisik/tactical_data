@@ -67,5 +67,4 @@ int p2p_exchange_keys_with_peer(p2p_peer_t* peer);
 void p2p_cleanup_ecdh_for_peer(p2p_peer_t* peer);
 int p2p_process_encrypted_data(const char* encrypted_data, const char* filename, p2p_peer_t* peer, const char* jwt_token);
 
-
 #endif // _P2P_CONNECTION_H_

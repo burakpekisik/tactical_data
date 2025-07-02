@@ -78,6 +78,7 @@ int db_get_report_by_id(int id, report_t *report);
 // Reply operations
 int db_select_replies_by_report(int report_id, reply_t **replies, int *count);
 int db_select_replies_by_user(int user_id, reply_t **replies, int *count);
+int db_select_replies_for_user_reports(int user_id, reply_t **replies, int *count);  // Yeni fonksiyon
 int db_insert_reply(const reply_t *reply);
 
 // Tactical data operations (JSON parse ve database insert)

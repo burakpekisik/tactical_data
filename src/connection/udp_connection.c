@@ -28,7 +28,7 @@
 #include "database.h"
 #include "logger.h"
 #include "jwt_manager.h"
-#include "encrypted_server.h"
+#include "handle_manager.h"
 
 /// @brief Global UDP session listesi (linked list)
 static udp_session_t* session_list = NULL;

@@ -4,10 +4,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef struct {
     int socket_fd;
     int privilege; // 1: admin, 0: normal user
@@ -19,9 +15,5 @@ void admin_notify_manager_add_client(int socket_fd, int privilege, const char* u
 void admin_notify_manager_remove_client(int socket_fd);
 void admin_notify_manager_notify_admins(const char* report_json, int sender_socket, int sender_privilege);
 void admin_notify_manager_cleanup(void);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif // ADMIN_NOTIFY_MANAGER_H
