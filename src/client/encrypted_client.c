@@ -781,12 +781,59 @@ void show_report_replies(void) {
 void* report_reply_listener_thread(void* arg) {
     client_connection_t* conn = (client_connection_t*)arg;
     char buffer[4096];
+    extern char jwt_token[];
+    fd_set read_fds;
+    struct timeval tv;
+    int retries = 0;
+    
     printf("[CLIENT][report_reply_listener_thread] Başlatıldı.\n");
+    LOG_CLIENT_INFO("Report reply listener thread started");
+    
     while (1) {
+        // Set up the file descriptor set for select
+        FD_ZERO(&read_fds);
+        FD_SET(conn->socket, &read_fds);
+        
+        // Set timeout for 5 seconds
+        tv.tv_sec = 5;
+        tv.tv_usec = 0;
+        
+        // Use select to wait for data with timeout
+        int sel = select(conn->socket + 1, &read_fds, NULL, NULL, &tv);
+        
+        if (sel == -1) {
+            LOG_CLIENT_ERROR("Select error in report reply listener thread");
+            perror("[CLIENT][report_reply_listener_thread] select error");
+            break;
+        } 
+        else if (sel == 0) {
+            // Timeout occurred, send a keepalive to check connection
+            if (++retries >= 3) { // After 3 timeouts (15 seconds)
+                char ping_cmd[2048];
+                snprintf(ping_cmd, sizeof(ping_cmd), "REPORT_REPLY_PING:%s", jwt_token);
+                LOG_CLIENT_DEBUG("Sending keepalive ping for report replies");
+                
+                ssize_t sent = send(conn->socket, ping_cmd, strlen(ping_cmd), 0);
+                if (sent <= 0) {
+                    LOG_CLIENT_ERROR("Failed to send keepalive, connection may be lost");
+                    printf("[CLIENT][report_reply_listener_thread] Connection check failed\n");
+                    break;
+                }
+                retries = 0; // Reset retry counter after sending ping
+            }
+            continue;
+        }
+        
+        // Data is available
         ssize_t n = recv(conn->socket, buffer, sizeof(buffer)-1, 0);
         if (n > 0) {
             buffer[n] = '\0';
             printf("[CLIENT][report_reply_listener_thread] Mesaj alındı: %s\n", buffer);
+            LOG_CLIENT_DEBUG("Received message in reply listener: %s", buffer);
+            
+            // Reset retry counter
+            retries = 0;
+            
             if (strncmp(buffer, "REPORT_REPLY:", 13) == 0) {
                 char* p = buffer + 13;
                 int report_id = atoi(p);
@@ -795,7 +842,11 @@ void* report_reply_listener_thread(void* arg) {
                 else msg = "";
                 add_report_reply(report_id, msg);
             }
+            else if (strncmp(buffer, "REPORT_REPLY_PONG", 17) == 0) {
+                LOG_CLIENT_DEBUG("Received keepalive pong for report replies");
+            }
         } else {
+            LOG_CLIENT_ERROR("Error or connection closed in report reply listener: n=%zd", n);
             printf("[CLIENT][report_reply_listener_thread] recv döngüsü kırıldı. n=%zd\n", n);
             break;
         }
@@ -845,16 +896,23 @@ void listen_for_admin_notifications(client_connection_t* conn) {
 }
 
 void watch_report_replies(client_connection_t* conn) {
+    extern char jwt_token[];
+    char watch_cmd[2048];
+    snprintf(watch_cmd, sizeof(watch_cmd), "REPORT_REPLY_WATCH:%s", jwt_token);
+    send(conn->socket, watch_cmd, strlen(watch_cmd), 0);
+
     pthread_t reply_thread;
     pthread_create(&reply_thread, NULL, report_reply_listener_thread, conn);
     pthread_detach(reply_thread);
     int last_count = 0;
     printf("\nGelen admin cevaplarını izleme modunda. Çıkmak için Ctrl+C kullanabilirsiniz.\n");
+    LOG_CLIENT_INFO("Report reply watching started");
     while (1) {
         pthread_mutex_lock(&report_reply_mutex);
         if (report_reply_count > last_count) {
             for (int i = last_count; i < report_reply_count; ++i) {
                 printf("- Rapor #%d: %s\n", report_replies[i].report_id, report_replies[i].msg);
+                LOG_CLIENT_INFO("New report reply received: Report #%d: %s", report_replies[i].report_id, report_replies[i].msg);
             }
             last_count = report_reply_count;
         }

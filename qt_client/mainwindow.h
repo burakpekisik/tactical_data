@@ -25,6 +25,7 @@
 #include <QMouseEvent>
 #include "mapwidget.h"
 #include "client_wrapper.h"
+#include "notification_dialog.h"
 
 class MainWindow : public QMainWindow
 {
@@ -39,6 +40,7 @@ public:
 private slots:
     void onMapClicked(double latitude, double longitude);
     void onMarkerClicked(int id, double latitude, double longitude);
+    void onCurrentLocationMarkerClicked(double latitude, double longitude);
     void onSendData();
     void onConnectToServer();
     void onDisconnectFromServer();
@@ -55,10 +57,28 @@ private slots:
     void onTestConnections();
     void onAdminNotificationReceived(const QString& notification);
     void onReplyQueryResultReceived(const QJsonArray& replies);
+    void onNewReportReplyReceived(int reportId, const QString& message);
+    void onWatchReportReplies();
     void onConnectionTypeChanged(ClientWrapper::ConnectionType type);
     void onFallbackStatusChanged(const QString& status);
     void onFallbackTestResult(const QString& connectionType, bool success, const QString& message);
     void onPeriodicConnectionCheck(); // Periyodik bağlantı kontrolü
+    
+    // Konum güncellemesi slots
+    void startPeriodicLocationUpdates();
+    void stopPeriodicLocationUpdates();
+    void onPeriodicLocationUpdate();
+    
+    // Admin bildirim dinleyicisi otomatik kontrol slots
+    void onAutoAdminNotificationCheck();
+    void startAutoAdminNotificationListener();
+    void stopAutoAdminNotificationListener();
+    
+    // Bildirim dialog slots
+    void showNotificationDialog(const QString& notification);
+    void onNotificationZoomToLocation(double latitude, double longitude);
+    void onNotificationReplyToReport(int reportId, const QString& initialMessage);
+    void onNotificationDialogClosed();
     
     // Konum servisleri slots
     void onFindMyLocation();
@@ -121,6 +141,7 @@ private:
     QPushButton *adminReplyButton;
     QPushButton *queryRepliesButton;
     QPushButton *listenNotificationsButton;
+    QPushButton *watchReplyButton;
     QLineEdit *replyMessageEdit;
     QSpinBox *reportIdSpin;
     QTextEdit *adminLogEdit;
@@ -140,6 +161,12 @@ private:
     // Periyodik kontrol durumu
     bool autoCheckEnabled = true;  // Default olarak açık
     
+    // Admin bildirim dinleyicisi otomatik çalışma kontrolü
+    QTimer *adminNotificationTimer;
+    bool isAdminNotificationActive = false;
+    int adminNotificationRetryCount = 0;
+    static const int MAX_ADMIN_NOTIFICATION_RETRY = 5;
+    
     // Konum servisleri
     QGeoPositionInfoSource *positionSource;
     QPushButton *findLocationButton;
@@ -147,6 +174,8 @@ private:
     bool hasCurrentLocation = false;
     double currentLatitude = 0.0;
     double currentLongitude = 0.0;
+    QTimer *locationUpdateTimer;
+    bool isManualLocationRequest = false;
     
     // Client wrapper
     ClientWrapper *clientWrapper;
@@ -180,6 +209,9 @@ private:
     int userPrivilege = 0;
     bool initialReplyQueryDone = false; // İlk reply query yapıldı mı?
     QJsonArray cachedReplies; // Cached reply verilerini saklamak için
+
+    // Bildirim dialog'u
+    NotificationDialog *currentNotificationDialog = nullptr;
 
     // Dialog fonksiyonları
     void showAdminReplyDialog(int id, double latitude, double longitude);

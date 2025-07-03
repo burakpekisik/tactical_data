@@ -22,6 +22,7 @@
 #include <QFrame>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QJsonDocument>
 
 /**
  * @brief MainWindow sınıfının constructor'ı
@@ -59,6 +60,10 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onReplyQueryResultReceived);
     connect(clientWrapper, &ClientWrapper::fallbackTestResult,
             this, &MainWindow::onFallbackTestResult);
+    connect(clientWrapper, &ClientWrapper::adminNotificationReceived,
+            this, &MainWindow::onAdminNotificationReceived);
+    connect(clientWrapper, &ClientWrapper::newReportReplyReceived,
+            this, &MainWindow::onNewReportReplyReceived);
     // Admin reply signal'ları
     connect(clientWrapper, &ClientWrapper::dataSuccess, this, [this](const QString& message) {
         logTextEdit->append(QString("<span style='color: #27ae60;'><b>[BAŞARILI]</b></span> %1").arg(message));
@@ -91,6 +96,11 @@ MainWindow::MainWindow(QWidget *parent)
     connect(connectionCheckTimer, &QTimer::timeout, this, &MainWindow::onPeriodicConnectionCheck);
     connectionCheckTimer->setInterval(30000); // 30 saniye
     
+    // Admin bildirim dinleyicisi timer'ı
+    adminNotificationTimer = new QTimer(this);
+    connect(adminNotificationTimer, &QTimer::timeout, this, &MainWindow::onAutoAdminNotificationCheck);
+    adminNotificationTimer->setInterval(15000); // 15 saniye aralıkla kontrol et
+    
     // Konum servisleri başlat
     positionSource = QGeoPositionInfoSource::createDefaultSource(this);
     if (positionSource) {
@@ -100,6 +110,11 @@ MainWindow::MainWindow(QWidget *parent)
                 this, &MainWindow::onPositionError);
         positionSource->setUpdateInterval(5000); // 5 saniye güncelleme
     }
+    
+    // Periyodik konum güncellemesi timer'ı
+    locationUpdateTimer = new QTimer(this);
+    connect(locationUpdateTimer, &QTimer::timeout, this, &MainWindow::onPeriodicLocationUpdate);
+    locationUpdateTimer->setInterval(30000); // 30 saniye aralıkla güncelle
     
     setupUI();
     setWindowTitle("Tactical Data Client - Harita Arayüzü");
@@ -126,6 +141,28 @@ MainWindow::MainWindow(QWidget *parent)
  */
 MainWindow::~MainWindow()
 {
+    // Timer'ları temizle
+    if (connectionCheckTimer && connectionCheckTimer->isActive()) {
+        connectionCheckTimer->stop();
+    }
+    
+    if (adminNotificationTimer && adminNotificationTimer->isActive()) {
+        adminNotificationTimer->stop();
+    }
+    
+    if (locationUpdateTimer && locationUpdateTimer->isActive()) {
+        locationUpdateTimer->stop();
+    }
+    
+    // Bildirim dialog'unu temizle
+    if (currentNotificationDialog) {
+        currentNotificationDialog->close();
+        currentNotificationDialog->deleteLater();
+        currentNotificationDialog = nullptr;
+    }
+    
+    // Admin bildirim dinleyicisini durdur
+    stopAutoAdminNotificationListener();
 }
 
 /**
@@ -173,6 +210,7 @@ void MainWindow::setupMapPanel()
     mapWidget = new MapWidget(this);
     connect(mapWidget, &MapWidget::pointClicked, this, &MainWindow::onMapClicked);
     connect(mapWidget, &MapWidget::markerClicked, this, &MainWindow::onMarkerClicked);
+    connect(mapWidget, &MapWidget::currentLocationMarkerClicked, this, &MainWindow::onCurrentLocationMarkerClicked);
     
     // Koordinat bilgisi
     coordinatesLabel = new QLabel("Koordinat seçmek için haritaya tıklayın");
@@ -423,6 +461,33 @@ void MainWindow::onMarkerClicked(int id, double latitude, double longitude)
     }
 }
 
+void MainWindow::onCurrentLocationMarkerClicked(double latitude, double longitude)
+{
+    // Mevcut konum marker'ına tıklandığında veri gönderimi için seçili nokta olarak ayarla
+    selectedLatitude = latitude;
+    selectedLongitude = longitude;
+    pointSelected = true;
+    
+    QString coordText = QString("Seçili Nokta: %1, %2 (Mevcut Konum)")
+                       .arg(latitude, 0, 'f', 6)
+                       .arg(longitude, 0, 'f', 6);
+    selectedPointLabel->setText(coordText);
+    
+    // UI durumunu güncelle
+    updateUIState();
+    
+    // Log mesajı
+    QString logMsg = QString("Mevcut konum veri gönderimi için seçildi: %1, %2")
+                    .arg(latitude, 0, 'f', 6)
+                    .arg(longitude, 0, 'f', 6);
+    logTextEdit->append(QString("[%1] %2")
+                       .arg(QDateTime::currentDateTime().toString("hh:mm:ss"))
+                       .arg(logMsg));
+    
+    // Status mesajı göster
+    showStatusMessage("Mevcut konum veri gönderimi için seçildi", 3000);
+}
+
 void MainWindow::showAdminReplyDialog(int id, double latitude, double longitude)
 {
     QDialog dialog(this);
@@ -671,7 +736,7 @@ void MainWindow::displayRepliesForMarker(int id, QVBoxLayout* repliesLayout)
             qint64 timestamp = reply["timestamp"].toVariant().toLongLong();
             if (timestamp > 0) {
                 QDateTime dateTime = QDateTime::fromSecsSinceEpoch(timestamp);
-                adminInfo += QString(" - %1").arg(dateTime.toString("dd-MM-yyyy hh:mm:ss"));
+                adminInfo += QString(" - %1").arg(dateTime.toString("dd.MM.yyyy hh:mm:ss"));
             }
             
             QLabel* adminLabel = new QLabel(adminInfo);
@@ -839,10 +904,37 @@ void MainWindow::onConnectionStatusChanged(ClientWrapper::ConnectionStatus statu
     // Sadece GUI mesajını ekle, log formatı zaten client_wrapper'da yapılıyor
     logTextEdit->append(message);
     
-    // Bağlantı başarılı olduğunda otomatik rapor sorgula
+    // Bağlantı durumuna göre admin bildirim dinleyicisini yönet
+    if (userPrivilege == 1) {
+        if (status == ClientWrapper::Connected) {
+            // Bağlantı başarılı olduğunda admin bildirim dinleyicisini başlat
+            if (!isAdminNotificationActive) {
+                QTimer::singleShot(3000, this, [this]() {
+                    logTextEdit->append("<b>[ADMIN AUTO]</b> Bağlantı kuruldu, admin bildirim dinleyicisi başlatılıyor...");
+                    startAutoAdminNotificationListener();
+                });
+            }
+        } else if (status == ClientWrapper::Disconnected || status == ClientWrapper::Error) {
+            // Bağlantı koptuğunda bildirim dinleyicisini durdur ama timer'ı çalışır durumda bırak
+            if (isAdminNotificationActive) {
+                logTextEdit->append("<b>[ADMIN AUTO]</b> Bağlantı koptu, admin bildirim dinleyicisi devre dışı bırakıldı.");
+                isAdminNotificationActive = false;
+                // Timer'ı durdurmuyoruz, yeniden bağlanma denemeleri için çalışır durumda bırakıyoruz
+            }
+        }
+    }
+    
+    // Bağlantı başarılı olduğunda otomatik rapor sorgula ve konum güncellemesini başlat
     if (status == ClientWrapper::Connected) {
         logTextEdit->append("<b>[INFO]</b> Bağlantı sonrası otomatik rapor sorgulanıyor...");
         if (clientWrapper) clientWrapper->getReports();
+        
+        // Periyodik konum güncellemesini başlat
+        logTextEdit->append("<b>[KONUM]</b> Bağlantı sonrası periyodik konum güncellemesi başlatılıyor...");
+        startPeriodicLocationUpdates();
+    } else if (status == ClientWrapper::Disconnected || status == ClientWrapper::Error) {
+        // Bağlantı koptuğunda konum güncellemesini durdur
+        stopPeriodicLocationUpdates();
     }
 }
 
@@ -927,7 +1019,7 @@ void MainWindow::onReportsReceived(const QJsonArray& reports, int privilege)
         }
     }
     
-    // Admin ise mod switch butonunu göster
+    // Admin ise mod switch butonunu göster ve otomatik admin bildirim dinleyicisini başlat
     if (userPrivilege == 1 && modeSwitchButton) {
         modeSwitchButton->show();
         
@@ -939,8 +1031,17 @@ void MainWindow::onReportsReceived(const QJsonArray& reports, int privilege)
                 clientWrapper->queryMyReplies();
             });
         }
+        
+        // Admin için otomatik bildirim dinleyicisini başlat
+        QTimer::singleShot(2000, this, [this]() {
+            logTextEdit->append("<b>[ADMIN AUTO]</b> Admin bildirim dinleyicisi otomatik olarak başlatılıyor...");
+            startAutoAdminNotificationListener();
+        });
+        
     } else if (modeSwitchButton) {
         modeSwitchButton->hide();
+        // Admin değilse dinleyiciyi durdur
+        stopAutoAdminNotificationListener();
     }
     qDebug() << "[DEBUG] onReportsReceived END";
 }
@@ -1009,9 +1110,11 @@ void MainWindow::setupAdminPanel()
     QHBoxLayout *adminButtonsLayout = new QHBoxLayout();
     queryRepliesButton = new QPushButton("Kendi Cevaplarımı Sorgula");
     listenNotificationsButton = new QPushButton("Bildirimleri Dinle");
+    watchReplyButton = new QPushButton("Rapor Cevaplarını İzle");
     
     adminButtonsLayout->addWidget(queryRepliesButton);
     adminButtonsLayout->addWidget(listenNotificationsButton);
+    adminButtonsLayout->addWidget(watchReplyButton);
     adminLayout->addLayout(adminButtonsLayout);
     
     // Admin log alanı
@@ -1027,6 +1130,7 @@ void MainWindow::setupAdminPanel()
     connect(adminReplyButton, &QPushButton::clicked, this, &MainWindow::onAdminReplyToReport);
     connect(queryRepliesButton, &QPushButton::clicked, this, &MainWindow::onQueryMyReplies);
     connect(listenNotificationsButton, &QPushButton::clicked, this, &MainWindow::onListenForNotifications);
+    connect(watchReplyButton, &QPushButton::clicked, this, &MainWindow::onWatchReportReplies);
 }
 
 /**
@@ -1139,8 +1243,24 @@ void MainWindow::onQueryMyReplies()
  */
 void MainWindow::onListenForNotifications()
 {
-    adminLogEdit->append("<b>[INFO]</b> Admin bildirimleri dinleniyor...");
+    if (isAdminNotificationActive) {
+        adminLogEdit->append("<b>[INFO]</b> Admin bildirim dinleyicisi zaten otomatik olarak çalışıyor.");
+        adminLogEdit->append("<b>[INFO]</b> Otomatik sistem aktif, manuel başlatma gerekmiyor.");
+        return;
+    }
+    
+    adminLogEdit->append("<b>[INFO]</b> Admin bildirimleri manuel olarak dinleniyor...");
     clientWrapper->listenForAdminNotifications();
+    
+    // Manuel başlatıldığında da otomatik sistemi etkinleştir
+    if (userPrivilege == 1) {
+        QTimer::singleShot(2000, this, [this]() {
+            if (!isAdminNotificationActive) {
+                adminLogEdit->append("<b>[INFO]</b> Manuel başlatma sonrası otomatik sistem de etkinleştiriliyor...");
+                startAutoAdminNotificationListener();
+            }
+        });
+    }
 }
 
 /**
@@ -1161,7 +1281,11 @@ void MainWindow::onTestConnections()
  */
 void MainWindow::onAdminNotificationReceived(const QString& notification)
 {
+    // Log'a ekle
     adminLogEdit->append(QString("<b>[BİLDİRİM]</b> %1").arg(notification));
+    
+    // Görsel bildirim dialog'unu göster
+    showNotificationDialog(notification);
 }
 
 /**
@@ -1330,6 +1454,9 @@ void MainWindow::onFindMyLocation()
     
     logTextEdit->append("<b>[KONUM]</b> GPS konumu alınıyor...");
     
+    // Manuel konum talebi olduğunu işaretle
+    isManualLocationRequest = true;
+    
     // Tek seferlik konum talebi
     positionSource->requestUpdate(10000); // 10 saniye timeout
 }
@@ -1359,16 +1486,40 @@ void MainWindow::onPositionUpdated(const QGeoPositionInfo &info)
     currentLocationLabel->setText(locationText);
     currentLocationLabel->setStyleSheet("QLabel { background-color: #E8F5E8; padding: 5px; border: 1px solid #4CAF50; border-radius: 3px; }");
     
-    // Haritada mevcut konumu göster (farklı şekilde)
+    // Haritada mevcut konumu göster (her zaman marker güncelle)
     if (mapWidget) {
+        logTextEdit->append(QString("<b>[DEBUG]</b> MapWidget mevcut, setCurrentLocation çağrılıyor: %1, %2")
+                           .arg(currentLatitude, 0, 'f', 6)
+                           .arg(currentLongitude, 0, 'f', 6));
+        
         QMetaObject::invokeMethod(mapWidget, "setCurrentLocation",
                                 Q_ARG(double, currentLatitude),
                                 Q_ARG(double, currentLongitude));
+        
+        // Sadece manuel istek olduğunda zoom yap
+        if (isManualLocationRequest) {
+            QMetaObject::invokeMethod(mapWidget, "centerOnLocation",
+                                    Q_ARG(double, currentLatitude),
+                                    Q_ARG(double, currentLongitude));
+            logTextEdit->append("<b>[KONUM]</b> Konuma zoom yapıldı");
+        }
+    } else {
+        logTextEdit->append("<b>[DEBUG]</b> MapWidget null! Marker eklenemedi.");
     }
     
     logTextEdit->append(QString("<b>[KONUM]</b> GPS konumu bulundu: %1, %2")
                        .arg(currentLatitude, 0, 'f', 6)
                        .arg(currentLongitude, 0, 'f', 6));
+    
+    // Periyodik güncelleme mi kontrol et
+    if (locationUpdateTimer && locationUpdateTimer->isActive()) {
+        logTextEdit->append("<b>[KONUM]</b> Periyodik konum güncellemesi tamamlandı");
+    }
+    
+    // Manuel istek flag'ini sıfırla
+    if (isManualLocationRequest) {
+        isManualLocationRequest = false;
+    }
 }
 
 /**
@@ -1378,6 +1529,11 @@ void MainWindow::onPositionError(QGeoPositionInfoSource::Error error)
 {
     findLocationButton->setEnabled(true);
     findLocationButton->setText("📍 Şu Anki Konumumu Bul");
+    
+    // Manuel istek flag'ini sıfırla
+    if (isManualLocationRequest) {
+        isManualLocationRequest = false;
+    }
     
     QString errorText;
     switch (error) {
@@ -1595,7 +1751,6 @@ bool MainWindow::isMarkerVisible(const QJsonObject& marker)
             return false;
         }
     }
-    
     return true;
 }
 
@@ -1682,4 +1837,320 @@ void MainWindow::togglePanel(QGroupBox* groupBox)
     if (groupBox->parentWidget()) {
         groupBox->parentWidget()->updateGeometry();
     }
+}
+
+/**
+ * @brief Admin bildirim dinleyicisini otomatik olarak başlatır
+ * @details Privilege değeri 1 olan kullanıcılar için otomatik olarak admin bildirim 
+ *          dinleyicisini başlatır ve periyodik kontrol timer'ını çalıştırır.
+ */
+void MainWindow::startAutoAdminNotificationListener()
+{
+    if (userPrivilege != 1) {
+        logTextEdit->append("<b>[ADMIN AUTO]</b> Bu özellik sadece admin kullanıcılar için geçerlidir.");
+        return;
+    }
+    
+    if (isAdminNotificationActive) {
+        logTextEdit->append("<b>[ADMIN AUTO]</b> Admin bildirim dinleyicisi zaten aktif.");
+        return;
+    }
+    
+    // Admin bildirim dinleyicisini başlat
+    if (clientWrapper && clientWrapper->isConnected()) {
+        logTextEdit->append("<b>[ADMIN AUTO]</b> Admin bildirim dinleyicisi başlatılıyor...");
+        clientWrapper->listenForAdminNotifications();
+        isAdminNotificationActive = true;
+        adminNotificationRetryCount = 0;
+        
+        // Periyodik kontrol timer'ını başlat
+        adminNotificationTimer->start();
+        logTextEdit->append("<b>[ADMIN AUTO]</b> Otomatik admin bildirim kontrol timer'ı başlatıldı (15 saniye aralık).");
+    } else {
+        logTextEdit->append("<b>[ADMIN AUTO ERROR]</b> Sunucu bağlantısı yok, admin bildirim dinleyicisi başlatılamadı.");
+    }
+}
+
+/**
+ * @brief Admin bildirim dinleyicisini durdurur
+ * @details Otomatik admin bildirim dinleyicisini ve periyodik kontrol timer'ını durdurur.
+ */
+void MainWindow::stopAutoAdminNotificationListener()
+{
+    if (adminNotificationTimer->isActive()) {
+        adminNotificationTimer->stop();
+        logTextEdit->append("<b>[ADMIN AUTO]</b> Otomatik admin bildirim kontrol timer'ı durduruldu.");
+    }
+    
+    isAdminNotificationActive = false;
+    adminNotificationRetryCount = 0;
+    logTextEdit->append("<b>[ADMIN AUTO]</b> Admin bildirim dinleyicisi durduruldu.");
+}
+
+/**
+ * @brief Admin bildirim dinleyicisinin otomatik kontrol fonksiyonu
+ * @details Periyodik olarak admin bildirim dinleyicisinin çalışıp çalışmadığını kontrol eder.
+ *          Bağlantı kopmuşsa tekrar bağlanmaya çalışır ve dinleyiciyi yeniden başlatır.
+ */
+void MainWindow::onAutoAdminNotificationCheck()
+{
+    if (userPrivilege != 1) {
+        // Admin değilse timer'ı durdur
+        stopAutoAdminNotificationListener();
+        return;
+    }
+    
+    if (!isAdminNotificationActive) {
+        // Dinleyici aktif değilse dur
+        return;
+    }
+    
+    // Bağlantı durumunu kontrol et
+    if (!clientWrapper || !clientWrapper->isConnected()) {
+        logTextEdit->append("<b>[ADMIN AUTO CHECK]</b> Bağlantı kopmuş, yeniden bağlanmaya çalışılıyor...");
+        adminNotificationRetryCount++;
+        
+        if (adminNotificationRetryCount > MAX_ADMIN_NOTIFICATION_RETRY) {
+            logTextEdit->append("<b>[ADMIN AUTO ERROR]</b> Maksimum tekrar deneme sayısına ulaşıldı, admin bildirim dinleyicisi durduruldu.");
+            stopAutoAdminNotificationListener();
+            return;
+        }
+        
+        // Sunucuya yeniden bağlanmaya çalış
+        if (serverAddressEdit && serverPortSpin) {
+            QString host = serverAddressEdit->text().isEmpty() ? "127.0.0.1" : serverAddressEdit->text();
+            int port = serverPortSpin->value();
+            
+            logTextEdit->append(QString("<b>[ADMIN AUTO RECONNECT]</b> %1:%2 adresine yeniden bağlanmaya çalışılıyor... (Deneme: %3/%4)")
+                               .arg(host).arg(port).arg(adminNotificationRetryCount).arg(MAX_ADMIN_NOTIFICATION_RETRY));
+            
+            // ClientWrapper'a yeniden bağlanma talimatı ver
+            clientWrapper->connectToServer(host, port);
+            
+            // 5 saniye sonra dinleyiciyi yeniden başlatmaya çalış
+            QTimer::singleShot(5000, this, [this]() {
+                if (clientWrapper && clientWrapper->isConnected()) {
+                    logTextEdit->append("<b>[ADMIN AUTO RECONNECT]</b> Bağlantı kuruldu, admin bildirim dinleyicisi yeniden başlatılıyor...");
+                    clientWrapper->listenForAdminNotifications();
+                    adminNotificationRetryCount = 0; // Başarılı bağlantı sonrası retry sayacını sıfırla
+                } else {
+                    logTextEdit->append("<b>[ADMIN AUTO RECONNECT]</b> Bağlantı kurulamadı, bir sonraki kontrol için bekleniyor...");
+                }
+            });
+        }
+    } else {
+        // Bağlantı varsa, dinleyicinin çalıştığını doğrula
+        logTextEdit->append("<b>[ADMIN AUTO CHECK]</b> Admin bildirim dinleyicisi aktif, bağlantı normal.");
+        adminNotificationRetryCount = 0; // Başarılı kontrol sonrası retry sayacını sıfırla
+        
+        // Dinleyicinin hala aktif olduğunu garantilemek için tekrar başlat
+        // (Eğer bir nedenden dolayı durmuşsa)
+        QTimer::singleShot(1000, this, [this]() {
+            if (clientWrapper && clientWrapper->isConnected()) {
+                clientWrapper->listenForAdminNotifications();
+            }
+        });
+    }
+}
+
+/**
+ * @brief Bildirim dialog'unu gösterir
+ * @param notification Bildirim JSON metni
+ * @details Gelen admin bildirimini görsel dialog ile kullanıcıya gösterir.
+ *          Aynı anda sadece bir dialog açık olmasını sağlar.
+ */
+void MainWindow::showNotificationDialog(const QString& notification)
+{
+    // Eğer zaten bir dialog açıksa, onu kapat
+    if (currentNotificationDialog) {
+        currentNotificationDialog->close();
+        currentNotificationDialog->deleteLater();
+        currentNotificationDialog = nullptr;
+    }
+    
+    // Yeni bildirim dialog'u oluştur
+    currentNotificationDialog = new NotificationDialog(notification, this);
+    
+    // Signal bağlantılarını kur
+    connect(currentNotificationDialog, &NotificationDialog::zoomToLocation,
+            this, &MainWindow::onNotificationZoomToLocation);
+    connect(currentNotificationDialog, &NotificationDialog::replyToReport,
+            this, &MainWindow::onNotificationReplyToReport);
+    connect(currentNotificationDialog, &NotificationDialog::dialogClosed,
+            this, &MainWindow::onNotificationDialogClosed);
+    
+    // Dialog'u animasyonla göster
+    currentNotificationDialog->showWithAnimation();
+    
+    logTextEdit->append("<b>[NOTIFICATION]</b> Yeni bildirim dialog'u gösterildi.");
+}
+
+/**
+ * @brief Bildirim dialog'undan konuma zoom isteği geldiğinde çağrılır
+ * @param latitude Enlem koordinatı
+ * @param longitude Boylam koordinatı
+ * @details Harita widget'ına belirtilen konuma zoom yapma talimatı verir.
+ */
+void MainWindow::onNotificationZoomToLocation(double latitude, double longitude)
+{
+    logTextEdit->append(QString("<b>[ZOOM]</b> Bildirim konumuna zoom yapılıyor: [%1, %2]")
+                       .arg(latitude, 0, 'f', 6)
+                       .arg(longitude, 0, 'f', 6));
+    
+    // Harita widget'ına zoom talimatı ver
+    if (mapWidget) {
+        QMetaObject::invokeMethod(mapWidget, "centerOnLocation",
+                                 Q_ARG(double, latitude),
+                                 Q_ARG(double, longitude));
+        
+        // Ayrıca bu konumu seçili nokta olarak işaretle
+        selectedLatitude = latitude;
+        selectedLongitude = longitude;
+        pointSelected = true;
+        selectedPointLabel->setText(QString("Seçili: [%1, %2]")
+                                   .arg(latitude, 0, 'f', 6)
+                                   .arg(longitude, 0, 'f', 6));
+        updateUIState();
+    }
+}
+
+/**
+ * @brief Bildirim dialog'undan rapora cevap verme isteği geldiğinde çağrılır
+ * @param reportId Rapor ID'si
+ * @param initialMessage Önceden doldurulacak mesaj
+ * @details Admin reply paneline rapor ID'sini ve mesajı doldurur.
+ */
+void MainWindow::onNotificationReplyToReport(int reportId, const QString& initialMessage)
+{
+    logTextEdit->append(QString("<b>[REPLY]</b> Rapor #%1 için cevap paneli açılıyor").arg(reportId));
+    
+    // Admin reply alanlarını doldur
+    if (reportIdSpin && replyMessageEdit) {
+        reportIdSpin->setValue(reportId);
+        replyMessageEdit->setText(initialMessage);
+        replyMessageEdit->setFocus();
+        
+        // Admin panelini görünür yap (eğer kapalıysa)
+        if (adminGroup && !adminGroup->isVisible()) {
+            adminGroup->setVisible(true);
+            logTextEdit->append("<b>[UI]</b> Admin paneli otomatik olarak açıldı.");
+        }
+        
+        adminLogEdit->append(QString("<b>[AUTO]</b> Rapor #%1 için cevap formu hazırlandı").arg(reportId));
+    }
+}
+
+/**
+ * @brief Bildirim dialog'unda kapatıldığında çağrılır
+ * @details Dialog pointer'ını temizler ve bellek sızıntısını önler.
+ */
+void MainWindow::onNotificationDialogClosed()
+{
+    if (currentNotificationDialog) {
+        currentNotificationDialog->deleteLater();
+        currentNotificationDialog = nullptr;
+        logTextEdit->append("<b>[NOTIFICATION]</b> Bildirim dialog'u kapatıldı.");
+    }
+}
+
+/**
+ * @brief Yeni rapor cevabı alındığında çağrılan slot
+ */
+void MainWindow::onNewReportReplyReceived(int reportId, const QString& message)
+{
+    // Log'a ekle
+    QString logMessage = QString("<span style='color: #2ecc71;'><b>[YENİ CEVAP]</b></span> Rapor #%1: %2").arg(reportId).arg(message);
+    logTextEdit->append(logMessage);
+    adminLogEdit->append(logMessage);
+    
+    // NotificationDialog için JSON formatında bildirim oluştur
+    QJsonObject replyNotification;
+    replyNotification["report_id"] = reportId;
+    replyNotification["message"] = message;
+    replyNotification["type"] = "Rapor Cevabı";
+    replyNotification["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    
+    // JSON nesnesini string'e dönüştür
+    QJsonDocument doc(replyNotification);
+    QString notificationJson = QString::fromUtf8(doc.toJson());
+    
+    // NotificationDialog kullanarak bildirim göster
+    showNotificationDialog(notificationJson);
+}
+
+/**
+ * @brief Rapor cevaplarını izleme başlatıldığında çağrılan slot
+ */
+void MainWindow::onWatchReportReplies()
+{
+    if (!clientWrapper->isConnected()) {
+        QMessageBox::warning(this, "Bağlantı Hatası", "Sunucuya bağlı değilsiniz!");
+        return;
+    }
+    
+    // Sunucuya izleme isteği gönder
+    clientWrapper->watchReportReplies();
+    
+    // Kullanıcıya bilgilendirme mesajı
+    QString logMessage = "<span style='color: #3498db;'><b>[BİLGİ]</b></span> Rapor cevapları izleme başlatıldı. Yeni cevaplar otomatik olarak gösterilecek.";
+    logTextEdit->append(logMessage);
+    
+    // Buton durumunu güncelle
+    watchReplyButton->setText("✓ Cevap İzleme Aktif");
+    watchReplyButton->setStyleSheet("QPushButton { background-color: #27ae60; color: white; }");
+}
+
+/**
+ * @brief Periyodik konum güncellemesini başlatır
+ */
+void MainWindow::startPeriodicLocationUpdates()
+{
+    if (!positionSource) {
+        logTextEdit->append("<b>[KONUM]</b> Konum servisi kullanılamıyor!");
+        return;
+    }
+    
+    // İlk konum güncellemesini 2 saniye sonra yap (MapWidget'in tam yüklenmesi için)
+    QTimer::singleShot(2000, this, [this]() {
+        logTextEdit->append("<b>[KONUM]</b> İlk periyodik konum güncellemesi başlatılıyor...");
+        onPeriodicLocationUpdate();
+    });
+    
+    // Timer'ı başlat (30 saniyede bir)
+    locationUpdateTimer->start();
+    
+    logTextEdit->append("<b>[KONUM]</b> Periyodik konum güncellemesi başlatıldı (30 saniye aralıkla)");
+}
+
+/**
+ * @brief Periyodik konum güncellemesini durdurur
+ */
+void MainWindow::stopPeriodicLocationUpdates()
+{
+    if (locationUpdateTimer && locationUpdateTimer->isActive()) {
+        locationUpdateTimer->stop();
+        logTextEdit->append("<b>[KONUM]</b> Periyodik konum güncellemesi durduruldu");
+    }
+}
+
+/**
+ * @brief Periyodik konum güncellemesi tetiklendiğinde çağrılır
+ */
+void MainWindow::onPeriodicLocationUpdate()
+{
+    if (!positionSource) {
+        logTextEdit->append("<b>[KONUM]</b> Konum servisi kullanılamıyor!");
+        return;
+    }
+    
+    // Mevcut konum etiketini güncelle
+    if (currentLocationLabel) {
+        currentLocationLabel->setText("Mevcut Konum: Konum güncelleniyor...");
+        currentLocationLabel->setStyleSheet("QLabel { background-color: #FFF3E0; padding: 5px; border: 1px solid #FF9800; border-radius: 3px; }");
+    }
+    
+    logTextEdit->append("<b>[KONUM]</b> Periyodik konum güncellemesi yapılıyor...");
+    
+    // Tek seferlik konum talebi (10 saniye timeout)
+    positionSource->requestUpdate(10000);
 }

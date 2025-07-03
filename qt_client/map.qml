@@ -13,6 +13,7 @@ Rectangle {
 
     signal mapClicked(double latitude, double longitude)
     signal markerClicked(int id, double latitude, double longitude)
+    signal currentLocationMarkerClicked(double latitude, double longitude)
     function emitMarkerClicked(markerId, lat, lon) {
         mapContainer.markerClicked(markerId, lat, lon);
     }
@@ -496,8 +497,13 @@ Rectangle {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
+                        console.log("[QML] Current location marker clicked at:", coordinate.latitude, coordinate.longitude);
+                        // Signal'i emit et
+                        mapContainer.currentLocationMarkerClicked(coordinate.latitude, coordinate.longitude);
+                        
+                        // Tooltip'i de göster
                         Qt.createQmlObject(
-                            'import QtQuick 2.15; import QtQuick.Controls 2.15; Popup { width: 280; height: 80; modal: false; focus: true; contentItem: Text { text: "<b>📍 Mevcut Konumum</b><br>Koordinat: ' + coordinate.latitude.toFixed(6) + ', ' + coordinate.longitude.toFixed(6) + '"; wrapMode: Text.Wrap; anchors.centerIn: parent; font.pixelSize: 13; textFormat: Text.RichText; horizontalAlignment: Text.AlignHCenter; } }',
+                            'import QtQuick 2.15; import QtQuick.Controls 2.15; Popup { width: 280; height: 80; modal: false; focus: true; contentItem: Text { text: "<b>📍 Mevcut Konumum Seçildi</b><br>Veri gönderimi için seçildi: ' + coordinate.latitude.toFixed(6) + ', ' + coordinate.longitude.toFixed(6) + '"; wrapMode: Text.Wrap; anchors.centerIn: parent; font.pixelSize: 13; textFormat: Text.RichText; horizontalAlignment: Text.AlignHCenter; } }',
                             map,
                             "currentLocationPopup"
                         ).open();
@@ -626,10 +632,7 @@ Rectangle {
             currentLat = lat;
             currentLon = lon;
             
-            // Haritayı mevcut konuma odakla
-            map.center = QtPositioning.coordinate(lat, lon);
-            map.zoomLevel = Math.max(map.zoomLevel, 14); // En az zoom level 14
-            
+            // Zoom ve center işlemini kaldırdık - sadece marker ekliyoruz
             console.log("[QML] [RESP] Mevcut konum marker'ı eklendi:", lat, lon);
         } else {
             console.log("[QML] [ERROR] Mevcut konum marker'ı oluşturulamadı");
@@ -742,5 +745,19 @@ Rectangle {
         // Debug için status değerini yazdır
         console.log("[QML DEBUG] Status değeri:", status);
         return "Unknown"; // Bilinmeyen tipler için
+    }
+
+    // Belirtilen konuma zoom yapar ve haritayı merkeze alır
+    function centerOnLocation(lat, lon) {
+        console.log("[QML] centerOnLocation çağrıldı:", lat, lon);
+        
+        if (map) {
+            var coordinate = QtPositioning.coordinate(lat, lon);
+            map.center = coordinate;
+            map.zoomLevel = Math.max(map.zoomLevel, 15); // En az zoom level 15
+            console.log("[QML] Harita konumu güncellendi:", coordinate, "zoom:", map.zoomLevel);
+        } else {
+            console.log("[QML] Hata: map objesi null!");
+        }
     }
 }

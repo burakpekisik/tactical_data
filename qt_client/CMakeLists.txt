@@ -36,6 +36,7 @@ set(SOURCES
     client_wrapper.cpp
     login_dialog.cpp
     login_client.cpp
+    notification_dialog.cpp
     ${C_SOURCES}
 )
 
@@ -43,6 +44,7 @@ set(HEADERS
     mainwindow.h
     mapwidget.h
     client_wrapper.h
+    notification_dialog.h
 )
 
 add_executable(TacticalMapClient

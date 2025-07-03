@@ -58,6 +58,8 @@ void MapWidget::setupQmlMap()
                 this, SLOT(onQmlPointClicked(double, double)));
         connect(rootObject, SIGNAL(markerClicked(int, double, double)),
                 this, SLOT(onQmlMarkerClicked(int, double, double)));
+        connect(rootObject, SIGNAL(currentLocationMarkerClicked(double, double)),
+                this, SLOT(onQmlCurrentLocationMarkerClicked(double, double)));
     }
 }
 
@@ -78,6 +80,13 @@ void MapWidget::onQmlMarkerClicked(int id, double latitude, double longitude)
 {
     qDebug() << "Marker tıklandı:" << id << latitude << longitude;
     emit markerClicked(id, latitude, longitude);
+}
+
+void MapWidget::onQmlCurrentLocationMarkerClicked(double latitude, double longitude)
+{
+    qDebug() << "Current location marker tıklandı:" << latitude << longitude;
+    logToConsole(QString("Mevcut konum marker seçildi: %1 %2").arg(latitude).arg(longitude));
+    emit currentLocationMarkerClicked(latitude, longitude);
 }
 
 void MapWidget::addMarker(double latitude, double longitude, const QString& description, const QString& status, int id, qint64 timestamp, bool isTemporary)
@@ -152,4 +161,34 @@ void MapWidget::setReplyIdList(const QVariantList& idList)
     QMetaObject::invokeMethod(qmlWidget->rootObject(), "setReplyIdList",
         Q_ARG(QVariant, idList));
     logToConsole("setReplyIdList çağrıldı");
+}
+
+/**
+ * @brief Haritayı belirtilen konuma odaklar ve zoom yapar
+ * @param latitude Enlem koordinatı
+ * @param longitude Boylam koordinatı
+ * @details QML harita bileşenini belirtilen koordinatlara zoom yapar.
+ *          Bildirim dialog'undan gelen konum istekleri için kullanılır.
+ */
+void MapWidget::centerOnLocation(double latitude, double longitude)
+{
+    if (!qmlWidget) {
+        logToConsole("centerOnLocation: qmlWidget null!");
+        return;
+    }
+    
+    QObject *rootObject = qmlWidget->rootObject();
+    if (!rootObject) {
+        logToConsole("centerOnLocation: rootObject null!");
+        return;
+    }
+    
+    // QML harita bileşenine konumu merkeze alma ve zoom yapma talimatı ver
+    QMetaObject::invokeMethod(rootObject, "centerOnLocation",
+        Q_ARG(QVariant, latitude),
+        Q_ARG(QVariant, longitude));
+    
+    logToConsole(QString("centerOnLocation çağrıldı: [%1, %2]")
+                .arg(latitude, 0, 'f', 6)
+                .arg(longitude, 0, 'f', 6));
 }

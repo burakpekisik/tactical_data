@@ -133,6 +133,7 @@ public slots:
     void adminReplyToReport(int reportId, const QString& message);
     void queryMyReplies();
     void listenForAdminNotifications();
+    void watchReportReplies();
     void sendAllPendingAdminReplies();  // Public'e taşındı
 
     // --- Bağlantı türü kontrolü ---
@@ -239,6 +240,13 @@ signals:
      * @param replies Cevap listesi
      */
     void reportRepliesReceived(int reportId, const QJsonArray& replies);
+    
+    /**
+     * @brief Yeni bir rapor cevabı alındığında emit edilir
+     * @param reportId Rapor ID'si
+     * @param message Cevap mesajı
+     */
+    void newReportReplyReceived(int reportId, const QString& message);
 
 private slots:
     void onSocketConnected();

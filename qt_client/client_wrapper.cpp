@@ -321,6 +321,35 @@ void ClientWrapper::onDataReceived()
     // --- Tek parçalı ENCRYPTED yanıtları işle ---
     processEncryptedResponse();
 
+    // --- JSON biriktirme ve admin notification detection ---
+    QString bufferStr = QString::fromUtf8(incomingBuffer);
+    
+    // Eğer buffer JSON içeriyorsa onu extract et
+    int jsonStart = bufferStr.indexOf('{');
+    if (jsonStart != -1) {
+        // JSON başlangıcı bulundu, sonu var mı?
+        int jsonEnd = bufferStr.lastIndexOf('}');
+        if (jsonEnd > jsonStart) {
+            // Tam JSON var
+            QString jsonStr = bufferStr.mid(jsonStart, jsonEnd - jsonStart + 1);
+            qDebug() << "[DEBUG] Complete JSON extracted:" << jsonStr.left(200);
+            
+            // Admin notification kontrolü
+            if (jsonStr.contains("user_id") && jsonStr.contains("status") && jsonStr.contains("latitude")) {
+                qDebug() << "[DEBUG] Admin notification detected:" << jsonStr;
+                emit adminNotificationReceived(jsonStr);
+                
+                // JSON'u buffer'dan çıkar
+                QByteArray jsonBytes = jsonStr.toUtf8();
+                int removeStart = incomingBuffer.indexOf(jsonBytes);
+                if (removeStart != -1) {
+                    incomingBuffer.remove(removeStart, jsonBytes.length());
+                }
+                return; // Admin notification işlendi, çık
+            }
+        }
+    }
+    
     // --- Düz metin/legacy mesajları ayıkla ---
     while (!incomingBuffer.isEmpty()) {
         int plainEnd = incomingBuffer.indexOf('\n');
@@ -332,7 +361,55 @@ void ClientWrapper::onDataReceived()
         QString msgStr = QString::fromUtf8(plainMsg);
         if (!msgStr.startsWith("ENCRYPTED") && !msgStr.isEmpty()) {
             qDebug() << "[DEBUG] Plain/legacy data received:" << msgStr.left(200);
-            emit dataReceived(msgStr);
+            
+            // Birleşik mesajları işle: İlk REPORT_REPLY: konumunu bul
+            int replyPos = msgStr.indexOf("REPORT_REPLY:");
+            
+            // Eğer birleşik mesaj varsa (REPORT_REPLY: başlangıçta değil)
+            if (replyPos > 0) {
+                // REPORT_REPLY: öncesi mesajı normal mesaj olarak işle
+                QString normalMsg = msgStr.left(replyPos);
+                emit dataReceived(normalMsg);
+                
+                // REPORT_REPLY: mesajını ayrı işle
+                QString replyMsg = msgStr.mid(replyPos);
+                
+                if (replyMsg.startsWith("REPORT_REPLY:")) {
+                    qDebug() << "[DEBUG] Report reply extracted from combined message:" << replyMsg;
+                    
+                    // Format: REPORT_REPLY:<report_id>:<message>
+                    QString content = replyMsg.mid(13); // Remove "REPORT_REPLY:"
+                    int reportId = content.section(':', 0, 0).toInt();
+                    QString message = content.section(':', 1);
+                    
+                    qDebug() << "[DEBUG] Extracted reportId:" << reportId << ", message:" << message;
+                    
+                    emit newReportReplyReceived(reportId, message);
+                }
+                continue;
+            }
+            // Normal REPORT_REPLY: mesajını işle (başlangıçta)
+            else if (msgStr.startsWith("REPORT_REPLY:")) {
+                qDebug() << "[DEBUG] Report reply detected:" << msgStr;
+                
+                // Format: REPORT_REPLY:<report_id>:<message>
+                QString content = msgStr.mid(13); // Remove "REPORT_REPLY:"
+                int reportId = content.section(':', 0, 0).toInt();
+                QString message = content.section(':', 1);
+                
+                emit newReportReplyReceived(reportId, message);
+                continue;
+            }
+            // REPORT_REPLY_PONG mesajını sessizce işle
+            else if (msgStr.startsWith("REPORT_REPLY_PONG")) {
+                qDebug() << "[DEBUG] Report reply keepalive response received";
+                continue;
+            }
+            
+            // JSON parçası değilse normal data olarak emit et
+            if (!msgStr.startsWith("{") && !msgStr.startsWith("\t")) {
+                emit dataReceived(msgStr);
+            }
         }
     }
 }
@@ -963,6 +1040,27 @@ void ClientWrapper::listenForAdminNotifications() {
     tcpSocket->flush();
     
     logInfo("Admin bildirim dinleme başlatıldı");
+}
+
+/**
+ * @brief Rapor cevaplarını izlemeyi başlatır
+ * @details Sunucuya REPORT_REPLY_WATCH komutu gönderir ve gelen cevapları dinler
+ *          Hem normal kullanıcı hem de admin için çalışır
+ */
+void ClientWrapper::watchReportReplies() {
+    if (!isConnected()) {
+        logError("Bağlantı yok, rapor cevapları izlenemez");
+        return;
+    }
+    
+    // Rapor cevabı izleme mesajı gönder
+    QString watchCmd = QString("REPORT_REPLY_WATCH:%1").arg(jwtToken);
+    QByteArray cmdData = watchCmd.toUtf8();
+    
+    tcpSocket->write(cmdData);
+    tcpSocket->flush();
+    
+    logInfo("Rapor cevabı izleme başlatıldı");
 }
 
 /**

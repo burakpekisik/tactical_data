@@ -22,14 +22,17 @@ public:
     Q_INVOKABLE void applyFilters(const QString& dataTypeFilter, const QString& replyStatusFilter, const QString& timeFilter);
     Q_INVOKABLE void clearFilters();
     Q_INVOKABLE void setReplyIdList(const QVariantList& idList);
+    Q_INVOKABLE void centerOnLocation(double latitude, double longitude);
 
 signals:
     void pointClicked(double latitude, double longitude);
     void markerClicked(int id, double latitude, double longitude);
+    void currentLocationMarkerClicked(double latitude, double longitude);
 
 private slots:
     void onQmlPointClicked(double latitude, double longitude);
     void onQmlMarkerClicked(int id, double latitude, double longitude);
+    void onQmlCurrentLocationMarkerClicked(double latitude, double longitude);
 
 private:
     void setupQmlMap();
