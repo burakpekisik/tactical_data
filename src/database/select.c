@@ -729,3 +729,252 @@ int db_get_report_by_id(int id, report_t *report) {
         return -1;
     }
 }
+
+/**
+ * @brief Chat odalarını ID'ye göre sorgula
+ * @details CHAT_ROOMS tablosundan ID'ye göre oda bilgilerini getirir
+ * 
+ * @param room_id Oda ID'si
+ * @param room Sonuç oda verisi (chat_room_t struct pointer)
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı sorgu
+ * @retval -1 Sorgu hatası veya bulunamadı
+ */
+int db_select_chat_room_by_id(int room_id, chat_room_t *room) {
+    char sql[512];
+    sqlite3_stmt *stmt;
+    int rc;
+
+    if (!g_db || !room || room_id <= 0) {
+        fprintf(stderr, "Invalid parameters for chat room select\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql),
+        "SELECT room_id, room_name, creator_id, room_type, max_users, "
+        "current_users, allowed_user_ids, room_key, created_at, is_active "
+        "FROM chat_rooms WHERE room_id = %d AND is_active = 1;", room_id);
+
+    rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL prepare error: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        memset(room, 0, sizeof(chat_room_t));
+        
+        room->room_id = sqlite3_column_int(stmt, 0);
+        strncpy(room->room_name, (const char*)sqlite3_column_text(stmt, 1), sizeof(room->room_name) - 1);
+        strncpy(room->creator_id, (const char*)sqlite3_column_text(stmt, 2), sizeof(room->creator_id) - 1);
+        room->room_type = (chat_room_type_t)sqlite3_column_int(stmt, 3);
+        room->max_users = sqlite3_column_int(stmt, 4);
+        room->current_users = sqlite3_column_int(stmt, 5);
+        
+        const char* allowed_users = (const char*)sqlite3_column_text(stmt, 6);
+        if (allowed_users) {
+            strncpy(room->allowed_user_ids, allowed_users, sizeof(room->allowed_user_ids) - 1);
+        }
+        
+        const char* room_key_hex = (const char*)sqlite3_column_text(stmt, 7);
+        if (room_key_hex && strlen(room_key_hex) == ROOM_KEY_SIZE * 2) {
+            // Hex string'i binary'ye çevir
+            for (int i = 0; i < ROOM_KEY_SIZE; i++) {
+                sscanf(room_key_hex + (i * 2), "%2hhx", &room->room_key[i]);
+            }
+        }
+        
+        room->created_at = sqlite3_column_int64(stmt, 8);
+        room->is_active = sqlite3_column_int(stmt, 9) == 1;
+        
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+
+    sqlite3_finalize(stmt);
+    
+    if (rc == SQLITE_DONE) {
+        return -1; // Bulunamadı
+    }
+    
+    fprintf(stderr, "SQL step error: %s\n", sqlite3_errmsg(g_db));
+    return -1;
+}
+
+/**
+ * @brief Kullanıcının erişebileceği chat odalarını listele
+ * @details Kullanıcı privilege'ine göre erişilebilir odaları getirir
+ * 
+ * @param user_id Kullanıcı ID'si
+ * @param user_privilege Kullanıcı privilege seviyesi
+ * @param rooms Sonuç odalar array'i (malloc edilir)
+ * @param count Sonuç oda sayısı
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı sorgu
+ * @retval -1 Sorgu hatası
+ */
+int db_select_user_accessible_chat_rooms(const char* user_id, int user_privilege, 
+                                        chat_room_t** rooms, int* count) {
+    char sql[1024];
+    sqlite3_stmt *stmt;
+    int rc;
+    *rooms = NULL;
+    *count = 0;
+
+    if (!g_db || !user_id || !rooms || !count) {
+        fprintf(stderr, "Invalid parameters for accessible rooms select\n");
+        return -1;
+    }
+
+    // SQL sorgusu - kullanıcının erişebileceği odalar
+    snprintf(sql, sizeof(sql),
+        "SELECT room_id, room_name, creator_id, room_type, max_users, "
+        "current_users, allowed_user_ids, room_key, created_at, is_active "
+        "FROM chat_rooms WHERE is_active = 1 AND ("
+        "room_type = 0 OR " // ROOM_TYPE_EVERYONE
+        "(room_type = 1 AND %d = 1) OR " // ROOM_TYPE_ADMIN_ONLY ve user admin ise
+        "(room_type = 2 AND (allowed_user_ids LIKE '%%%s%%' OR creator_id = '%s'))" // ROOM_TYPE_SPECIFIC_USERS
+        ") ORDER BY created_at DESC;",
+        user_privilege, user_id, user_id);
+
+    rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL prepare error: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+
+    // Önce kaç oda olduğunu say
+    int room_count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        room_count++;
+    }
+
+    // Statement'i sıfırla
+    sqlite3_reset(stmt);
+
+    if (room_count > 0) {
+        *rooms = malloc(sizeof(chat_room_t) * room_count);
+        if (!*rooms) {
+            fprintf(stderr, "Memory allocation failed for rooms array\n");
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+
+        int index = 0;
+        while (sqlite3_step(stmt) == SQLITE_ROW && index < room_count) {
+            chat_room_t* room = &(*rooms)[index];
+            memset(room, 0, sizeof(chat_room_t));
+
+            room->room_id = sqlite3_column_int(stmt, 0);
+            strncpy(room->room_name, (const char*)sqlite3_column_text(stmt, 1), sizeof(room->room_name) - 1);
+            strncpy(room->creator_id, (const char*)sqlite3_column_text(stmt, 2), sizeof(room->creator_id) - 1);
+            room->room_type = (chat_room_type_t)sqlite3_column_int(stmt, 3);
+            room->max_users = sqlite3_column_int(stmt, 4);
+            room->current_users = sqlite3_column_int(stmt, 5);
+
+            const char* allowed_users = (const char*)sqlite3_column_text(stmt, 6);
+            if (allowed_users) {
+                strncpy(room->allowed_user_ids, allowed_users, sizeof(room->allowed_user_ids) - 1);
+            }
+
+            const char* room_key_hex = (const char*)sqlite3_column_text(stmt, 7);
+            if (room_key_hex && strlen(room_key_hex) == ROOM_KEY_SIZE * 2) {
+                for (int i = 0; i < ROOM_KEY_SIZE; i++) {
+                    sscanf(room_key_hex + (i * 2), "%2hhx", &room->room_key[i]);
+                }
+            }
+
+            room->created_at = sqlite3_column_int64(stmt, 8);
+            room->is_active = sqlite3_column_int(stmt, 9) == 1;
+
+            index++;
+        }
+    }
+
+    *count = room_count;
+    sqlite3_finalize(stmt);
+    PRINTF_LOG("Found %d accessible chat rooms for user %s\n", room_count, user_id);
+    return 0;
+}
+
+/**
+ * @brief Oda mesajlarını getir (sayfalama ile)
+ * @details CHAT_MESSAGES tablosundan oda mesajlarını getirir
+ * 
+ * @param room_id Oda ID'si
+ * @param messages Sonuç mesajlar array'i (malloc edilir)
+ * @param count Sonuç mesaj sayısı
+ * @param limit Maksimum mesaj sayısı
+ * @param offset Başlangıç offset'i
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı sorgu
+ * @retval -1 Sorgu hatası
+ */
+int db_select_chat_room_messages(int room_id, int limit, chat_message_t** messages, int* count) {
+    char sql[512];
+    sqlite3_stmt *stmt;
+    int rc;
+    *messages = NULL;
+    *count = 0;
+
+    if (!g_db || room_id <= 0 || !messages || !count) {
+        fprintf(stderr, "Invalid parameters for room messages select\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql),
+        "SELECT message_id, room_id, sender_id, sender_name, message, timestamp "
+        "FROM chat_messages WHERE room_id = %d "
+        "ORDER BY timestamp DESC LIMIT %d;",
+        room_id, limit);
+
+    rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL prepare error: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+
+    // Önce kaç mesaj olduğunu say
+    int message_count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        message_count++;
+    }
+
+    sqlite3_reset(stmt);
+
+    if (message_count > 0) {
+        *messages = malloc(sizeof(chat_message_t) * message_count);
+        if (!*messages) {
+            fprintf(stderr, "Memory allocation failed for messages array\n");
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+
+        int index = 0;
+        while (sqlite3_step(stmt) == SQLITE_ROW && index < message_count) {
+            chat_message_t* msg = &(*messages)[index];
+            memset(msg, 0, sizeof(chat_message_t));
+
+            msg->message_id = sqlite3_column_int(stmt, 0);
+            msg->room_id = sqlite3_column_int(stmt, 1);
+            strncpy(msg->sender_id, (const char*)sqlite3_column_text(stmt, 2), sizeof(msg->sender_id) - 1);
+            strncpy(msg->sender_name, (const char*)sqlite3_column_text(stmt, 3), sizeof(msg->sender_name) - 1);
+            strncpy(msg->message, (const char*)sqlite3_column_text(stmt, 4), sizeof(msg->message) - 1);
+            msg->timestamp = sqlite3_column_int64(stmt, 5);
+
+            index++;
+        }
+    }
+
+    *count = message_count;
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+/**
+ * @brief En son mesajları al (chat_get_messages için alias)
+ */
+int db_chat_get_latest_messages(int room_id, chat_message_t** messages, int* count, int limit) {
+    return db_select_chat_room_messages(room_id, limit, messages, count);
+}

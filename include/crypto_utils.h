@@ -44,9 +44,21 @@ int ecdh_generate_keypair(ecdh_context_t* ctx);
 int ecdh_compute_shared_secret(ecdh_context_t* ctx, const uint8_t* other_public_key);
 int ecdh_derive_aes_key(ecdh_context_t* ctx);
 void ecdh_cleanup_context(ecdh_context_t* ctx);
+uint8_t* decrypt_data_for_chat(const uint8_t* encrypted_data, size_t encrypted_len, const uint8_t* key, size_t* decrypted_len);
+crypto_result_t* encrypt_data_with_iv(const char* plaintext, const uint8_t* key, const uint8_t* iv);
+uint8_t* encrypt_data_for_chat(const char* plaintext, size_t plaintext_len, const uint8_t* key, size_t* encrypted_len);
 
 // Güvenli rastgele sayı üretimi
 int generate_secure_random(uint8_t* buffer, size_t length);
 char* decrypt_protocol_message(const char* encrypted_msg, const uint8_t* aes_key);
+
+/**
+ * @brief ENCRYPTED protokol mesajını çözer, decrypted JSON döner.
+ * @param encrypted_content Hex string (ENCRYPTED mesajdan)
+ * @param session_key AES anahtarı
+ * @param error_msg_out Hata durumunda malloc'lı hata mesajı döner, yoksa NULL olur
+ * @return Başarıda malloc'lı decrypted JSON, hata durumunda NULL
+ */
+char* decrypt_protocol_payload(const char* encrypted_content, const uint8_t* session_key, char** error_msg_out);
 
 #endif // _CRYPTO_UTILS_H_

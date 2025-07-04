@@ -31,6 +31,7 @@
 #include "get_report_list.h"
 #include "json_utils.h"
 #include "load_balancer.h"
+#include "chat_manager.h"
  
 char jwt_token[1024] = ""; // Global JWT token
 static lb_config_t lb_config; // Global load balancer config
@@ -231,7 +232,19 @@ int main() {
                 lb_print_stats(&lb_config);
                 break;
                 
-            case 11: // Cikis
+            case 11: // Chat odasi olustur
+                if (create_chat_room_interactive(conn, jwt_token) != 0) {
+                    PRINTF_CLIENT("Chat odası oluşturulamadı!\n");
+                }
+                break;
+                
+            case 12: // Chat odalarini listele ve katil
+                if (list_and_join_chat_rooms(conn, jwt_token) != 0) {
+                    PRINTF_CLIENT("Chat odalarına erişim başarısız!\n");
+                }
+                break;
+                
+            case 13: // Cikis
             {
                 LOG_CLIENT_INFO("User requested shutdown");
                 PRINTF_CLIENT("Baglanti kapatiliyor...\n");
@@ -244,7 +257,7 @@ int main() {
                 return 0;
             }
             default:
-                PRINTF_LOG("Gecersiz secim. Lutfen 1-11 arasi bir sayi girin.\n");
+                PRINTF_LOG("Gecersiz secim. Lutfen 1-13 arasi bir sayi girin.\n");
                 break;
         }
         PRINTF_LOG("\n");
@@ -287,7 +300,9 @@ void show_menu(void) {
     PRINTF_LOG("8. Reportlarıma gelen cevapları sorgula\n");
     PRINTF_LOG("9. Bir rapora gelen cevapları sorgula\n");
     PRINTF_LOG("10. Load balancer istatistikleri\n");
-    PRINTF_LOG("11. Cikis\n");
+    PRINTF_LOG("11. Chat odasi olustur\n");
+    PRINTF_LOG("12. Chat odalarini listele ve katil\n");
+    PRINTF_LOG("13. Cikis\n");
     PRINTF_LOG("================\n");
 }
 

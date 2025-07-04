@@ -84,13 +84,19 @@ int parse_protocol_message(const char* message, char** command, char** filename,
 
 // ENCRYPTED mesajı için 4 alanı ayır
 int parse_encrypted_protocol_message(const char* message, char** command, char** filename, char** hex_data, char** jwt_token) {
-    char* first_colon = strchr(message, ':');
-    if (!first_colon) return -1;
+    printf("[PROTOCOL][DEBUG] parse_encrypted_protocol_message: raw message: '%s'\n", message);
+    // Trim baştaki ve sondaki boşluk, \n, \r karakterlerini kaldır
+    size_t msglen = strlen(message);
+    while (msglen > 0 && (message[msglen-1] == '\n' || message[msglen-1] == '\r' || message[msglen-1] == ' ')) msglen--;
+    char* trimmed = strndup(message, msglen);
+    printf("[PROTOCOL][DEBUG] trimmed message: '%s'\n", trimmed);
+    char* first_colon = strchr(trimmed, ':');
+    if (!first_colon) { printf("[PROTOCOL][ERROR] 1. ':' bulunamadı\n"); free(trimmed); return -1; }
     char* second_colon = strchr(first_colon + 1, ':');
-    if (!second_colon) return -1;
+    if (!second_colon) { printf("[PROTOCOL][ERROR] 2. ':' bulunamadı\n"); free(trimmed); return -1; }
     char* third_colon = strchr(second_colon + 1, ':');
-    if (!third_colon) return -1;
-    size_t command_length = first_colon - message;
+    if (!third_colon) { printf("[PROTOCOL][ERROR] 3. ':' bulunamadı\n"); free(trimmed); return -1; }
+    size_t command_length = first_colon - trimmed;
     size_t filename_length = second_colon - first_colon - 1;
     size_t hex_length = third_colon - second_colon - 1;
     size_t jwt_length = strlen(third_colon + 1);
@@ -98,9 +104,20 @@ int parse_encrypted_protocol_message(const char* message, char** command, char**
     *filename = malloc(filename_length + 1);
     *hex_data = malloc(hex_length + 1);
     *jwt_token = malloc(jwt_length + 1);
-    strncpy(*command, message, command_length); (*command)[command_length] = '\0';
+    if (!*command || !*filename || !*hex_data || !*jwt_token) {
+        printf("[PROTOCOL][ERROR] malloc başarısız\n");
+        if (*command) free(*command);
+        if (*filename) free(*filename);
+        if (*hex_data) free(*hex_data);
+        if (*jwt_token) free(*jwt_token);
+        free(trimmed);
+        return -1;
+    }
+    strncpy(*command, trimmed, command_length); (*command)[command_length] = '\0';
     strncpy(*filename, first_colon + 1, filename_length); (*filename)[filename_length] = '\0';
     strncpy(*hex_data, second_colon + 1, hex_length); (*hex_data)[hex_length] = '\0';
     strcpy(*jwt_token, third_colon + 1);
+    printf("[PROTOCOL][DEBUG] command='%s', filename='%s', hex_data-len=%zu, jwt_token='%s'\n", *command, *filename, strlen(*hex_data), *jwt_token);
+    free(trimmed);
     return 0;
 }

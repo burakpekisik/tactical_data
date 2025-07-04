@@ -15,11 +15,13 @@
 #include <stdlib.h>
 #include <sqlite3.h>
 #include <string.h>
+#include <time.h>
 #include "database.h"
 #include "json_utils.h"
 #include "logger.h"
 #include "argon2.h"
 #include "config.h"
+#include "chat_manager.h"
 
 /**
  * @brief External global veritabanı bağlantısı
@@ -467,6 +469,101 @@ int db_insert_reply(const reply_t *reply) {
         return -1;
     } else {
         PRINTF_LOG("Reply for report ID %d inserted successfully\n", reply->report_id);
+        return sqlite3_last_insert_rowid(g_db);
+    }
+}
+
+/**
+ * @brief Chat odası ekler
+ * @details CHAT_ROOMS tablosuna yeni chat odası ekler
+ * 
+ * @param room Eklenecek oda verisi (chat_room_t struct pointer)
+ * @return int İşlem sonucu
+ * @retval >0 Başarılı ekleme, yeni record'un ID'si
+ * @retval -1 Ekleme hatası
+ */
+int db_insert_chat_room(const chat_room_t *room) {
+    char *zErrMsg = 0;
+    char sql[2048];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    if (!room) {
+        fprintf(stderr, "Invalid room parameter\n");
+        return -1;
+    }
+
+    // Room key'i hex string'e çevir
+    char room_key_hex[ROOM_KEY_SIZE * 2 + 1];
+    for (int i = 0; i < ROOM_KEY_SIZE; i++) {
+        snprintf(room_key_hex + (i * 2), 3, "%02x", room->room_key[i]);
+    }
+    room_key_hex[ROOM_KEY_SIZE * 2] = '\0';
+
+    snprintf(sql, sizeof(sql),
+        "INSERT INTO chat_rooms (room_name, creator_id, room_type, max_users, "
+        "current_users, allowed_user_ids, room_key, created_at, is_active) "
+        "VALUES ('%s', '%s', %d, %d, %d, '%s', '%s', %ld, %d);",
+        room->room_name, room->creator_id, room->room_type, 
+        room->max_users, room->current_users, 
+        room->allowed_user_ids,
+        room_key_hex, room->created_at, room->is_active ? 1 : 0);
+
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error inserting chat room: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else {
+        PRINTF_LOG("Chat room '%s' inserted successfully\n", room->room_name);
+        return sqlite3_last_insert_rowid(g_db);
+    }
+}
+
+/**
+ * @brief Chat mesajı ekler
+ * @details CHAT_MESSAGES tablosuna yeni mesaj ekler
+ * 
+ * @param message Eklenecek mesaj verisi (chat_message_t struct pointer)
+ * @return int İşlem sonucu
+ * @retval >0 Başarılı ekleme, yeni record'un ID'si
+ * @retval -1 Ekleme hatası
+ */
+int db_insert_chat_message(int room_id, const char* sender_id, const char* sender_name, const char* content, 
+                          const char* encrypted_content) {
+    char *zErrMsg = 0;
+    char sql[2048];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    if (!sender_id || !content) {
+        fprintf(stderr, "Invalid message parameters\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql),
+        "INSERT INTO chat_messages (room_id, sender_id, sender_name, message, encrypted_content, timestamp) "
+        "VALUES (%d, '%s', '%s', '%s', '%s', %ld);",
+        room_id, sender_id, sender_name, content, 
+        encrypted_content ? encrypted_content : "", time(NULL));
+
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error inserting chat message: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else {
+        PRINTF_LOG("Chat message inserted successfully to room %d\n", room_id);
         return sqlite3_last_insert_rowid(g_db);
     }
 }

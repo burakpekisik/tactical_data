@@ -15,6 +15,7 @@
 #include <sqlite3.h>
 #include "database.h"
 #include "logger.h"
+#include "config.h"
 
 /**
  * @brief Global veritabanı bağlantısı
@@ -51,6 +52,20 @@ int db_init(const char *db_path) {
         PRINTF_LOG("Database opened successfully: %s\n", db_path);
         return 0;
     }
+}
+
+// Tekrarlayan SQL çalıştırma ve loglama işlemi için yardımcı fonksiyon
+int exec_sql_with_log(const char* sql, const char* success_log, const char* error_log) {
+    char *zErrMsg = 0;
+    int rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "%s: %s\n", error_log, zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else if (success_log) {
+        PRINTF_LOG("%s\n", success_log);
+    }
+    return 0;
 }
 
 /**
@@ -101,111 +116,98 @@ int db_init(const char *db_path) {
  * @see db_init(), db_close()
  */
 int db_create_tables(void) {
-    char *zErrMsg = 0;
-    int rc;
-    char *sql;
-
     if (!g_db) {
         fprintf(stderr, "Database not initialized\n");
         return -1;
     }
 
-    // Create UNITS table
-    sql = "CREATE TABLE IF NOT EXISTS UNITS("
-          "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
-          "UNIT_ID TEXT NOT NULL UNIQUE,"
-          "UNIT_NAME TEXT NOT NULL,"
-          "UNIT_TYPE TEXT NOT NULL,"
-          "LOCATION TEXT,"
-          "ACTIVE INTEGER DEFAULT 1,"
-          "CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP"
-          ");";
+    if (exec_sql_with_log(
+        "CREATE TABLE IF NOT EXISTS UNITS("
+        "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "UNIT_ID TEXT NOT NULL UNIQUE,"
+        "UNIT_NAME TEXT NOT NULL,"
+        "UNIT_TYPE TEXT NOT NULL,"
+        "LOCATION TEXT,"
+        "ACTIVE INTEGER DEFAULT 1,"
+        "CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP"
+        ");",
+        "UNITS table created successfully",
+        "SQL error creating UNITS table") != 0) return -1;
 
-    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
-    
-    if(rc != SQLITE_OK) {
-        fprintf(stderr, "SQL error creating UNITS table: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-        return -1;
-    } else {
-        PRINTF_LOG("UNITS table created successfully\n");
-    }
+    if (exec_sql_with_log(
+        "CREATE TABLE IF NOT EXISTS USERS(" 
+        "ID INTEGER PRIMARY KEY AUTOINCREMENT," 
+        "UNIT_ID INTEGER," 
+        "USERNAME TEXT NOT NULL UNIQUE," 
+        "NAME TEXT NOT NULL," 
+        "SURNAME TEXT NOT NULL," 
+        "PASSWORD TEXT NOT NULL," 
+        "SALT TEXT NOT NULL," 
+        "PRIVILEGE INTEGER NOT NULL," 
+        "CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP," 
+        "FOREIGN KEY (UNIT_ID) REFERENCES UNITS(ID) ON DELETE SET NULL" 
+        ");",
+        "USERS table created successfully",
+        "SQL error creating USERS table") != 0) return -1;
 
-    // Create USERS table
-    sql = "CREATE TABLE IF NOT EXISTS USERS(" 
-          "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
-          "UNIT_ID INTEGER,"
-          "USERNAME TEXT NOT NULL UNIQUE,"
-          "NAME TEXT NOT NULL,"
-          "SURNAME TEXT NOT NULL,"
-          "PASSWORD TEXT NOT NULL,"
-          "SALT TEXT NOT NULL,"
-          "PRIVILEGE INTEGER NOT NULL,"
-          "CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,"
-          "FOREIGN KEY (UNIT_ID) REFERENCES UNITS(ID) ON DELETE SET NULL"
-          ");";
+    if (exec_sql_with_log(
+        "CREATE TABLE IF NOT EXISTS REPORTS(" 
+        "ID INTEGER PRIMARY KEY AUTOINCREMENT," 
+        "USER_ID INTEGER NOT NULL," 
+        "STATUS TEXT NOT NULL," 
+        "LATITUDE REAL NOT NULL," 
+        "LONGITUDE REAL NOT NULL," 
+        "DESCRIPTION TEXT," 
+        "TIMESTAMP INTEGER NOT NULL," 
+        "CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP," 
+        "FOREIGN KEY (USER_ID) REFERENCES USERS(ID) ON DELETE CASCADE" 
+        ");",
+        "REPORTS table created successfully",
+        "SQL error creating REPORTS table") != 0) return -1;
 
-    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
-    if(rc != SQLITE_OK) {
-        fprintf(stderr, "SQL error creating USERS table: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-        return -1;
-    } else {
-        PRINTF_LOG("USERS table created successfully\n");
-    }
+    if (exec_sql_with_log(
+        "CREATE TABLE IF NOT EXISTS chat_rooms ("
+        "room_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "room_name TEXT NOT NULL,"
+        "creator_id TEXT NOT NULL,"
+        "room_type INTEGER NOT NULL,"
+        "max_users INTEGER NOT NULL DEFAULT 10,"
+        "current_users INTEGER NOT NULL DEFAULT 0,"
+        "allowed_user_ids TEXT,"
+        "room_key BLOB NOT NULL,"
+        "created_at INTEGER NOT NULL,"
+        "is_active INTEGER NOT NULL DEFAULT 1"
+        ");",
+        "ROOMS table created successfully",
+        "SQL error creating ROOMS table") != 0) return -1;
 
-    // Create REPORTS table with USER_ID foreign key
-    sql = "CREATE TABLE IF NOT EXISTS REPORTS(" 
-          "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
-          "USER_ID INTEGER NOT NULL,"
-          "STATUS TEXT NOT NULL,"
-          "LATITUDE REAL NOT NULL,"
-          "LONGITUDE REAL NOT NULL,"
-          "DESCRIPTION TEXT,"
-          "TIMESTAMP INTEGER NOT NULL,"
-          "CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,"
-          "FOREIGN KEY (USER_ID) REFERENCES USERS(ID) ON DELETE CASCADE"
-          ");";
+    if (exec_sql_with_log(
+        "CREATE TABLE IF NOT EXISTS chat_messages ("
+        "message_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "room_id INTEGER NOT NULL,"
+        "sender_id TEXT NOT NULL,"
+        "sender_name TEXT NOT NULL,"
+        "message TEXT NOT NULL," // Şifreli mesaj
+        "timestamp INTEGER NOT NULL,"
+        "FOREIGN KEY (room_id) REFERENCES chat_rooms(room_id) ON DELETE CASCADE"
+        ");",
+        "MESSAGES table created successfully",
+        "SQL error creating MESSAGES table") != 0) return -1;
 
-    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
-    if(rc != SQLITE_OK) {
-        fprintf(stderr, "SQL error creating REPORTS table: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-        return -1;
-    } else {
-        PRINTF_LOG("REPORTS table created successfully\n");
-    }
+    if (exec_sql_with_log(
+        "PRAGMA foreign_keys = ON;",
+        NULL,
+        "SQL error enabling foreign keys") != 0) return -1;
 
-    // Create REPLIES table with USER_ID and REPORT_ID foreign key
-    sql = "CREATE TABLE IF NOT EXISTS REPLIES(" 
-          "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
-          "USER_ID INTEGER NOT NULL,"
-          "REPORT_ID INTEGER NOT NULL,"
-          "MESSAGE TEXT,"
-          "TIMESTAMP INTEGER NOT NULL,"
-          "CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,"
-          "FOREIGN KEY (USER_ID) REFERENCES USERS(ID) ON DELETE CASCADE,"
-          "FOREIGN KEY (REPORT_ID) REFERENCES REPORTS(ID) ON DELETE CASCADE"
-          ");";
+    if (exec_sql_with_log(
+        "CREATE INDEX IF NOT EXISTS idx_chat_rooms_creator ON chat_rooms(creator_id);",
+        "ROOM INDEX for chat_rooms table created successfully",
+        "SQL error creating ROOM INDEX for chat_rooms") != 0) return -1;
 
-    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
-    if(rc != SQLITE_OK) {
-        fprintf(stderr, "SQL error creating REPLIES table: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-        return -1;
-    } else {
-        PRINTF_LOG("REPLIES table created successfully\n");
-    }
-
-    // Enable foreign key constraints
-    sql = "PRAGMA foreign_keys = ON;";
-    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
-    
-    if(rc != SQLITE_OK) {
-        fprintf(stderr, "SQL error enabling foreign keys: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-        return -1;
-    }
+    if (exec_sql_with_log(
+        "CREATE INDEX IF NOT EXISTS idx_chat_messages_room ON chat_messages(room_id, timestamp);",
+        "MESSAGE INDEX for chat_messages table created successfully",
+        "SQL error creating MESSAGE INDEX for chat_messages") != 0) return -1;
 
     return 0;
 }

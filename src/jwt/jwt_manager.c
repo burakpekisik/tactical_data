@@ -54,3 +54,21 @@ int get_jwt_privilege(const char *token) {
     jwt_free(jwt);
     return privilege; // Return the privilege level
 }
+
+char * get_user_id_and_name(const char * token) {
+    jwt_t *jwt;
+    if (jwt_decode(&jwt, token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) != 0) {
+        fprintf(stderr, "JWT decode error\n");
+        return NULL; // JWT verification failed
+    }
+    const char *user_id = jwt_get_grant(jwt, "sub");
+    const char *name = jwt_get_grant(jwt, "name");
+    if (!user_id || !name) {
+        jwt_free(jwt);
+        return NULL; // User ID or name not found
+    }
+    char *result = malloc(strlen(user_id) + strlen(name) + 2);
+    sprintf(result, "%s %s", user_id, name);
+    jwt_free(jwt);
+    return result; // Return user ID and name
+}

@@ -276,3 +276,243 @@ int db_get_unit_by_id(int id, unit_t *unit) {
  * 
  * @see report_t, db_update_report(), db_get_unit_by_id()
  */
+
+/**
+ * @brief CHAT_ROOMS tablosunda belirli ID'ye sahip odayı günceller
+ * @details Verilen ID'ye sahip chat odası kaydının belirli alanlarını günceller.
+ *          CREATED_AT alanı korunur, diğer alanlar güncellenebilir.
+ * 
+ * Güncellenebilen Alanlar:
+ * - ROOM_NAME (string)
+ * - ROOM_TYPE (integer)
+ * - DESCRIPTION (string, nullable)
+ * - CURRENT_USERS (integer)
+ * - ALLOWED_USER_IDS (string, CSV format)
+ * - IS_ACTIVE (integer boolean)
+ * 
+ * @param room_id Güncellenecek chat odasının ID'si
+ * @param room_name Yeni oda adı
+ * @param room_type Yeni oda tipi (0=everyone, 1=admin_only, 2=specific_users)
+ * @param description Yeni açıklama (NULL olabilir)
+ * @param current_users Mevcut kullanıcı sayısı
+ * @param allowed_user_ids İzinli kullanıcı listesi (CSV format)
+ * @param is_active Aktiflik durumu (0 veya 1)
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı güncelleme
+ * @retval -1 Güncelleme hatası (database not initialized, SQL error, ID not found)
+ * 
+ * @note sqlite3_changes() ile etkilenen kayıt sayısı kontrol edilir
+ * @warning String alanlarında SQL injection koruması yok
+ * @warning room_id geçerli bir chat room ID'si olmalıdır
+ * 
+ * @see db_insert_chat_room(), db_select_chat_room_by_id()
+ */
+int db_update_chat_room(int room_id, const char* room_name, int room_type, 
+                       const char* description, int current_users, 
+                       const char* allowed_user_ids, int is_active) {
+    char *zErrMsg = 0;
+    char sql[2048];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    if (!room_name || !allowed_user_ids) {
+        fprintf(stderr, "Required parameters cannot be NULL\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql),
+        "UPDATE chat_rooms SET room_name='%s', room_type=%d, description='%s', "
+        "current_users=%d, allowed_user_ids='%s', is_active=%d WHERE room_id=%d;",
+        room_name, room_type, description ? description : "",
+        current_users, allowed_user_ids, is_active, room_id);
+
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error updating chat room: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else {
+        int changes = sqlite3_changes(g_db);
+        if (changes > 0) {
+            PRINTF_LOG("Chat room ID %d updated successfully\n", room_id);
+            return 0;
+        } else {
+            PRINTF_LOG("No chat room found with ID %d\n", room_id);
+            return -1;
+        }
+    }
+}
+
+/**
+ * @brief Chat odasının kullanıcı sayısını günceller
+ * @details Verilen chat odası ID'sine sahip odanın mevcut kullanıcı sayısını günceller.
+ *          Bu fonksiyon kullanıcı katılım/ayrılma işlemlerinde kullanılır.
+ * 
+ * @param room_id Güncellenecek chat odasının ID'si
+ * @param current_users Yeni kullanıcı sayısı
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı güncelleme
+ * @retval -1 Güncelleme hatası (database not initialized, SQL error, ID not found)
+ * 
+ * @note Bu fonksiyon sadece current_users alanını günceller
+ * @note sqlite3_changes() ile etkilenen kayıt sayısı kontrol edilir
+ * @warning room_id geçerli bir chat room ID'si olmalıdır
+ * @warning current_users negatif olamaz
+ * 
+ * @see db_update_chat_room(), db_select_chat_room_by_id()
+ */
+int db_update_chat_room_users(int room_id, int current_users) {
+    char *zErrMsg = 0;
+    char sql[256];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    if (current_users < 0) {
+        fprintf(stderr, "Current users cannot be negative\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql),
+        "UPDATE chat_rooms SET current_users=%d WHERE room_id=%d;",
+        current_users, room_id);
+
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error updating chat room users: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else {
+        int changes = sqlite3_changes(g_db);
+        if (changes > 0) {
+            PRINTF_LOG("Chat room ID %d user count updated to %d\n", room_id, current_users);
+            return 0;
+        } else {
+            PRINTF_LOG("No chat room found with ID %d\n", room_id);
+            return -1;
+        }
+    }
+}
+
+/**
+ * @brief Chat odasının aktiflik durumunu günceller
+ * @details Verilen chat odası ID'sine sahip odanın aktiflik durumunu günceller.
+ *          Bu fonksiyon oda devre dışı bırakma (soft delete) için kullanılır.
+ * 
+ * @param room_id Güncellenecek chat odasının ID'si
+ * @param is_active Yeni aktiflik durumu (0=inactive, 1=active)
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı güncelleme
+ * @retval -1 Güncelleme hatası (database not initialized, SQL error, ID not found)
+ * 
+ * @note Bu fonksiyon sadece is_active alanını günceller
+ * @note Soft delete için is_active=0 kullanılır
+ * @note sqlite3_changes() ile etkilenen kayıt sayısı kontrol edilir
+ * @warning room_id geçerli bir chat room ID'si olmalıdır
+ * @warning is_active 0 veya 1 olmalıdır
+ * 
+ * @see db_delete_chat_room(), db_update_chat_room()
+ */
+int db_update_chat_room_status(int room_id, int is_active) {
+    char *zErrMsg = 0;
+    char sql[256];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    if (is_active != 0 && is_active != 1) {
+        fprintf(stderr, "is_active must be 0 or 1\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql),
+        "UPDATE chat_rooms SET is_active=%d WHERE room_id=%d;",
+        is_active, room_id);
+
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error updating chat room status: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else {
+        int changes = sqlite3_changes(g_db);
+        if (changes > 0) {
+            PRINTF_LOG("Chat room ID %d status updated to %s\n", 
+                      room_id, is_active ? "active" : "inactive");
+            return 0;
+        } else {
+            PRINTF_LOG("No chat room found with ID %d\n", room_id);
+            return -1;
+        }
+    }
+}
+
+/**
+ * @brief CHAT_MESSAGES tablosunda mesaj günceller (teorik - normalde gerekmiyor)
+ * @details Chat mesajları genellikle güncellenmez ancak özel durumlar için
+ *          (moderasyon, düzenleme) bu fonksiyon kullanılabilir.
+ * 
+ * @param message_id Güncellenecek mesajın ID'si
+ * @param content Yeni mesaj içeriği
+ * @param is_edited Düzenlenme durumu (0 veya 1)
+ * @return int İşlem sonucu
+ * @retval 0 Başarılı güncelleme
+ * @retval -1 Güncelleme hatası (database not initialized, SQL error, ID not found)
+ * 
+ * @note Chat mesajları normalde güncellenmez
+ * @note Bu fonksiyon moderasyon veya düzenleme için kullanılabilir
+ * @note sqlite3_changes() ile etkilenen kayıt sayısı kontrol edilir
+ * @warning message_id geçerli bir chat message ID'si olmalıdır
+ * @warning content NULL olamaz
+ * 
+ * @see db_insert_chat_message(), db_delete_chat_message()
+ */
+int db_update_chat_message(int message_id, const char* content, int is_edited) {
+    char *zErrMsg = 0;
+    char sql[1024];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    if (!content) {
+        fprintf(stderr, "Message content cannot be NULL\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql),
+        "UPDATE chat_messages SET content='%s', is_edited=%d WHERE message_id=%d;",
+        content, is_edited, message_id);
+
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error updating chat message: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else {
+        int changes = sqlite3_changes(g_db);
+        if (changes > 0) {
+            PRINTF_LOG("Chat message ID %d updated successfully\n", message_id);
+            return 0;
+        } else {
+            PRINTF_LOG("No chat message found with ID %d\n", message_id);
+            return -1;
+        }
+    }
+}

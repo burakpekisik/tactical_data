@@ -162,7 +162,11 @@ static server_selection_result_t select_round_robin(lb_config_t *config) {
             result.server = server;
             result.server_index = index;
             result.is_failover = false;
-            snprintf(result.reason, sizeof(result.reason), "Round robin selection (PID: %d)", getpid());
+            int n = snprintf(result.reason, sizeof(result.reason), "Round robin selection (PID: %d)", getpid());
+            if (n < 0 || n >= (int)sizeof(result.reason)) {
+                strncpy(result.reason + sizeof(result.reason) - 5, "...", 4);
+                result.reason[sizeof(result.reason) - 1] = '\0';
+            }
             return result;
         }
         
@@ -206,8 +210,11 @@ static server_selection_result_t select_least_conn(lb_config_t *config) {
         result.server = best_server;
         result.server_index = best_index;
         result.is_failover = false;
-        snprintf(result.reason, sizeof(result.reason), 
-                "Least connections: %lu", min_connections);
+        int n = snprintf(result.reason, sizeof(result.reason), "Least connections: %lu", min_connections);
+        if (n < 0 || n >= (int)sizeof(result.reason)) {
+            strncpy(result.reason + sizeof(result.reason) - 5, "...", 4);
+            result.reason[sizeof(result.reason) - 1] = '\0';
+        }
         return result;
     }
     
@@ -259,9 +266,11 @@ static server_selection_result_t select_weighted_round_robin(lb_config_t *config
         result.server = &config->servers[best_index];
         result.server_index = best_index;
         result.is_failover = false;
-        snprintf(result.reason, sizeof(result.reason), 
-                "Weighted round robin (weight: %d)", 
-                config->servers[best_index].weight);
+        int n = snprintf(result.reason, sizeof(result.reason), "Weighted round robin (weight: %d)", config->servers[best_index].weight);
+        if (n < 0 || n >= (int)sizeof(result.reason)) {
+            strncpy(result.reason + sizeof(result.reason) - 5, "...", 4);
+            result.reason[sizeof(result.reason) - 1] = '\0';
+        }
         return result;
     }
     
@@ -332,8 +341,11 @@ static server_selection_result_t select_least_response_time(lb_config_t *config)
         result.server = best_server;
         result.server_index = best_index;
         result.is_failover = false;
-        snprintf(result.reason, sizeof(result.reason), 
-                "Least response time: %.2f ms", min_response_time);
+        int n = snprintf(result.reason, sizeof(result.reason), "Least response time: %.2f ms", min_response_time);
+        if (n < 0 || n >= (int)sizeof(result.reason)) {
+            strncpy(result.reason + sizeof(result.reason) - 5, "...", 4);
+            result.reason[sizeof(result.reason) - 1] = '\0';
+        }
         return result;
     }
     
@@ -400,9 +412,11 @@ server_selection_result_t lb_select_server(lb_config_t *config, const char *clie
             result.server = assigned_server;
             result.server_index = config->assigned_server_index;
             result.is_failover = false;
-            snprintf(result.reason, sizeof(result.reason), 
-                    "Sticky session to server %d (%s:%d)", 
-                    config->assigned_server_index, assigned_server->host, assigned_server->tcp_port);
+            int n = snprintf(result.reason, sizeof(result.reason), "Sticky session to server %d (%s:%d)", config->assigned_server_index, assigned_server->host, assigned_server->tcp_port);
+            if (n < 0 || n >= (int)sizeof(result.reason)) {
+                strncpy(result.reason + sizeof(result.reason) - 5, "...", 4);
+                result.reason[sizeof(result.reason) - 1] = '\0';
+            }
             
             LOG_CLIENT_INFO("Using sticky session: server %d (%s:%d)", 
                            config->assigned_server_index, assigned_server->host, assigned_server->tcp_port);

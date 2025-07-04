@@ -656,37 +656,264 @@ void ecdh_cleanup_context(ecdh_context_t* ctx) {
  */
 char* decrypt_protocol_message(const char* encrypted_msg, const uint8_t* aes_key) {
     if (!encrypted_msg || !aes_key) return NULL;
-    size_t msg_len = strlen(encrypted_msg);
-    if (msg_len < 32) return NULL; // IV yok
-    char iv_hex[33] = {0};
-    strncpy(iv_hex, encrypted_msg, 32);
-    size_t ciphertext_hex_len = msg_len - 32;
-    const char* ciphertext_hex = encrypted_msg + 32;
-    // IV'yi binary'ye çevir
-    size_t iv_bin_len = 0;
-    uint8_t* iv_bin = hex_to_bytes(iv_hex, &iv_bin_len);
-    printf("[CLIENT][decrypt_protocol_message] IV hex: %s\n", iv_hex);
-    printf("[CLIENT][decrypt_protocol_message] IV bin len: %zu\n", iv_bin_len);
-    printf("[CLIENT][decrypt_protocol_message] Ciphertext hex len: %zu\n", ciphertext_hex_len);
-    // Ciphertext'i binary'ye çevir
-    size_t ciphertext_bin_len = 0;
-    uint8_t* ciphertext_bin = hex_to_bytes(ciphertext_hex, &ciphertext_bin_len);
-    printf("[CLIENT][decrypt_protocol_message] Ciphertext bin len: %zu\n", ciphertext_bin_len);
-    if (!iv_bin || iv_bin_len != 16) {
-        if (iv_bin) free(iv_bin);
-        printf("[CLIENT][decrypt_protocol_message] IV decode hatası!\n");
-        return NULL;
+
+    // ENCRYPTED ile başlamıyorsa, düz hata veya bilgi mesajı olabilir
+    if (strncmp(encrypted_msg, "ENCRYPTED:", 10) != 0) {
+        return strdup(encrypted_msg);
     }
-    if (!ciphertext_bin || ciphertext_bin_len == 0) {
+
+    // ENCRYPTED:action:hexdata[:jwt_token] veya ENCRYPTED:hexdata gibi farklı formatları destekle
+    // 1. ENCRYPTED:action:hexdata:jwt_token
+    // 2. ENCRYPTED:action:hexdata
+    // 3. ENCRYPTED:hexdata
+
+    const char* after_prefix = encrypted_msg + 10;
+    const char* p1 = strchr(after_prefix, ':');
+    if (p1) {
+        // ENCRYPTED:action:hexdata[:jwt_token] veya ENCRYPTED:action:hexdata
+        const char* p2 = strchr(p1 + 1, ':');
+        if (p2) {
+            // ENCRYPTED:action:hexdata:jwt_token
+            // p1+1'den p2'ye kadar hexdata
+            size_t hexdata_len = p2 - (p1 + 1);
+            char* hexdata = malloc(hexdata_len + 1);
+            if (!hexdata) return NULL;
+            memcpy(hexdata, p1 + 1, hexdata_len);
+            hexdata[hexdata_len] = '\0';
+            // ENCRYPTED:dummy:hexdata formatına çevirip recursive çöz
+            size_t newmsg_len = 10 + 6 + 1 + hexdata_len + 1; // ENCRYPTED:rooms:%s\0
+            char* newmsg = malloc(newmsg_len);
+            if (!newmsg) {
+                free(hexdata);
+                return NULL;
+            }
+            snprintf(newmsg, newmsg_len, "ENCRYPTED:rooms:%s", hexdata);
+            char* result = decrypt_protocol_message(newmsg, aes_key);
+            free(newmsg);
+            free(hexdata);
+            return result;
+        } else {
+            // ENCRYPTED:action:hexdata
+            // p1+1 -> hexdata
+            const char* hexdata = p1 + 1;
+            size_t hexdata_len = strlen(hexdata);
+            if (hexdata_len < 32) return NULL;
+            char iv_hex[33] = {0};
+            strncpy(iv_hex, hexdata, 32);
+            // size_t ciphertext_hex_len = hexdata_len - 32;
+            const char* ciphertext_hex = hexdata + 32;
+            size_t iv_bin_len = 0;
+            uint8_t* iv_bin = hex_to_bytes(iv_hex, &iv_bin_len);
+            size_t ciphertext_bin_len = 0;
+            uint8_t* ciphertext_bin = hex_to_bytes(ciphertext_hex, &ciphertext_bin_len);
+            if (!iv_bin || iv_bin_len != 16) {
+                if (iv_bin) free(iv_bin);
+                if (ciphertext_bin) free(ciphertext_bin);
+                return NULL;
+            }
+            if (!ciphertext_bin || ciphertext_bin_len == 0) {
+                free(iv_bin);
+                if (ciphertext_bin) free(ciphertext_bin);
+                return NULL;
+            }
+            char* plaintext = decrypt_data(ciphertext_bin, ciphertext_bin_len, aes_key, iv_bin);
+            free(iv_bin);
+            free(ciphertext_bin);
+            return plaintext;
+        }
+    } else {
+        // ENCRYPTED:hexdata
+        const char* hexdata = after_prefix;
+        size_t hexdata_len = strlen(hexdata);
+        if (hexdata_len < 32) return NULL;
+        char iv_hex[33] = {0};
+        strncpy(iv_hex, hexdata, 32);
+        // size_t ciphertext_hex_len = hexdata_len - 32;
+        const char* ciphertext_hex = hexdata + 32;
+        size_t iv_bin_len = 0;
+        uint8_t* iv_bin = hex_to_bytes(iv_hex, &iv_bin_len);
+        size_t ciphertext_bin_len = 0;
+        uint8_t* ciphertext_bin = hex_to_bytes(ciphertext_hex, &ciphertext_bin_len);
+        if (!iv_bin || iv_bin_len != 16) {
+            if (iv_bin) free(iv_bin);
+            if (ciphertext_bin) free(ciphertext_bin);
+            return NULL;
+        }
+        if (!ciphertext_bin || ciphertext_bin_len == 0) {
+            free(iv_bin);
+            if (ciphertext_bin) free(ciphertext_bin);
+            return NULL;
+        }
+        char* plaintext = decrypt_data(ciphertext_bin, ciphertext_bin_len, aes_key, iv_bin);
         free(iv_bin);
-        if (ciphertext_bin) free(ciphertext_bin);
-        printf("[CLIENT][decrypt_protocol_message] Ciphertext decode hatası!\n");
+        free(ciphertext_bin);
+        return plaintext;
+    }
+}
+
+/**
+ * @brief ENCRYPTED protokol mesajını çözer, decrypted JSON döner.
+ * @param encrypted_content Hex string (ENCRYPTED mesajdan)
+ * @param session_key AES anahtarı
+ * @param error_msg_out Hata durumunda malloc'lı hata mesajı döner, yoksa NULL olur
+ * @return Başarıda malloc'lı decrypted JSON, hata durumunda NULL
+ */
+char* decrypt_protocol_payload(const char* encrypted_content, const uint8_t* session_key, char** error_msg_out) {
+    if (error_msg_out) *error_msg_out = NULL;
+    if (session_key == NULL) {
+        if (error_msg_out) {
+            *error_msg_out = malloc(256);
+            strcpy(*error_msg_out, "HATA: Session key NULL");
+        }
         return NULL;
     }
-    // Çöz
-    char* plaintext = decrypt_data(ciphertext_bin, ciphertext_bin_len, aes_key, iv_bin);
-    if (!plaintext) printf("[CLIENT][decrypt_protocol_message] decrypt_data NULL döndü!\n");
-    free(iv_bin);
-    free(ciphertext_bin);
-    return plaintext;
+    size_t encrypted_length;
+    uint8_t* encrypted_bytes = hex_to_bytes(encrypted_content, &encrypted_length);
+    if (encrypted_bytes == NULL) {
+        if (error_msg_out) {
+            *error_msg_out = malloc(256);
+            strcpy(*error_msg_out, "HATA: Gecersiz hex format");
+        }
+        return NULL;
+    }
+    if (encrypted_length < CRYPTO_IV_SIZE) {
+        free(encrypted_bytes);
+        if (error_msg_out) {
+            *error_msg_out = malloc(256);
+            strcpy(*error_msg_out, "HATA: Yetersiz veri boyutu (IV eksik)");
+        }
+        return NULL;
+    }
+    uint8_t iv[CRYPTO_IV_SIZE];
+    memcpy(iv, encrypted_bytes, CRYPTO_IV_SIZE);
+    char* decrypted_json = decrypt_data(
+        encrypted_bytes + CRYPTO_IV_SIZE,
+        encrypted_length - CRYPTO_IV_SIZE,
+        session_key,
+        iv
+    );
+    free(encrypted_bytes);
+    if (decrypted_json == NULL) {
+        if (error_msg_out) {
+            *error_msg_out = malloc(256);
+            strcpy(*error_msg_out, "HATA: Decryption basarisiz");
+        }
+        return NULL;
+    }
+    return decrypted_json;
+}
+
+/**
+ * @brief Chat mesajları için basit şifreleme wrapper'ı
+ * @details Mevcut encrypt_data fonksiyonunu kullanarak basit bir wrapper sağlar
+ */
+uint8_t* encrypt_data_for_chat(const char* plaintext, size_t /*plaintext_len*/, const uint8_t* key, size_t* encrypted_len) {
+    if (!plaintext || !key || !encrypted_len) {
+        return NULL;
+    }
+    
+    // IV oluştur
+    uint8_t iv[CRYPTO_IV_SIZE];
+    generate_random_iv(iv);
+    
+    // Mevcut encrypt_data fonksiyonunu kullan
+    crypto_result_t* result = encrypt_data_with_iv(plaintext, key, iv);
+    if (!result || !result->success) {
+        if (result) free_crypto_result(result);
+        return NULL;
+    }
+    
+    // IV + encrypted data birleştir
+    *encrypted_len = CRYPTO_IV_SIZE + result->length;
+    uint8_t* final_data = malloc(*encrypted_len);
+    if (!final_data) {
+        free_crypto_result(result);
+        return NULL;
+    }
+    
+    memcpy(final_data, iv, CRYPTO_IV_SIZE);
+    memcpy(final_data + CRYPTO_IV_SIZE, result->data, result->length);
+    
+    free_crypto_result(result);
+    return final_data;
+}
+
+/**
+ * @brief Chat mesajları için basit şifre çözme wrapper'ı
+ * @details IV + encrypted data formatını parse eder ve çözer
+ */
+uint8_t* decrypt_data_for_chat(const uint8_t* encrypted_data, size_t encrypted_len, const uint8_t* key, size_t* decrypted_len) {
+    if (!encrypted_data || encrypted_len <= CRYPTO_IV_SIZE || !key || !decrypted_len) {
+        return NULL;
+    }
+    
+    // IV'yi ayıkla
+    const uint8_t* iv = encrypted_data;
+    const uint8_t* ciphertext = encrypted_data + CRYPTO_IV_SIZE;
+    size_t ciphertext_len = encrypted_len - CRYPTO_IV_SIZE;
+    
+    // Mevcut decrypt_data fonksiyonunu kullan
+    char* plaintext = decrypt_data(ciphertext, ciphertext_len, key, iv);
+    if (!plaintext) {
+        return NULL;
+    }
+    
+    *decrypted_len = strlen(plaintext);
+    uint8_t* result = malloc(*decrypted_len);
+    if (!result) {
+        free(plaintext);
+        return NULL;
+    }
+    
+    memcpy(result, plaintext, *decrypted_len);
+    free(plaintext);
+    return result;
+}
+
+/**
+ * @brief Orijinal encrypt_data fonksiyonunu yeniden adlandır
+ */
+crypto_result_t* encrypt_data_with_iv(const char* plaintext, const uint8_t* key, const uint8_t* iv) {
+    crypto_result_t* result = malloc(sizeof(crypto_result_t));
+    if (result == NULL) {
+        return NULL;
+    }
+    
+    result->data = NULL;
+    result->length = 0;
+    result->success = 0;
+    
+    size_t input_length = strlen(plaintext);
+    size_t padded_length = calculate_padded_length(input_length);
+    
+    // Padded data için bellek tahsis et
+    uint8_t* padded_data = malloc(padded_length);
+    if (padded_data == NULL) {
+        free(result);
+        return NULL;
+    }
+    
+    // Veriyi kopyala ve padding uygula
+    memcpy(padded_data, plaintext, input_length);
+    apply_pkcs7_padding(padded_data, input_length, padded_length);
+    
+    // AES context oluştur
+    struct AES_ctx ctx;
+    if (key == NULL) {
+        fprintf(stderr, "Error: AES anahtarı NULL - ECDH ile anahtar üretilmeli\n");
+        free(padded_data);
+        free(result);
+        return NULL;
+    }
+    
+    AES_init_ctx_iv(&ctx, key, iv);
+    
+    // CBC modunda şifrele
+    AES_CBC_encrypt_buffer(&ctx, padded_data, padded_length);
+    
+    result->data = padded_data;
+    result->length = padded_length;
+    result->success = 1;
+    
+    return result;
 }

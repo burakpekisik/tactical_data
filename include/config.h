@@ -55,5 +55,9 @@
 #define ENCRYPTED_PART_SIZE 4096
 #define MAX_REPORT_REPLIES 100
 
+// Chat odası konfigürasyonu
+#define MAX_ROOM_PARTICIPANTS 64
+#define MAX_CHAT_ROOMS 128
+
 
 #endif // _CONFIG_H_
