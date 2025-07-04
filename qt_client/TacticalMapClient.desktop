@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Tactical Data System
+Comment=Harita Arayüzü Sistemi - Taktik Veri Gönderim Sistemi
+Exec=/home/aliburakpekisik/Belgeler/Projeler/Staj/send_tactical_data/qt_client/build/TacticalMapClient
+Icon=/home/aliburakpekisik/Belgeler/Projeler/Staj/send_tactical_data/qt_client/ONUR_blue.png
+Terminal=false
+Categories=Application;Network;Development;
+StartupNotify=true
+StartupWMClass=TacticalMapClient

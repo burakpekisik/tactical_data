@@ -9,6 +9,7 @@
 #include "crypto_utils.h"
 #include "config.h"
 #include "connection_manager.h"
+#include "load_balancer.h"
 
 typedef struct {
     int socket;
@@ -42,6 +43,11 @@ ssize_t recv_full(int sock, char* buf, size_t maxlen);
 int send_json_file(client_connection_t* conn, const char* filename, int encrypt, const char* jwt_token);
 void query_my_replies(client_connection_t* conn, const char* jwt_token);
 void query_replies_to_one_report(client_connection_t* conn, const char* jwt_token);
+
+// Load balancer functions
+client_connection_t* connect_to_server_with_lb(lb_config_t *lb_config);
+char* client_login_to_server_with_lb(lb_config_t *lb_config, const char* username, const char* password);
+void close_connection(client_connection_t* conn);
 
 
 #endif /* ENCRYPTED_CLIENT_H */

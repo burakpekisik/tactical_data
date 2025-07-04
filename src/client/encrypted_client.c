@@ -19,6 +19,8 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <errno.h>
 #include "crypto_utils.h"
 #include "config.h"
 #include "encrypted_client.h"
@@ -28,8 +30,10 @@
 #include "login_user.h"
 #include "get_report_list.h"
 #include "json_utils.h"
+#include "load_balancer.h"
  
 char jwt_token[1024] = ""; // Global JWT token
+static lb_config_t lb_config; // Global load balancer config
 
 static struct report_reply_entry report_replies[MAX_REPORT_REPLIES];
 static int report_reply_count = 0;
@@ -63,6 +67,65 @@ int main() {
         return -1;
     }
 
+    // Load balancer'ı başlat
+    if (lb_init(&lb_config) != 0) {
+        fprintf(stderr, "Load balancer başlatılamadı!\n");
+        logger_cleanup(LOGGER_CLIENT);
+        return -1;
+    }
+
+    // Config dosyasından sunucuları yükle (öncelikli)
+    // Docker ortamında farklı config kullan
+    const char *config_file = "config/servers.conf";
+    const char *server_host_env = getenv("SERVER_HOST");
+    if (server_host_env && strcmp(server_host_env, "encrypted-server") == 0) {
+        // Docker Compose ortamı
+        config_file = "config/servers-docker.conf";
+        PRINTF_CLIENT("Docker ortamı algılandı, Docker config kullanılıyor...\n");
+    }
+    
+    if (lb_load_config_file(&lb_config, config_file) != 0) {
+        PRINTF_CLIENT("Config dosyası yüklenemedi (%s), manuel konfigürasyon kullanılıyor...\n", config_file);
+        
+        // Manuel konfigürasyon (fallback)
+        // Ana nginx load balancer
+        const char *nginx_host = getenv("NGINX_HOST");
+        if (!nginx_host) nginx_host = "127.0.0.1";
+        lb_add_server(&lb_config, nginx_host, 8080, 8081, 8082, 9090, 5, false);
+        
+        // Gerçek sunucu IP adresleri - Environment variable'lardan
+        const char *server_host = getenv("SERVER_HOST");
+        if (!server_host) server_host = "127.0.0.1";
+        lb_add_server(&lb_config, server_host, 8080, 8081, 8082, 9090, 3, false);
+        
+        const char *server1_ip = getenv("SERVER1_IP");
+        if (!server1_ip) server1_ip = "192.168.1.100";
+        lb_add_server(&lb_config, server1_ip, 8080, 8081, 8082, 9090, 3, false);
+        
+        const char *server2_ip = getenv("SERVER2_IP");
+        if (!server2_ip) server2_ip = "192.168.1.101";
+        lb_add_server(&lb_config, server2_ip, 8080, 8081, 8082, 9090, 3, false);
+        
+        const char *server3_ip = getenv("SERVER3_IP");
+        if (!server3_ip) server3_ip = "192.168.1.102";
+        lb_add_server(&lb_config, server3_ip, 8080, 8081, 8082, 9090, 2, false);
+        
+        const char *backup_ip = getenv("BACKUP_SERVER_IP");
+        if (!backup_ip) backup_ip = "192.168.1.200";
+        lb_add_server(&lb_config, backup_ip, 8080, 8081, 8082, 9090, 1, true);
+    }
+    
+    LOG_CLIENT_INFO("Load balancer configured with %d servers", lb_config.server_count);
+    
+    // İlk sağlık kontrolü
+    int healthy_servers = lb_check_all_servers_health(&lb_config);
+    if (healthy_servers == 0) {
+        PRINTF_CLIENT("Uyarı: Hiç sağlıklı sunucu bulunamadı!\n");
+    } else {
+        PRINTF_CLIENT("Load balancer hazır: %d/%d sunucu sağlıklı\n", 
+                     healthy_servers, lb_config.server_count);
+    }
+
     // Kullanıcıdan login bilgisi al
     PRINTF_CLIENT("Kullanıcı adı: ");
     fgets(username, sizeof(username), stdin);
@@ -71,10 +134,11 @@ int main() {
     fgets(password, sizeof(password), stdin);
     password[strcspn(password, "\n")] = 0;
 
-    // Sunucuya login isteği gönder
-    char *token = client_login_to_server(username, password);
+    // Sunucuya login isteği gönder (load balancer ile)
+    char *token = client_login_to_server_with_lb(&lb_config, username, password);
     if (token == NULL) {
         PRINTF_CLIENT("Giriş başarısız!\n");
+        lb_cleanup(&lb_config);
         logger_cleanup(LOGGER_CLIENT);
         return -1;
     }
@@ -82,11 +146,13 @@ int main() {
     jwt_token[sizeof(jwt_token)-1] = '\0';
     PRINTF_CLIENT("Giriş başarılı! JWT alındı.\n");
     free(token);
+    
     LOG_CLIENT_INFO("Login sonrası yeni bağlantı açılıyor (ECDH için)");
-    // Server'a baglan (login sonrası YENİ bağlantı!)
-    client_connection_t* conn = connect_to_server(getenv("SERVER_HOST"));
+    // Server'a baglan (login sonrası YENİ bağlantı!) - Load balancer ile
+    client_connection_t* conn = connect_to_server_with_lb(&lb_config);
     if (conn == NULL) {
         LOG_CLIENT_ERROR("Failed to connect to server");
+        lb_cleanup(&lb_config);
         logger_cleanup(LOGGER_CLIENT);
         return -1;
     }
@@ -161,17 +227,24 @@ int main() {
             case 9:
                 query_replies_to_one_report(conn, jwt_token);
                 break;
-            case 10: // Cikis
+            case 10: // Load balancer istatistikleri
+                lb_print_stats(&lb_config);
+                break;
+                
+            case 11: // Cikis
             {
                 LOG_CLIENT_INFO("User requested shutdown");
                 PRINTF_CLIENT("Baglanti kapatiliyor...\n");
                 close_connection(conn);
+                lb_cleanup(&lb_config);
                 LOG_CLIENT_INFO("Connection closed, shutting down client");
+                lb_end_sticky_session(&lb_config);
+                lb_cleanup(&lb_config);
                 logger_cleanup(LOGGER_CLIENT);
                 return 0;
             }
             default:
-                PRINTF_LOG("Gecersiz secim. Lutfen 1-8 arasi bir sayi girin.\n");
+                PRINTF_LOG("Gecersiz secim. Lutfen 1-11 arasi bir sayi girin.\n");
                 break;
         }
         PRINTF_LOG("\n");
@@ -179,6 +252,8 @@ int main() {
     
     LOG_CLIENT_INFO("Client shutting down");
     close_connection(conn);
+    lb_end_sticky_session(&lb_config);
+    lb_cleanup(&lb_config);
     logger_cleanup(LOGGER_CLIENT);
     return 0;
 }
@@ -186,24 +261,34 @@ int main() {
 /**
  * @brief Kullanıcı menüsünü ekranda gösterir
  * @details Ana menü seçeneklerini formatlanmış şekilde ekrana yazdırır.
- *          Kullanıcı 3 seçenekten birini seçebilir:
- *          1. Normal JSON dosyası gönder
- *          2. Şifreli JSON dosyası gönder  
- *          3. Çıkış
+ *          Kullanıcı 11 seçenekten birini seçebilir.
  */
 void show_menu(void) {
     PRINTF_LOG("\n=== MENU ===\n");
+    
+    // Sticky session durumunu göster
+    if (lb_is_session_active(&lb_config)) {
+        server_info_t *assigned_server = lb_get_assigned_server(&lb_config);
+        if (assigned_server) {
+            PRINTF_LOG("🔒 Sticky Session: %s:%d (Session ID: %s)\n", 
+                      assigned_server->host, assigned_server->tcp_port, lb_config.session_id);
+        }
+    } else {
+        PRINTF_LOG("🔓 Sticky Session: Henüz bağlantı kurulmamış\n");
+    }
+    
     PRINTF_LOG("1. Normal JSON dosyasi gonder\n");
     PRINTF_LOG("2. Sifreli JSON dosyasi gonder\n");
     PRINTF_LOG("3. Rapor listesini al\n");
     PRINTF_LOG("4. Admin bildirimlerini dinle (admin için)\n");
     PRINTF_LOG("5. Raporlara cevap ver (admin)\n");
     PRINTF_LOG("6. Gelen admin cevaplarını görüntüle\n");
-    PRINTF_LOG("7. Kendi cevaplarımı sorgula (JWT ile)\n");
+    PRINTF_LOG("7. Kendi reply'larımı JWT ile sorgula\n");
     PRINTF_LOG("8. Reportlarıma gelen cevapları sorgula\n");
-    PRINTF_LOG("9. Bir reporta gelen cevapları sorgula\n");
-    PRINTF_LOG("10. Cikis\n");
-    PRINTF_LOG("============\n");
+    PRINTF_LOG("9. Bir rapora gelen cevapları sorgula\n");
+    PRINTF_LOG("10. Load balancer istatistikleri\n");
+    PRINTF_LOG("11. Cikis\n");
+    PRINTF_LOG("================\n");
 }
 
 /**
@@ -391,17 +476,75 @@ client_connection_t* connect_to_server(const char* server_host) {
             }
         }
         
-        // TCP baglantisi dene
-        if (connect(conn->socket, (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) == 0) {
+        // Socket'i non-blocking yaparak timeout ekleyelim
+        int flags = fcntl(conn->socket, F_GETFL, 0);
+        fcntl(conn->socket, F_SETFL, flags | O_NONBLOCK);
+        
+        // TCP baglantisi dene (non-blocking)
+        int connect_result = connect(conn->socket, (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr));
+        
+        if (connect_result == 0) {
+            // Anında bağlandı
+            fcntl(conn->socket, F_SETFL, flags); // Socket'i tekrar blocking yap
             PRINTF_LOG("✓ TCP baglantisi basarili (Port: %d)\n", CONFIG_PORT);
+        } else if (errno == EINPROGRESS) {
+            // Bağlantı devam ediyor, timeout ile bekle
+            fd_set write_fds;
+            struct timeval timeout;
             
-            /* TCP için ECDH Anahtar Değişimi */
-            if (!ecdh_init_context(&conn->ecdh_ctx)) {
-                PRINTF_LOG("ECDH context başlatılamadı\n");
+            FD_ZERO(&write_fds);
+            FD_SET(conn->socket, &write_fds);
+            
+            timeout.tv_sec = 3;  // 3 saniye timeout
+            timeout.tv_usec = 0;
+            
+            int select_result = select(conn->socket + 1, NULL, &write_fds, NULL, &timeout);
+            
+            if (select_result > 0) {
+                // Bağlantı durumu kontrol et
+                int sock_error;
+                socklen_t len = sizeof(sock_error);
+                getsockopt(conn->socket, SOL_SOCKET, SO_ERROR, &sock_error, &len);
+                
+                if (sock_error == 0) {
+                    // Başarılı bağlantı
+                    fcntl(conn->socket, F_SETFL, flags); // Socket'i tekrar blocking yap
+                    PRINTF_LOG("✓ TCP baglantisi basarili (Port: %d)\n", CONFIG_PORT);
+                } else {
+                    // Bağlantı hatası
+                    PRINTF_LOG("✗ TCP baglantisi basarisiz (Port: %d): %s\n", CONFIG_PORT, strerror(sock_error));
+                    close(conn->socket);
+                    goto try_udp;
+                }
+            } else if (select_result == 0) {
+                // Timeout
+                PRINTF_LOG("✗ TCP baglantisi timeout (Port: %d)\n", CONFIG_PORT);
                 close(conn->socket);
-                free(conn);
-                return NULL;
+                goto try_udp;
+            } else {
+                // Select hatası
+                PRINTF_LOG("✗ TCP baglantisi select hatasi (Port: %d)\n", CONFIG_PORT);
+                close(conn->socket);
+                goto try_udp;
             }
+        } else {
+            // Anında hata
+            PRINTF_LOG("✗ TCP baglantisi basarisiz (Port: %d): %s\n", CONFIG_PORT, strerror(errno));
+            close(conn->socket);
+            goto try_udp;
+        }
+        
+        // TCP bağlantısı başarılı, ECDH anahtar değişimi yap
+        // Bu noktaya geldiyse bağlantı kesinlikle başarılı
+        PRINTF_LOG("✓ TCP baglantisi basarili (Port: %d)\n", CONFIG_PORT);
+        
+        /* TCP için ECDH Anahtar Değişimi */
+        if (!ecdh_init_context(&conn->ecdh_ctx)) {
+            PRINTF_LOG("ECDH context başlatılamadı\n");
+            close(conn->socket);
+            free(conn);
+            return NULL;
+        }
             
             if (!ecdh_generate_keypair(&conn->ecdh_ctx)) {
                 PRINTF_LOG("ECDH anahtar çifti üretilemedi\n");
@@ -468,10 +611,6 @@ client_connection_t* connect_to_server(const char* server_host) {
             }
             
             return conn;
-        } else {
-            PRINTF_LOG("✗ TCP baglantisi basarisiz (Port: %d)\n", CONFIG_PORT);
-            close(conn->socket);
-        }
     }
     
 try_udp:
@@ -667,9 +806,54 @@ try_p2p:
             }
         }
         
-        // P2P TCP baglantisi dene
-        if (connect(conn->socket, (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr)) == 0) {
+        // P2P TCP baglantisi dene - Non-blocking ile timeout
+        int flags = fcntl(conn->socket, F_GETFL, 0);
+        fcntl(conn->socket, F_SETFL, flags | O_NONBLOCK);
+        
+        int connect_result = connect(conn->socket, (struct sockaddr*)&conn->server_addr, sizeof(conn->server_addr));
+        if (connect_result == 0) {
+            // Anında bağlandı
+            fcntl(conn->socket, F_SETFL, flags); // Blocking mode'a geri dön
             PRINTF_LOG("✓ P2P baglantisi basarili (Port: %d)\n", CONFIG_P2P_PORT);
+        } else if (errno == EINPROGRESS) {
+            // Bağlantı devam ediyor, select ile bekle
+            fd_set write_fds;
+            struct timeval timeout;
+            FD_ZERO(&write_fds);
+            FD_SET(conn->socket, &write_fds);
+            timeout.tv_sec = 5;  // 5 saniye timeout
+            timeout.tv_usec = 0;
+            
+            int select_result = select(conn->socket + 1, NULL, &write_fds, NULL, &timeout);
+            if (select_result > 0) {
+                // Bağlantı tamamlandı, hata kontrolü yap
+                int error = 0;
+                socklen_t error_len = sizeof(error);
+                getsockopt(conn->socket, SOL_SOCKET, SO_ERROR, &error, &error_len);
+                
+                if (error == 0) {
+                    fcntl(conn->socket, F_SETFL, flags); // Blocking mode'a geri dön
+                    PRINTF_LOG("✓ P2P baglantisi basarili (Port: %d)\n", CONFIG_P2P_PORT);
+                } else {
+                    PRINTF_LOG("✗ P2P baglantisi hatasi (Port: %d): %s\n", CONFIG_P2P_PORT, strerror(error));
+                    close(conn->socket);
+                    free(conn);
+                    return NULL;
+                }
+            } else {
+                PRINTF_LOG("✗ P2P baglantisi timeout (Port: %d)\n", CONFIG_P2P_PORT);
+                close(conn->socket);
+                free(conn);
+                return NULL;
+            }
+        } else {
+            PRINTF_LOG("✗ P2P baglantisi basarisiz (Port: %d): %s\n", CONFIG_P2P_PORT, strerror(errno));
+            close(conn->socket);
+            free(conn);
+            return NULL;
+        }
+        
+        if (true) { // Bağlantı başarılı ise ECDH'ye geç
             
             /* P2P için ECDH Anahtar Değişimi (TCP benzeri) */
             if (!ecdh_init_context(&conn->ecdh_ctx)) {
@@ -1431,6 +1615,228 @@ void query_replies_to_one_report(client_connection_t* conn, const char* jwt_toke
         }
     } else {
         PRINTF_LOG("[CLIENT] Hex veri alınamadı!\n");
+    }
+}
+
+/**
+ * @brief Load balancer kullanarak en iyi sunucuya bağlantı kurar
+ * @details Load balancer algoritması ile en uygun sunucuyu seçer ve
+ *          bağlantı kurar. Başarısız olursa diğer sunucuları dener.
+ * @param lb_config Load balancer konfigürasyonu
+ * @return client_connection_t* Bağlantı yapısı (NULL: başarısız)
+ */
+client_connection_t* connect_to_server_with_lb(lb_config_t *lb_config) {
+    if (!lb_config || lb_config->server_count == 0) {
+        LOG_CLIENT_ERROR("Load balancer not configured");
+        return NULL;
+    }
+    
+    // En iyi sunucuyu seç
+    server_selection_result_t selection = lb_select_server(lb_config, "127.0.0.1");
+    if (!selection.server) {
+        LOG_CLIENT_ERROR("No server available from load balancer");
+        return NULL;
+    }
+    
+    LOG_CLIENT_INFO("Selected server: %s:%d (%s)", 
+                    selection.server->host, selection.server->tcp_port, selection.reason);
+    
+    struct timeval start_time, end_time;
+    gettimeofday(&start_time, NULL);
+    
+    // Seçilen sunucuya bağlan
+    client_connection_t* conn = connect_to_server(selection.server->host);
+    
+    gettimeofday(&end_time, NULL);
+    double response_time = (end_time.tv_sec - start_time.tv_sec) * 1000.0 + 
+                          (end_time.tv_usec - start_time.tv_usec) / 1000.0;
+    
+    if (conn) {
+        // Başarılı bağlantı istatistiklerini güncelle
+        lb_update_server_stats(selection.server, response_time, true);
+        LOG_CLIENT_INFO("Successfully connected to %s:%d (%.2f ms)", 
+                        selection.server->host, selection.server->tcp_port, response_time);
+        return conn;
+    } else {
+        // Başarısız bağlantı istatistiklerini güncelle
+        lb_update_server_stats(selection.server, response_time, false);
+        LOG_CLIENT_WARN("Failed to connect to %s:%d", 
+                          selection.server->host, selection.server->tcp_port);
+        
+        // Diğer sunucuları dene (failover)
+        for (int i = 0; i < lb_config->server_count; i++) {
+            if (i == selection.server_index) continue; // Zaten denendi
+            
+            server_info_t *fallback_server = &lb_config->servers[i];
+            if (fallback_server->status == SERVER_UNHEALTHY) continue;
+            
+            LOG_CLIENT_INFO("Trying failover server: %s:%d", 
+                           fallback_server->host, fallback_server->tcp_port);
+            
+            gettimeofday(&start_time, NULL);
+            conn = connect_to_server(fallback_server->host);
+            gettimeofday(&end_time, NULL);
+            
+            response_time = (end_time.tv_sec - start_time.tv_sec) * 1000.0 + 
+                           (end_time.tv_usec - start_time.tv_usec) / 1000.0;
+            
+            if (conn) {
+                lb_update_server_stats(fallback_server, response_time, true);
+                LOG_CLIENT_INFO("Failover successful to %s:%d (%.2f ms)", 
+                               fallback_server->host, fallback_server->tcp_port, response_time);
+                return conn;
+            } else {
+                lb_update_server_stats(fallback_server, response_time, false);
+            }
+        }
+        
+        LOG_CLIENT_ERROR("All servers failed, connection not possible");
+        return NULL;
+    }
+}
+
+/**
+ * @brief Load balancer kullanarak login işlemi yapar
+ * @details En iyi sunucuyu seçerek login isteği gönderir.
+ * @param lb_config Load balancer konfigürasyonu
+ * @param username Kullanıcı adı
+ * @param password Şifre
+ * @return char* JWT token (NULL: başarısız)
+ */
+char* client_login_to_server_with_lb(lb_config_t *lb_config, const char* username, const char* password) {
+    if (!lb_config || lb_config->server_count == 0) {
+        LOG_CLIENT_ERROR("Load balancer not configured for login");
+        return NULL;
+    }
+    
+    // En iyi sunucuyu seç
+    server_selection_result_t selection = lb_select_server(lb_config, "127.0.0.1");
+    if (!selection.server) {
+        LOG_CLIENT_ERROR("No server available for login");
+        return NULL;
+    }
+    
+    LOG_CLIENT_INFO("Login attempt to server: %s:%d", 
+                    selection.server->host, selection.server->tcp_port);
+    
+    struct timeval start_time, end_time;
+    gettimeofday(&start_time, NULL);
+    
+    // Geçici bağlantı kur (sadece login için)
+    int login_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (login_socket < 0) {
+        LOG_CLIENT_ERROR("Failed to create login socket");
+        return NULL;
+    }
+    
+    struct sockaddr_in server_addr = {0};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(selection.server->tcp_port);
+    
+    if (inet_pton(AF_INET, selection.server->host, &server_addr.sin_addr) <= 0) {
+        struct hostent *host_entry = gethostbyname(selection.server->host);
+        if (host_entry != NULL) {
+            server_addr.sin_addr = *((struct in_addr*)host_entry->h_addr_list[0]);
+        } else {
+            close(login_socket);
+            return NULL;
+        }
+    }
+    
+    if (connect(login_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        close(login_socket);
+        lb_update_server_stats(selection.server, 0, false);
+        LOG_CLIENT_ERROR("Failed to connect for login to %s:%d", 
+                        selection.server->host, selection.server->tcp_port);
+        return NULL;
+    }
+    
+    // Login mesajı gönder
+    char login_message[512];
+    snprintf(login_message, sizeof(login_message), "LOGIN:%s:%s", username, password);
+    
+    ssize_t sent = send(login_socket, login_message, strlen(login_message), 0);
+    if (sent <= 0) {
+        close(login_socket);
+        lb_update_server_stats(selection.server, 0, false);
+        LOG_CLIENT_ERROR("Failed to send login message to %s:%d", 
+                        selection.server->host, selection.server->tcp_port);
+        return NULL;
+    }
+    
+    // Recv timeout ayarla (5 saniye)
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    setsockopt(login_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    
+    // JWT yanıtını al
+    char response[2048] = {0};
+    ssize_t received = recv(login_socket, response, sizeof(response) - 1, 0);
+    close(login_socket);
+    
+    LOG_CLIENT_DEBUG("Login response received: %zd bytes, content: %.100s", received, received > 0 ? response : "");
+    
+    gettimeofday(&end_time, NULL);
+    double response_time = (end_time.tv_sec - start_time.tv_sec) * 1000.0 + 
+                          (end_time.tv_usec - start_time.tv_usec) / 1000.0;
+    
+    if (received > 0 && strncmp(response, "JWT:", 4) == 0) {
+        lb_update_server_stats(selection.server, response_time, true);
+        char *jwt_token = strdup(response + 4); // "JWT:" prefix'ini atla
+        LOG_CLIENT_INFO("Login successful to %s:%d (%.2f ms)", 
+                       selection.server->host, selection.server->tcp_port, response_time);
+        return jwt_token;
+    } else {
+        lb_update_server_stats(selection.server, response_time, false);
+        LOG_CLIENT_ERROR("Login failed to %s:%d", 
+                        selection.server->host, selection.server->tcp_port);
+        
+        // Failover login denemesi
+        for (int i = 0; i < lb_config->server_count; i++) {
+            if (i == selection.server_index) continue;
+            
+            server_info_t *fallback_server = &lb_config->servers[i];
+            if (fallback_server->status == SERVER_UNHEALTHY) continue;
+            
+            LOG_CLIENT_INFO("Trying login failover to: %s:%d", 
+                           fallback_server->host, fallback_server->tcp_port);
+            
+            // Failover login denemesi (basitleştirilmiş)
+            login_socket = socket(AF_INET, SOCK_STREAM, 0);
+            if (login_socket < 0) continue;
+            
+            server_addr.sin_port = htons(fallback_server->tcp_port);
+            if (inet_pton(AF_INET, fallback_server->host, &server_addr.sin_addr) <= 0) {
+                close(login_socket);
+                continue;
+            }
+            
+            if (connect(login_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+                close(login_socket);
+                continue;
+            }
+            
+            sent = send(login_socket, login_message, strlen(login_message), 0);
+            if (sent <= 0) {
+                close(login_socket);
+                continue;
+            }
+            
+            received = recv(login_socket, response, sizeof(response) - 1, 0);
+            close(login_socket);
+            
+            if (received > 0 && strncmp(response, "JWT:", 4) == 0) {
+                lb_update_server_stats(fallback_server, 0, true);
+                char *jwt_token = strdup(response + 4);
+                LOG_CLIENT_INFO("Failover login successful to %s:%d", 
+                               fallback_server->host, fallback_server->tcp_port);
+                return jwt_token;
+            }
+        }
+        
+        LOG_CLIENT_ERROR("All login attempts failed");
+        return NULL;
     }
 }
 

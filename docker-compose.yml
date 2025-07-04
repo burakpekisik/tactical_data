@@ -35,8 +35,8 @@ services:
     depends_on:
       encrypted-server:
         condition: service_healthy
-    networks:
-      - tactical-network
+    # Host network modunda çalıştır ki host'taki sunuculara erişebilsin
+    network_mode: host
     volumes:
       - ./data:/app/shared_data:ro  # Host data klasörünü read-only mount et
     stdin_open: true  # Interactive mode için

@@ -6,6 +6,11 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QCheckBox>
+#include <QPixmap>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QFrame>
+#include <QIcon>
 
 class LoginDialog : public QDialog {
     Q_OBJECT
@@ -21,9 +26,13 @@ private:
     QPushButton *loginButton;
     QLabel *errorLabel;
     QCheckBox *rememberCheckBox;
+    QLabel *logoLabel;
+    QFrame *formFrame;
+    QPushButton *togglePasswordButton;
 
 private slots:
     void onLoginClicked();
+    void togglePasswordVisibility();
 };
 
 #endif // LOGIN_DIALOG_H

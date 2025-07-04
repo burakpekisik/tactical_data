@@ -1,0 +1,271 @@
+services:
+  # Nginx Load Balancer
+  nginx-lb:
+    image: nginx:alpine
+    container_name: tactical-nginx-lb
+    ports:
+      - "80:80"       # HTTP Frontend
+      - "443:443"     # HTTPS (optional)
+      - "8080:8080"   # TCP Direct Load Balancer
+      - "8081:8081/udp" # UDP Load Balancer
+      - "8082:8082"   # P2P Load Balancer
+      - "9090:9090"   # Control Interface Load Balancer
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx-logs:/var/log/nginx
+    networks:
+      - tactical-network
+    depends_on:
+      - tactical-data-server-1
+      - tactical-data-server-2
+      - tactical-data-server-3
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # Primary Tactical Data Server Instance 1
+  tactical-data-server-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: tactical-data-server-1
+    environment:
+      - TERM=xterm
+      - SERVER_ID=1
+      - SERVER_WEIGHT=3
+    networks:
+      - tactical-network
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+      - server1-logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo 'healthcheck' | nc localhost 9090 > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Primary Tactical Data Server Instance 2
+  tactical-data-server-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: tactical-data-server-2
+    environment:
+      - TERM=xterm
+      - SERVER_ID=2
+      - SERVER_WEIGHT=3
+    networks:
+      - tactical-network
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+      - server2-logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo 'healthcheck' | nc localhost 9090 > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Primary Tactical Data Server Instance 3
+  tactical-data-server-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: tactical-data-server-3
+    environment:
+      - TERM=xterm
+      - SERVER_ID=3
+      - SERVER_WEIGHT=2
+    networks:
+      - tactical-network
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+      - server3-logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo 'healthcheck' | nc localhost 9090 > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Backup Tactical Data Server
+  tactical-data-server-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: tactical-data-server-backup
+    environment:
+      - TERM=xterm
+      - SERVER_ID=backup
+      - SERVER_WEIGHT=1
+    networks:
+      - tactical-network
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+      - backup-logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo 'healthcheck' | nc localhost 9090 > /dev/null || exit 1"]
+      interval: 45s
+      timeout: 15s
+      retries: 2
+      start_period: 30s
+
+  # Frontend Web Server Instance 1
+  tactical-frontend-1:
+    image: nginx:alpine
+    container_name: tactical-frontend-1
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/frontend.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - tactical-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Frontend Web Server Instance 2
+  tactical-frontend-2:
+    image: nginx:alpine
+    container_name: tactical-frontend-2
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/frontend.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - tactical-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Frontend Backup Server
+  tactical-frontend-backup:
+    image: nginx:alpine
+    container_name: tactical-frontend-backup
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/frontend.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - tactical-network
+    restart: unless-stopped
+
+  # Tactical Data Client (for testing)
+  tactical-data-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: tactical-data-client
+    depends_on:
+      nginx-lb:
+        condition: service_healthy
+    networks:
+      - tactical-network
+    volumes:
+      - ./data:/app/shared_data:ro
+    stdin_open: true
+    tty: true
+    environment:
+      - TERM=xterm
+      - SERVER_HOST=nginx-lb  # Connect through load balancer
+      - SERVER_PORT=8080
+
+  # Database Admin Tool
+  db-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: tactical-db-admin
+    depends_on:
+      nginx-lb:
+        condition: service_healthy
+    networks:
+      - tactical-network
+    volumes:
+      - tactical-db:/app/data
+    stdin_open: true
+    tty: true
+    environment:
+      - TERM=xterm
+    command: ["bash"]
+    profiles:
+      - admin
+
+  # Monitoring and Metrics
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    container_name: nginx-exporter
+    command: 
+      - '-nginx.scrape-uri=http://nginx-lb/nginx_status'
+    ports:
+      - "9113:9113"
+    networks:
+      - tactical-network
+    depends_on:
+      - nginx-lb
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Log aggregator
+  filebeat:
+    image: elastic/filebeat:7.17.0
+    container_name: tactical-filebeat
+    user: root
+    volumes:
+      - ./nginx/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - nginx-logs:/var/log/nginx:ro
+      - server1-logs:/var/log/server1:ro
+      - server2-logs:/var/log/server2:ro
+      - server3-logs:/var/log/server3:ro
+      - backup-logs:/var/log/backup:ro
+    networks:
+      - tactical-network
+    depends_on:
+      - nginx-lb
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+networks:
+  tactical-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  tactical-db:
+    driver: local
+  nginx-logs:
+    driver: local
+  server1-logs:
+    driver: local
+  server2-logs:
+    driver: local
+  server3-logs:
+    driver: local
+  backup-logs:
+    driver: local

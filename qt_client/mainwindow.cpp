@@ -42,6 +42,9 @@ MainWindow::MainWindow(QWidget *parent)
     , pointSelected(false)
     , clientWrapper(nullptr)
 {
+    // Pencere ikonu ayarla
+    setWindowIcon(QIcon("ONUR_blue.png"));
+    
     // Client wrapper oluştur
     clientWrapper = new ClientWrapper(this);
     

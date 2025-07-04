@@ -18,6 +18,7 @@
 #include <QTabWidget>
 #include <QGeoPositionInfoSource>
 #include <QGeoPositionInfo>
+#include <QIcon>
 #include <QGeoCoordinate>
 #include <QJsonArray>
 #include <QVBoxLayout>

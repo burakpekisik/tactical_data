@@ -3,6 +3,7 @@
 #include <QQuickView>
 #include <QtQuickControls2>
 #include <QMessageBox>
+#include <QIcon>
 #include "mainwindow.h"
 #include "login_dialog.h"
 #include "login_client.h"
@@ -10,6 +11,16 @@
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    
+    // Uygulama özelliklerini ayarla
+    app.setApplicationName("TacticalMapClient");
+    app.setApplicationDisplayName("Tactical Data System");
+    app.setApplicationVersion("1.0");
+    app.setOrganizationName("ONUR");
+    
+    // Uygulama ikonunu ayarla
+    app.setWindowIcon(QIcon("ONUR_blue.png"));
+    
     QQuickStyle::setStyle("Material");
 
     QString jwtToken;

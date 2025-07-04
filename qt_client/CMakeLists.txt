@@ -68,3 +68,12 @@ target_link_libraries(TacticalMapClient
 # Copy QML file to build directory
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/map.qml 
                ${CMAKE_CURRENT_BINARY_DIR}/map.qml COPYONLY)
+
+# Copy logo file to build directory
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/ONUR.png 
+               ${CMAKE_CURRENT_BINARY_DIR}/ONUR.png COPYONLY)
+
+# Copy icon file to build directory
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/ONUR_blue.png 
+               ${CMAKE_CURRENT_BINARY_DIR}/ONUR_blue.png COPYONLY)
+               
