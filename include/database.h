@@ -55,6 +55,15 @@ typedef struct {
     int report_id;
 } tactical_data_t;
 
+// Location structure
+typedef struct {
+    int id;
+    int user_id;
+    double latitude;
+    double longitude;
+    long timestamp;
+} location_t;
+
 // Database functions
 int db_init(const char *db_path);
 int db_create_tables(void);
@@ -124,11 +133,19 @@ int db_delete_chat_room_messages(int room_id);
 
 int db_chat_get_latest_messages(int room_id, chat_message_t** messages, int* count, int limit);
 
+// Location operations
+int db_insert_location(const location_t *location);
+int db_select_location_of_user(int user_id, double *latitude, double *longitude);
+int db_select_latest_locations_by_unit(int unit_id, location_t **locations, int *count);
+int db_select_latest_locations_all_users(location_t **locations, int *count);
+int db_select_latest_locations_all_users_by_radius(double latitude, double longitude, double radius, location_t **locations, int *count);
+
 // Utility functions
 void db_free_units(unit_t *units, int count);
 void db_free_reports(report_t *reports, int count);
 void db_free_chat_rooms(chat_room_t *rooms, int count);
 void db_free_chat_messages(chat_message_t *messages, int count);
+
 
 // Test functions
 int db_insert_test_data(void);

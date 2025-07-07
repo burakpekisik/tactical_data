@@ -17,5 +17,6 @@ void admin_reply_manager_remove_user(int user_socket);
 bool admin_reply_manager_send_reply(int report_id, const char* message, int admin_socket);
 // Admin reply fonksiyonu: terminalden rapor ID ve mesaj alır, şifreler ve gönderir
 int admin_reply_to_report(client_connection_t* conn, const char* jwt_token);
+void handle_reply_report(const char* decrypted_json, const char* jwt_token, int client_socket, char* out, size_t out_size);
 
 #endif // ADMIN_REPLY_MANAGER_H

@@ -1395,10 +1395,8 @@ void MainWindow::onPeriodicConnectionCheck()
     
     fallbackLogEdit->append("[AUTO] Otomatik bağlantı kontrolü başlatılıyor...");
     
-    // Basit ping testi - tactical data gönderme
-    QString pingMessage = "PING_TEST";
-    
-    // Tüm bağlantı türlerini test et (ping formatında)
+    // PING komutu ile bağlantı testi yap
+    QString pingMessage = "PING";
     clientWrapper->testAllConnectionTypes(pingMessage, false);
 }
 

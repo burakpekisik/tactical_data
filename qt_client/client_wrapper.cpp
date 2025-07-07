@@ -66,6 +66,7 @@ ClientWrapper::ClientWrapper(QObject *parent)
     , tcpRetryCount(0)
     , udpRetryCount(0)
     , p2pRetryCount(0)
+    , isAdminNotificationActive(false)
 {
     // ECDH context'i sıfırla
     memset(&ecdhContext, 0, sizeof(ecdh_context_t));
@@ -345,6 +346,8 @@ void ClientWrapper::onDataReceived()
                 if (removeStart != -1) {
                     incomingBuffer.remove(removeStart, jsonBytes.length());
                 }
+                // JSON admin notification işlendikten sonra buffer'ı temizle
+                incomingBuffer.clear();
                 return; // Admin notification işlendi, çık
             }
         }
@@ -411,6 +414,11 @@ void ClientWrapper::onDataReceived()
                 emit dataReceived(msgStr);
             }
         }
+    }
+    // Tüm işlemlerden sonra buffer'da işlenemeyen veri kaldıysa temizle
+    if (!incomingBuffer.isEmpty()) {
+        qDebug() << "[DEBUG] incomingBuffer temizleniyor (işlenemeyen veri):" << QString(incomingBuffer.left(200));
+        incomingBuffer.clear();
     }
 }
 
@@ -488,42 +496,45 @@ void ClientWrapper::sendTacticalData(double latitude, double longitude,
 void ClientWrapper::sendJsonString(const QString& jsonString, bool encrypted)
 {
     qDebug() << "[DEBUG] sendJsonString çağrıldı, jwtToken:" << jwtToken << ", handshakeCompleted:" << handshakeCompleted;
-    
+    PRINTF_LOG("[CLIENT][SEND] sendJsonString çağrıldı, jwtToken=%s, handshakeCompleted=%d\n", jwtToken.toUtf8().constData(), handshakeCompleted);
+    logDebug(QString("sendJsonString çağrıldı, jwtToken=%1, handshakeCompleted=%2").arg(jwtToken).arg(handshakeCompleted));
+
     // Son gönderilecek veriyi kaydet (retry için)
     lastJsonData = jsonString;
     lastEncryptionFlag = encrypted;
-    
+
     // Bağlantı durumunu kontrol et ve gerekirse güncelle
     if (!isConnected()) {
-        // Socket durumunu da kontrol et ve enum'u güncelle
         if (tcpSocket && tcpSocket->state() != QAbstractSocket::ConnectedState) {
             connectionStatus = Disconnected;
             emit connectionStatusChanged(Disconnected, "Bağlantı kesildiği tespit edildi");
         }
-        
-        PRINTF_LOG("✗ Cannot send JSON string - not connected\n");
+        PRINTF_LOG("[CLIENT][SEND][ERROR] Not connected, JSON gönderilemiyor\n");
+        logError("Not connected, JSON gönderilemiyor");
         retryWithFallback(jsonString, encrypted);
         return;
     }
     if (encrypted && !handshakeCompleted) {
-        PRINTF_LOG("✗ ECDH handshake not completed - cannot send encrypted data\n");
+        PRINTF_LOG("[CLIENT][SEND][ERROR] ECDH handshake tamamlanmamış, şifreli veri gönderilemez\n");
+        logError("ECDH handshake tamamlanmamış, şifreli veri gönderilemez");
         retryWithFallback(jsonString, encrypted);
         return;
     }
     qDebug() << "[DEBUG] sendJsonString, aesKey (ilk 8):" << QByteArray((const char*)aesKey, 8).toHex();
+    PRINTF_LOG("[CLIENT][SEND] aesKey (ilk 8): %s\n", QByteArray((const char*)aesKey, 8).toHex().constData());
     try {
-        // Önce pending klasöründeki eski verileri sırayla gönder
         sendAllPendingJson(encrypted);
 
         if (!isConnected()) {
-            // Bağlantı koptu, retry mekanizmasını başlat
+            PRINTF_LOG("[CLIENT][SEND][ERROR] Bağlantı koptu, retry başlatılıyor\n");
+            logError("Bağlantı koptu, retry başlatılıyor");
             retryWithFallback(jsonString, encrypted);
             return;
         }
-        
+
         char* protocolMessage = nullptr;
         if (encrypted) {
-            PRINTF_LOG("Creating encrypted protocol message...\n");
+            PRINTF_LOG("[CLIENT][SEND] Creating encrypted protocol message...\n");
             LOG_CLIENT_INFO("Preparing encrypted JSON transmission");
             qDebug() << "[DEBUG] create_encrypted_protocol_message jwtToken:" << jwtToken;
             protocolMessage = create_encrypted_protocol_message("tactical_data.json", 
@@ -531,7 +542,7 @@ void ClientWrapper::sendJsonString(const QString& jsonString, bool encrypted)
                                                                aesKey, 
                                                                jwtToken.toUtf8().constData());
         } else {
-            PRINTF_LOG("Creating normal protocol message...\n");
+            PRINTF_LOG("[CLIENT][SEND] Creating normal protocol message...\n");
             LOG_CLIENT_INFO("Preparing normal JSON transmission");
             qDebug() << "[DEBUG] create_normal_protocol_message jwtToken:" << jwtToken;
             protocolMessage = create_normal_protocol_message("tactical_data.json", 
@@ -539,30 +550,33 @@ void ClientWrapper::sendJsonString(const QString& jsonString, bool encrypted)
                                                             jwtToken.toUtf8().constData());
         }
         if (protocolMessage == nullptr) {
-            PRINTF_LOG("✗ Failed to create protocol message\n");
+            PRINTF_LOG("[CLIENT][SEND][ERROR] Protocol message oluşturulamadı\n");
             LOG_CLIENT_ERROR("Failed to create protocol message");
+            logError("Protocol message oluşturulamadı");
             retryWithFallback(jsonString, encrypted);
             return;
         }
-        
+
         QByteArray messageData(protocolMessage, strlen(protocolMessage));
-        PRINTF_LOG("Sending protocol message (%d bytes): %.50s...\n", 
+        PRINTF_LOG("[CLIENT][SEND] Sending protocol message (%d bytes): %.50s...\n", 
                    messageData.size(), protocolMessage);
         LOG_CLIENT_INFO("Transmitting protocol message to server (%d bytes)", messageData.size());
-        
+        qDebug() << "[DEBUG] tcpSocket->state():" << tcpSocket->state();
+
         qint64 bytesWritten = tcpSocket->write(messageData);
+        PRINTF_LOG("[CLIENT][SEND] tcpSocket->write() döndü: %lld\n", bytesWritten);
         if (bytesWritten == -1) {
-            PRINTF_LOG("✗ Failed to send protocol message\n");
+            PRINTF_LOG("[CLIENT][SEND][ERROR] Protocol message gönderilemedi, tcpSocket error: %s\n", tcpSocket->errorString().toUtf8().constData());
             LOG_CLIENT_ERROR("Failed to send protocol message");
+            logError(QString("tcpSocket->write() error: %1").arg(tcpSocket->errorString()));
             free(protocolMessage);
             retryWithFallback(jsonString, encrypted);
             return;
         } else {
             tcpSocket->flush();
-            PRINTF_LOG("✓ Protocol message sent successfully (%lld bytes)\n", bytesWritten);
+            PRINTF_LOG("[CLIENT][SEND] Protocol message sent successfully (%lld bytes)\n", bytesWritten);
             LOG_CLIENT_INFO("Protocol message transmitted successfully: %lld bytes", bytesWritten);
-            
-            // Başarılı gönderim, retry sayaçlarını sıfırla
+            logInfo(QString("Protocol message sent successfully (%1 bytes)").arg(bytesWritten));
             resetRetryCounters();
             emit dataSendResult(SendSuccess, 
                 encrypted ? "Şifreli veri başarıyla gönderildi" : "Veri başarıyla gönderildi");
@@ -570,6 +584,7 @@ void ClientWrapper::sendJsonString(const QString& jsonString, bool encrypted)
         free(protocolMessage);
     } catch (const std::exception& e) {
         LOG_CLIENT_ERROR("Exception in sendJsonString: %s", e.what());
+        logError(QString("Exception in sendJsonString: %1").arg(e.what()));
         retryWithFallback(jsonString, encrypted);
     }
 }
@@ -745,6 +760,13 @@ void ClientWrapper::sendAllPendingJson(bool encrypted) {
 // --- JSON gönderimini dener, başarılıysa true döner ---
 bool ClientWrapper::trySendJsonInternal(const QString& jsonString, bool encrypted) {
     if (!isConnected()) return false;
+    // Eğer düz PING komutu ise, protokol sarmalamasına sokmadan gönder
+    if (jsonString.trimmed() == "PING") {
+        QByteArray pingData = "PING";
+        qint64 bytesWritten = tcpSocket->write(pingData);
+        tcpSocket->flush();
+        return (bytesWritten > 0);
+    }
     char* protocolMessage = nullptr;
     if (encrypted) {
         protocolMessage = create_encrypted_protocol_message("tactical_data.json", jsonString.toUtf8().constData(), aesKey, jwtToken.toUtf8().constData());
@@ -944,8 +966,6 @@ QByteArray ClientWrapper::decryptAes256Cbc(const QByteArray &cipher, const QByte
     return result;
 }
 
-// --- YENİ EKLENEN FONKSIYONLAR ---
-
 /**
  * @brief Admin rapora cevap gönderir
  * @param reportId Rapor ID'si
@@ -1027,19 +1047,103 @@ void ClientWrapper::queryMyReplies() {
  * @brief Admin bildirimlerini dinlemeyi başlatır
  */
 void ClientWrapper::listenForAdminNotifications() {
-    if (!isConnected()) {
-        logError("Bağlantı yok, admin bildirimleri dinlenemez");
+    // Eğer zaten açık bir adminNotifySocket varsa tekrar başlatma
+    if (adminNotifySocket && adminNotifySocket->state() == QAbstractSocket::ConnectedState) {
+        logInfo("Admin bildirim dinleyicisi zaten aktif (ayrı bağlantı)");
         return;
     }
-    
-    // Admin notification listen mesajı gönder
+    // Önce eski socket'i temizle
+    if (adminNotifySocket) {
+        adminNotifySocket->disconnect(this);
+        adminNotifySocket->deleteLater();
+        adminNotifySocket = nullptr;
+    }
+    adminNotifySocket = new QTcpSocket(this);
+    connect(adminNotifySocket, &QTcpSocket::readyRead, this, &ClientWrapper::onAdminNotifySocketReadyRead);
+    connect(adminNotifySocket, &QTcpSocket::disconnected, this, &ClientWrapper::onAdminNotifySocketDisconnected);
+    // Bağlantı kur
+    adminNotifySocket->connectToHost(serverHost, serverPort);
+    if (!adminNotifySocket->waitForConnected(3000)) {
+        logError("Admin bildirim dinleme bağlantısı kurulamadı!");
+        adminNotifySocket->deleteLater();
+        adminNotifySocket = nullptr;
+        return;
+    }
+
+    // --- ECDH handshake başlat ---
+    memset(&ecdhContextAdmin, 0, sizeof(ecdh_context_t));
+    memset(aesKeyAdmin, 0, sizeof(aesKeyAdmin));
+    adminHandshakeCompleted = false;
+    if (ecdh_init_context(&ecdhContextAdmin) == 0) {
+        logError("[ADMIN_NOTIFY] ECDH context başlatılamadı");
+        return;
+    }
+    if (ecdh_generate_keypair(&ecdhContextAdmin) == 0) {
+        logError("[ADMIN_NOTIFY] ECDH anahtar çifti oluşturulamadı");
+        return;
+    }
+    QByteArray adminPubKey(reinterpret_cast<const char*>(ecdhContextAdmin.public_key), ECC_PUB_KEY_SIZE);
+    qint64 bytesWritten = adminNotifySocket->write(adminPubKey);
+    if (bytesWritten != ECC_PUB_KEY_SIZE) {
+        logError("[ADMIN_NOTIFY] Public key gönderimi başarısız");
+        return;
+    }
+    adminNotifySocket->flush();
+    // Sunucudan public key'i oku
+    QByteArray serverPubKey;
+    while (serverPubKey.size() < ECC_PUB_KEY_SIZE) {
+        if (!adminNotifySocket->waitForReadyRead(3000)) {
+            logError("[ADMIN_NOTIFY] Sunucu public key beklenirken timeout");
+            return;
+        }
+        serverPubKey += adminNotifySocket->read(ECC_PUB_KEY_SIZE - serverPubKey.size());
+    }
+    if (serverPubKey.size() != ECC_PUB_KEY_SIZE) {
+        logError("[ADMIN_NOTIFY] Sunucu public key boyutu hatalı");
+        return;
+    }
+    if (ecdh_compute_shared_secret(&ecdhContextAdmin, reinterpret_cast<const uint8_t*>(serverPubKey.constData())) == 0) {
+        logError("[ADMIN_NOTIFY] Shared secret hesaplanamadı");
+        return;
+    }
+    if (ecdh_derive_aes_key(&ecdhContextAdmin) == 0) {
+        logError("[ADMIN_NOTIFY] AES anahtar türetme hatası");
+        return;
+    }
+    memcpy(aesKeyAdmin, ecdhContextAdmin.aes_key, 32);
+    adminHandshakeCompleted = true;
+    logInfo("[ADMIN_NOTIFY] ECDH handshake tamamlandı, bildirim dinleme başlatılıyor");
+
+    // Komutu gönder (şifresiz, çünkü server öyle bekliyor)
     QString notifyCmd = QString("ADMIN_NOTIFY_LISTEN:%1").arg(jwtToken);
-    QByteArray cmdData = notifyCmd.toUtf8();
-    
-    tcpSocket->write(cmdData);
-    tcpSocket->flush();
-    
-    logInfo("Admin bildirim dinleme başlatıldı");
+    adminNotifySocket->write(notifyCmd.toUtf8());
+    adminNotifySocket->flush();
+    logInfo("Admin bildirim dinleme başlatıldı (ayrı bağlantı)");
+
+    isAdminNotificationActive = true;
+}
+
+// Admin bildirim dinleme socket'inden veri geldiğinde çağrılır
+void ClientWrapper::onAdminNotifySocketReadyRead()
+{
+    if (!adminNotifySocket) return;
+    while (adminNotifySocket->bytesAvailable() > 0) {
+        QByteArray data = adminNotifySocket->readLine();
+        if (!data.isEmpty()) {
+            emit adminNotificationReceived(QString::fromUtf8(data));
+        }
+    }
+}
+
+// Admin bildirim dinleme bağlantısı koptuğunda çağrılır
+void ClientWrapper::onAdminNotifySocketDisconnected()
+{
+    logInfo("Admin bildirim dinleme bağlantısı kapatıldı (ayrı bağlantı)");
+    isAdminNotificationActive = false;
+    if (adminNotifySocket) {
+        adminNotifySocket->deleteLater();
+        adminNotifySocket = nullptr;
+    }
 }
 
 /**
@@ -1444,7 +1548,7 @@ void ClientWrapper::processEncryptedResponse()
                 
                 if (!plainJson.isEmpty()) {
                     qDebug() << "[DEBUG] Decrypt başarılı, JSON size:" << plainJson.size();
-                    qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
+                    // qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
                     
                     QJsonDocument doc = QJsonDocument::fromJson(plainJson);
                     if (doc.isObject()) {
@@ -1510,7 +1614,7 @@ void ClientWrapper::finalizePartProcessing()
         
         if (!plainJson.isEmpty()) {
             qDebug() << "[DEBUG] Parçalı decrypt başarılı, JSON size:" << plainJson.size();
-            qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
+            // qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
             
             // JSON parse et ve raporları emit et
             QJsonDocument doc = QJsonDocument::fromJson(plainJson);

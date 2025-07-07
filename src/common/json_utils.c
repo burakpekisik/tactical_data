@@ -44,6 +44,8 @@
 #include "json_utils.h"
 #include "logger.h"
 #include "encrypted_client.h"
+#include "jwt.h"
+#include "admin_notify_manager.h"
 
 /**
  * @brief JSON içeriğini parse edip formatlanmış string'e dönüştürür
@@ -629,8 +631,6 @@ void free_tactical_data(tactical_data_t* data) {
         free(data);
     }
 }
-
-#include <cjson/cJSON.h>
 
 /**
  * @brief Tactical data struct'ını JSON objesine çevirir

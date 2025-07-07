@@ -978,3 +978,234 @@ int db_select_chat_room_messages(int room_id, int limit, chat_message_t** messag
 int db_chat_get_latest_messages(int room_id, chat_message_t** messages, int* count, int limit) {
     return db_select_chat_room_messages(room_id, limit, messages, count);
 }
+
+int db_select_location_of_user(int user_id, double *latitude, double *longitude) {
+    char sql[256];
+    sqlite3_stmt *stmt;
+    int rc;
+
+    if (!g_db || user_id <= 0 || !latitude || !longitude) {
+        fprintf(stderr, "Invalid parameters for user location select\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql), 
+        "SELECT latitude, longitude FROM LOCATIONS WHERE user_id = %d ORDER BY timestamp DESC LIMIT 1;", user_id);
+
+    rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL prepare error: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *latitude = sqlite3_column_double(stmt, 0);
+        *longitude = sqlite3_column_double(stmt, 1);
+        sqlite3_finalize(stmt);
+        return 0; // Başarılı
+    } else if (rc == SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return -1; // Kullanıcı bulunamadı
+    } else {
+        fprintf(stderr, "SQL step error: %s\n", sqlite3_errmsg(g_db));
+        sqlite3_finalize(stmt);
+        return -1; // Hata
+    }
+}
+
+/**
+ * @brief Bir unit içindeki tüm kullanıcıların en güncel konumlarını getirir
+ * @details Her kullanıcı için LOCATIONS tablosundaki en güncel (timestamp'e göre) kaydı döndürür
+ *
+ * @param unit_id Unit ID
+ * @param locations [OUT] location_t array (malloc edilir, count kadar)
+ * @param count [OUT] Kullanıcı sayısı (veya konum kaydı sayısı)
+ * @return int 0: Başarılı, -1: Hata
+ *
+ * @note locations array'i çağıran tarafından free() edilmelidir
+ */
+int db_select_latest_locations_by_unit(int unit_id, location_t **locations, int *count) {
+    if (!g_db || unit_id <= 0 || !locations || !count) {
+        fprintf(stderr, "Invalid parameters for latest locations by unit\n");
+        return -1;
+    }
+    *locations = NULL;
+    *count = 0;
+
+    const char *sql =
+        "SELECT l.id, l.user_id, l.latitude, l.longitude, l.timestamp "
+        "FROM LOCATIONS l "
+        "JOIN USERS u ON l.user_id = u.ID "
+        "WHERE u.UNIT_ID = ? "
+        "AND l.id = ( "
+        "    SELECT id FROM LOCATIONS "
+        "    WHERE user_id = l.user_id "
+        "    ORDER BY timestamp DESC LIMIT 1 "
+        ") ";
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL prepare error: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+    sqlite3_bind_int(stmt, 1, unit_id);
+
+    // Önce kaç kayıt var say
+    int row_count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        row_count++;
+    }
+    sqlite3_reset(stmt);
+
+    if (row_count > 0) {
+        *locations = malloc(sizeof(location_t) * row_count);
+        if (!*locations) {
+            fprintf(stderr, "Memory allocation failed for locations array\n");
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+        int idx = 0;
+        while (sqlite3_step(stmt) == SQLITE_ROW && idx < row_count) {
+            location_t *loc = &(*locations)[idx];
+            loc->id = sqlite3_column_int(stmt, 0);
+            loc->user_id = sqlite3_column_int(stmt, 1);
+            loc->latitude = sqlite3_column_double(stmt, 2);
+            loc->longitude = sqlite3_column_double(stmt, 3);
+            loc->timestamp = sqlite3_column_int64(stmt, 4);
+            idx++;
+        }
+        *count = row_count;
+    }
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+/**
+ * @brief Tüm unique kullanıcılar için en güncel konumları döndürür
+ * @details LOCATIONS tablosundaki her user_id için en güncel (timestamp'e göre) kaydı döndürür
+ *
+ * @param locations [OUT] location_t array (malloc edilir, count kadar)
+ * @param count [OUT] Kullanıcı sayısı (veya konum kaydı sayısı)
+ * @return int 0: Başarılı, -1: Hata
+ *
+ * @note locations array'i çağıran tarafından free() edilmelidir
+ */
+int db_select_latest_locations_all_users(location_t **locations, int *count) {
+    if (!g_db || !locations || !count) {
+        fprintf(stderr, "Invalid parameters for latest locations all users\n");
+        return -1;
+    }
+    *locations = NULL;
+    *count = 0;
+
+    const char *sql =
+        "SELECT l.id, l.user_id, l.latitude, l.longitude, l.timestamp "
+        "FROM LOCATIONS l "
+        "WHERE l.id = ( "
+        "    SELECT id FROM LOCATIONS "
+        "    WHERE user_id = l.user_id "
+        "    ORDER BY timestamp DESC LIMIT 1 "
+        ") ";
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL prepare error: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+
+    // Önce kaç kayıt var say
+    int row_count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        row_count++;
+    }
+    sqlite3_reset(stmt);
+
+    if (row_count > 0) {
+        *locations = malloc(sizeof(location_t) * row_count);
+        if (!*locations) {
+            fprintf(stderr, "Memory allocation failed for locations array\n");
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+        int idx = 0;
+        while (sqlite3_step(stmt) == SQLITE_ROW && idx < row_count) {
+            location_t *loc = &(*locations)[idx];
+            loc->id = sqlite3_column_int(stmt, 0);
+            loc->user_id = sqlite3_column_int(stmt, 1);
+            loc->latitude = sqlite3_column_double(stmt, 2);
+            loc->longitude = sqlite3_column_double(stmt, 3);
+            loc->timestamp = sqlite3_column_int64(stmt, 4);
+            idx++;
+        }
+        *count = row_count;
+    }
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+int db_select_latest_locations_all_users_by_radius(double latitude, double longitude, double radius, location_t **locations, int *count) {
+    if (!g_db || !locations || !count) {
+        fprintf(stderr, "Invalid parameters for latest locations by radius\n");
+        return -1;
+    }
+    *locations = NULL;
+    *count = 0;
+
+    const char *sql =
+        "SELECT l.id, l.user_id, l.latitude, l.longitude, l.timestamp "
+        "FROM LOCATIONS l "
+        "WHERE l.id = ( "
+        "    SELECT id FROM LOCATIONS "
+        "    WHERE user_id = l.user_id "
+        "    ORDER BY timestamp DESC LIMIT 1 "
+        ") AND ("
+        "    (l.latitude - ?) * (l.latitude - ?) + "
+        "    (l.longitude - ?) * (l.longitude - ?) <= ? * ?"
+        ")";
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL prepare error: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+
+    sqlite3_bind_double(stmt, 1, latitude);
+    sqlite3_bind_double(stmt, 2, latitude);
+    sqlite3_bind_double(stmt, 3, longitude);
+    sqlite3_bind_double(stmt, 4, longitude);
+    sqlite3_bind_double(stmt, 5, radius);
+    sqlite3_bind_double(stmt, 6, radius);
+
+    // Önce kaç kayıt var say
+    int row_count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        row_count++;
+    }
+    sqlite3_reset(stmt);
+
+    if (row_count > 0) {
+        *locations = malloc(sizeof(location_t) * row_count);
+        if (!*locations) {
+            fprintf(stderr, "Memory allocation failed for locations array\n");
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+        int idx = 0;
+        while (sqlite3_step(stmt) == SQLITE_ROW && idx < row_count) {
+            location_t *loc = &(*locations)[idx];
+            loc->id = sqlite3_column_int(stmt, 0);
+            loc->user_id = sqlite3_column_int(stmt, 1);
+            loc->latitude = sqlite3_column_double(stmt, 2);
+            loc->longitude = sqlite3_column_double(stmt, 3);
+            loc->timestamp = sqlite3_column_int64(stmt, 4);
+            idx++;
+        }
+        *count = row_count;
+    }
+    sqlite3_finalize(stmt);
+    return 0;
+}

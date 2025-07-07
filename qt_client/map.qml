@@ -34,7 +34,7 @@ Rectangle {
             var marker = markers[i];
             if (!marker.isTemporary && marker.id !== undefined) {
                 var hasReply = replyIdList.indexOf(marker.id) !== -1;
-                console.log("[QML] Marker ID:", marker.id, "hasReply:", hasReply);
+                // console.log("[QML] Marker ID:", marker.id, "hasReply:", hasReply);
             }
         }
     }

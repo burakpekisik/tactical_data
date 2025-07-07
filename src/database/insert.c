@@ -567,3 +567,30 @@ int db_insert_chat_message(int room_id, const char* sender_id, const char* sende
         return sqlite3_last_insert_rowid(g_db);
     }
 }
+
+int db_insert_location(const location_t *location) {
+    char *zErrMsg = 0;
+    char sql[1024];
+    int rc;
+
+    if (!g_db) {
+        fprintf(stderr, "Database not initialized\n");
+        return -1;
+    }
+
+    snprintf(sql, sizeof(sql),
+        "INSERT INTO LOCATIONS (USER_ID, LATITUDE, LONGITUDE, TIMESTAMP) "
+        "VALUES (%d, %.6f, %.6f, %ld);",
+        location->user_id, location->latitude, location->longitude, location->timestamp);
+
+    rc = sqlite3_exec(g_db, sql, NULL, 0, &zErrMsg);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error inserting location: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return -1;
+    } else {
+        PRINTF_LOG("Location for unit ID %d inserted successfully\n", location->user_id);
+        return sqlite3_last_insert_rowid(g_db);
+    }
+}

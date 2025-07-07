@@ -39,6 +39,8 @@ class ClientWrapper : public QObject
     Q_OBJECT
 
 public:
+    bool testAllConnectionTypes(const QString& jsonString, bool encrypted);
+    void queryRepliesForReport(int reportId);
     /**
      * @brief Bağlantı durumu enum'u
      */
@@ -58,6 +60,11 @@ public:
         NotConnected = 2,
         InvalidData = 3
     };
+
+        // Admin bildirim dinleme için ayrı ECDH context ve anahtar
+    ecdh_context_t ecdhContextAdmin;
+    uint8_t aesKeyAdmin[32];
+    bool adminHandshakeCompleted = false;
 
     enum class ConnectionType { TCP, UDP, P2P };
 
@@ -136,6 +143,11 @@ public slots:
     void watchReportReplies();
     void sendAllPendingAdminReplies();  // Public'e taşındı
 
+private:
+    bool isAdminNotificationActive;
+    // Admin bildirim dinleme için ayrı socket
+    QTcpSocket *adminNotifySocket = nullptr;
+
     // --- Bağlantı türü kontrolü ---
     void switchConnectionType(ConnectionType type);
     QString getConnectionTypeString() const;
@@ -145,7 +157,7 @@ public slots:
     bool testP2pConnection();
 
     // --- Gelişmiş bağlantı test fonksiyonları ---
-    bool testAllConnectionTypes(const QString& jsonString, bool encrypted);
+    // bool testAllConnectionTypes(const QString& jsonString, bool encrypted); // Artık public
     bool connectToServerInternal(const QString& host, int port, ConnectionType type);
     void handleAdvancedError(const QString& error, bool canFallback);
 
@@ -154,7 +166,7 @@ public slots:
     void saveAdminReplyToPending(int reportId, const QString& message);
 
     // --- Rapor reply sorgulama ---
-    void queryRepliesForReport(int reportId);
+    // void queryRepliesForReport(int reportId); // Artık public
 
 signals:
     /**
@@ -254,6 +266,9 @@ private slots:
     void onSocketError();
     void onDataReceived();
     void onConnectionTimeout();
+    // Admin bildirim dinleme için slot
+    void onAdminNotifySocketReadyRead();
+    void onAdminNotifySocketDisconnected();
 
 private:
     // Network bileşenleri

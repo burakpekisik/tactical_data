@@ -25,11 +25,8 @@
 #include "json_utils.h"
 #include "database.h"
 #include "logger.h"
-
-/// @brief External client handler function
-void* handle_client(void* arg);
-/// @brief External protocol parser function  
-extern int parse_protocol_message(const char* message, char** command, char** filename, char** content);
+#include "handle_manager.h"
+#include "protocol_parser.h"
 
 /**
  * @brief TCP server'ı initialize eder

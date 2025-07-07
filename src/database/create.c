@@ -166,33 +166,46 @@ int db_create_tables(void) {
         "SQL error creating REPORTS table") != 0) return -1;
 
     if (exec_sql_with_log(
-        "CREATE TABLE IF NOT EXISTS chat_rooms ("
-        "room_id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "room_name TEXT NOT NULL,"
-        "creator_id TEXT NOT NULL,"
-        "room_type INTEGER NOT NULL,"
-        "max_users INTEGER NOT NULL DEFAULT 10,"
-        "current_users INTEGER NOT NULL DEFAULT 0,"
-        "allowed_user_ids TEXT,"
-        "room_key BLOB NOT NULL,"
-        "created_at INTEGER NOT NULL,"
-        "is_active INTEGER NOT NULL DEFAULT 1"
+        "CREATE TABLE IF NOT EXISTS CHAT_ROOMS ("
+        "ROOM_ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "ROOM_NAME TEXT NOT NULL,"
+        "CREATOR_ID TEXT NOT NULL,"
+        "ROOM_TYPE INTEGER NOT NULL,"
+        "MAX_USERS INTEGER NOT NULL DEFAULT 10,"
+        "CURRENT_USERS INTEGER NOT NULL DEFAULT 0,"
+        "ALLOWED_USER_IDS TEXT,"
+        "ROOM_KEY BLOB NOT NULL,"
+        "CREATED_AT INTEGER NOT NULL,"
+        "IS_ACTIVE INTEGER NOT NULL DEFAULT 1"
         ");",
-        "ROOMS table created successfully",
-        "SQL error creating ROOMS table") != 0) return -1;
+        "CHAT_ROOMS table created successfully",
+        "SQL error creating CHAT_ROOMS table") != 0) return -1;
 
     if (exec_sql_with_log(
-        "CREATE TABLE IF NOT EXISTS chat_messages ("
-        "message_id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "room_id INTEGER NOT NULL,"
-        "sender_id TEXT NOT NULL,"
-        "sender_name TEXT NOT NULL,"
-        "message TEXT NOT NULL," // Şifreli mesaj
-        "timestamp INTEGER NOT NULL,"
-        "FOREIGN KEY (room_id) REFERENCES chat_rooms(room_id) ON DELETE CASCADE"
+        "CREATE TABLE IF NOT EXISTS CHAT_MESSAGES ("
+        "MESSAGE_ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "ROOM_ID INTEGER NOT NULL,"
+        "SENDER_ID TEXT NOT NULL,"
+        "SENDER_NAME TEXT NOT NULL,"
+        "MESSAGE TEXT NOT NULL," // Şifreli mesaj
+        "TIMESTAMP INTEGER NOT NULL,"
+        "FOREIGN KEY (ROOM_ID) REFERENCES CHAT_ROOMS(ROOM_ID) ON DELETE CASCADE"
         ");",
-        "MESSAGES table created successfully",
-        "SQL error creating MESSAGES table") != 0) return -1;
+        "CHAT_MESSAGES table created successfully",
+        "SQL error creating CHAT_MESSAGES table") != 0) return -1;
+
+    if (exec_sql_with_log(
+        "CREATE TABLE IF NOT EXISTS LOCATIONS ("
+        "LOCATION_ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "USER_ID INTEGER NOT NULL,"
+        "UNIT_ID INTEGER NOT NULL,"
+        "LATITUDE REAL NOT NULL," 
+        "LONGITUDE REAL NOT NULL,"
+        "TIMESTAMP INTEGER NOT NULL,"
+        "FOREIGN KEY (USER_ID) REFERENCES USERS(ID) ON DELETE CASCADE"
+        ");",
+        "LOCATIONS table created successfully",
+        "SQL error creating LOCATIONS table") != 0) return -1;
 
     if (exec_sql_with_log(
         "PRAGMA foreign_keys = ON;",
@@ -200,14 +213,14 @@ int db_create_tables(void) {
         "SQL error enabling foreign keys") != 0) return -1;
 
     if (exec_sql_with_log(
-        "CREATE INDEX IF NOT EXISTS idx_chat_rooms_creator ON chat_rooms(creator_id);",
-        "ROOM INDEX for chat_rooms table created successfully",
-        "SQL error creating ROOM INDEX for chat_rooms") != 0) return -1;
+        "CREATE INDEX IF NOT EXISTS idx_chat_rooms_creator ON CHAT_ROOMS(CREATOR_ID);",
+        "ROOM INDEX for CHAT_ROOMS table created successfully",
+        "SQL error creating ROOM INDEX for CHAT_ROOMS") != 0) return -1;
 
     if (exec_sql_with_log(
-        "CREATE INDEX IF NOT EXISTS idx_chat_messages_room ON chat_messages(room_id, timestamp);",
-        "MESSAGE INDEX for chat_messages table created successfully",
-        "SQL error creating MESSAGE INDEX for chat_messages") != 0) return -1;
+        "CREATE INDEX IF NOT EXISTS idx_chat_messages_room ON CHAT_MESSAGES(ROOM_ID, TIMESTAMP);",
+        "MESSAGE INDEX for CHAT_MESSAGES table created successfully",
+        "SQL error creating MESSAGE INDEX for CHAT_MESSAGES") != 0) return -1;
 
     return 0;
 }

@@ -8,6 +8,7 @@
 #include "jwt_manager.h"
 #include "config.h"
 #include "logger.h"
+#include <cjson/cJSON.h>
 
 // JSON oluşturmak için cJSON kullanmak daha güvenli olur, örnek düz string ile
 int handle_report_query(const char* jwt_token, char* out_json, size_t out_json_size) {
@@ -64,6 +65,7 @@ int handle_report_query(const char* jwt_token, char* out_json, size_t out_json_s
 // Kullanıcının reply'larını JWT ile JSON olarak döndür
 int handle_reply_query(const char* jwt_token, char* out_json, size_t out_json_size) {
     LOG_SERVER_INFO("[REPLY_QUERY] handle_reply_query çağrıldı, jwt_token: %s", jwt_token ? jwt_token : "(null)");
+    LOG_SERVER_INFO("[REPLY_QUERY] handle_reply_query BAŞLANGIÇ, out_json_size=%zu", out_json_size);
     if (verify_jwt(jwt_token) != 0) {
         LOG_SERVER_ERROR("[REPLY_QUERY] JWT doğrulama başarısız! Token: %s", jwt_token ? jwt_token : "(null)");
         snprintf(out_json, out_json_size, "{\"error\":\"Invalid JWT\"}");
@@ -83,6 +85,7 @@ int handle_reply_query(const char* jwt_token, char* out_json, size_t out_json_si
     LOG_SERVER_INFO("[REPLY_QUERY] JWT payload: privilege=%d, user_id=%d (sub=%s)", privilege, user_id, sub_str ? sub_str : "(null)");
     reply_t *replies = NULL;
     int reply_count = 0;
+    LOG_SERVER_INFO("[REPLY_QUERY] db_select_replies_by_user çağrılıyor, user_id=%d", user_id);
     db_select_replies_by_user(user_id, &replies, &reply_count);
     LOG_SERVER_INFO("[REPLY_QUERY] Toplam reply sayısı: %d", reply_count);
     // JSON cevabı oluştur
@@ -90,6 +93,7 @@ int handle_reply_query(const char* jwt_token, char* out_json, size_t out_json_si
     size_t used = 0;
     used += snprintf(ptr + used, out_json_size - used, "{\"replies\":[");
     for (int i = 0; i < reply_count; ++i) {
+        LOG_SERVER_INFO("[REPLY_QUERY] reply[%d]: id=%d, user_id=%d, report_id=%d, message=%.64s, timestamp=%ld", i, replies[i].id, replies[i].user_id, replies[i].report_id, replies[i].message, replies[i].timestamp);
         char entry[1024];
         snprintf(entry, sizeof(entry),
             "{\"id\":%d,\"user_id\":%d,\"report_id\":%d,\"message\":\"%s\",\"timestamp\":%ld}",
@@ -100,6 +104,7 @@ int handle_reply_query(const char* jwt_token, char* out_json, size_t out_json_si
             break;
         }
     }
+    LOG_SERVER_INFO("[REPLY_QUERY] JSON cevabı: %.256s", out_json);
     snprintf(ptr + used, out_json_size - used, "]}");
     LOG_SERVER_INFO("[REPLY_QUERY] JSON cevabı hazır, uzunluk: %zu", strlen(out_json));
     if (replies) free(replies);
@@ -188,37 +193,52 @@ int handle_query_my_replies(const char* jwt_token, char* out_json, size_t out_js
     return 0;
 }
 
-int handle_query_replies_to_one_report(const char* jwt_token, char* out_json, size_t out_json_size, int report_id) {
+int handle_query_replies_to_one_report(const char* jwt_token, cJSON* root, char* out_json, size_t out_json_size) {
     LOG_SERVER_INFO("[QUERY_REPLIES_ONE_REPORT] handle_query_replies_one_report çağrıldı, jwt_token: %s", jwt_token ? jwt_token : "(null)");
-    
+
     if (verify_jwt(jwt_token) != 0) {
         LOG_SERVER_ERROR("[QUERY_REPLIES_ONE_REPORT] JWT doğrulama başarısız! Token: %s", jwt_token ? jwt_token : "(null)");
         snprintf(out_json, out_json_size, "{\"error\":\"Invalid JWT\"}");
         return -1;
     }
-    
+
     jwt_t *jwt;
     int decode_result = jwt_decode(&jwt, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
     LOG_SERVER_INFO("[QUERY_REPLIES_ONE_REPORT] jwt_decode result: %d", decode_result);
-    
+
     if (decode_result != 0) {
         LOG_SERVER_ERROR("[QUERY_REPLIES_ONE_REPORT] jwt_decode başarısız! Token: %s", jwt_token ? jwt_token : "(null)");
         snprintf(out_json, out_json_size, "{\"error\":\"JWT decode failed\"}");
         return -1;
     }
-    
+
     const char* sub_str = jwt_get_grant(jwt, "sub");
     int user_id = sub_str ? atoi(sub_str) : -1;
     int privilege = jwt_get_grant_int(jwt, "privilege");
     LOG_SERVER_INFO("[QUERY_REPLIES_ONE_REPORT] JWT payload: user_id=%d, privilege=%d (sub=%s)", user_id, privilege, sub_str ? sub_str : "(null)");
-    
+
     if (user_id <= 0) {
         LOG_SERVER_ERROR("[QUERY_REPLIES_ONE_REPORT] Geçersiz user_id: %d", user_id);
         snprintf(out_json, out_json_size, "{\"error\":\"Invalid user_id\"}");
         jwt_free(jwt);
         return -1;
     }
-    
+
+    // report_id'yi JSON'dan çek
+    int report_id = -1;
+    cJSON* report_id_item = cJSON_GetObjectItem(root, "report_id");
+    if (report_id_item && cJSON_IsNumber(report_id_item)) {
+        report_id = report_id_item->valueint;
+    } else if (report_id_item && cJSON_IsString(report_id_item)) {
+        report_id = atoi(report_id_item->valuestring);
+    }
+    if (report_id <= 0) {
+        LOG_SERVER_ERROR("[QUERY_REPLIES_ONE_REPORT] report_id bulunamadı veya geçersiz");
+        snprintf(out_json, out_json_size, "{\"error\":\"report_id bulunamadı veya geçersiz\"}");
+        jwt_free(jwt);
+        return -1;
+    }
+
     // Güvenlik kontrolü: Rapor sahibini kontrol et
     if (privilege != ADMIN_PRIVILEGE) {
         // Admin değilse, sadece kendi raporlarının reply'larını görebilir
@@ -229,22 +249,22 @@ int handle_query_replies_to_one_report(const char* jwt_token, char* out_json, si
             jwt_free(jwt);
             return -1;
         }
-        
+
         if (report.user_id != user_id) {
             LOG_SERVER_ERROR("[QUERY_REPLIES_ONE_REPORT] Yetkisiz erişim: user_id=%d, report_owner=%d, report_id=%d", user_id, report.user_id, report_id);
             snprintf(out_json, out_json_size, "{\"error\":\"Unauthorized: You can only view replies to your own reports\"}");
             jwt_free(jwt);
             return -1;
         }
-        
+
         LOG_SERVER_INFO("[QUERY_REPLIES_ONE_REPORT] Yetki kontrolü başarılı: user_id=%d owns report_id=%d", user_id, report_id);
     } else {
         LOG_SERVER_INFO("[QUERY_REPLIES_ONE_REPORT] Admin yetkisi ile erişim: user_id=%d, report_id=%d", user_id, report_id);
     }
-    
+
     reply_t *replies = NULL;
     int reply_count = 0;
-    
+
     // Kullanıcının raporlarına gelen reply'ları çek (JOIN kullanarak)
     int result = db_select_replies_by_report(report_id, &replies, &reply_count);
     if (result != 0) {
@@ -255,29 +275,29 @@ int handle_query_replies_to_one_report(const char* jwt_token, char* out_json, si
     }
 
     LOG_SERVER_INFO("[QUERY_REPLIES_ONE_REPORT] Toplam reply sayısı: %d, report id: %d", reply_count, report_id);
-    
+
     // JSON cevabı oluştur
     char* ptr = out_json;
     size_t used = 0;
     used += snprintf(ptr + used, out_json_size - used, "{\"replies\":[");
-    
+
     for (int i = 0; i < reply_count; ++i) {
         char entry[1024];
         snprintf(entry, sizeof(entry),
             "{\"id\":%d,\"admin_user_id\":%d,\"report_id\":%d,\"message\":\"%s\",\"timestamp\":%ld}",
             replies[i].id, replies[i].user_id, replies[i].report_id, replies[i].message, replies[i].timestamp);
-        
+
         used += snprintf(ptr + used, out_json_size - used, "%s%s", entry, (i < reply_count - 1) ? "," : "");
-        
+
         if (used >= out_json_size) {
             LOG_SERVER_ERROR("[QUERY_REPLIES_ONE_REPORT] JSON buffer overflow! used=%zu, out_json_size=%zu", used, out_json_size);
             break;
         }
     }
-    
+
     snprintf(ptr + used, out_json_size - used, "]}");
     LOG_SERVER_INFO("[QUERY_REPLIES_ONE_REPORT] JSON cevabı hazır, uzunluk: %zu", strlen(out_json));
-    
+
     if (replies) free(replies);
     jwt_free(jwt);
     return 0;

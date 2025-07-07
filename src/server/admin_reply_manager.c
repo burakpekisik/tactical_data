@@ -8,7 +8,9 @@
 #include <pthread.h>
 #include "database.h"
 #include "config.h"
-
+#include "json_utils.h"
+#include "jwt.h"
+#include "logger.h"
 
 static user_socket_map_t user_map[MAX_ACTIVE_USERS];
 static int user_map_count = 0;
@@ -118,5 +120,43 @@ bool admin_reply_manager_send_reply(int report_id, const char* message, int admi
     } else {
         perror("[ADMIN_REPLY][send_reply] send hatası");
         return false;
+    }
+}
+
+// Admin reply işlemini yöneten handler fonksiyonu
+void handle_reply_report(const char* decrypted_json, const char* jwt_token, int client_socket, char* out, size_t out_size) {
+    PRINTF_LOG("[DEBUG] handle_reply_report çağrıldı\n");
+    admin_reply_t* reply_data = parse_admin_reply_json(decrypted_json);
+    if (reply_data != NULL && reply_data->is_valid) {
+        PRINTF_LOG("[DEBUG] Admin reply parse edildi: report_id=%d, msg=%s\n", reply_data->report_id, reply_data->msg);
+        // Admin'in user_id'sini JWT'den al
+        int admin_user_id = -1;
+        if (jwt_token) {
+            jwt_t *jwt_ptr = NULL;
+            if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+                const char* sub = jwt_get_grant(jwt_ptr, "sub");
+                if (sub) admin_user_id = atoi(sub);
+                jwt_free(jwt_ptr);
+            }
+        }
+        if (admin_user_id <= 0) {
+            snprintf(out, out_size, "HATA: Admin kullanıcı kimliği belirlenemedi");
+            free(reply_data);
+            return;
+        }
+        // admin_reply_t'yi reply_t'ye dönüştür
+        reply_t db_reply;
+        db_reply.user_id = admin_user_id;  // ÖNEMLİ: Admin'in user_id'si kullanılıyor
+        db_reply.report_id = reply_data->report_id;
+        strncpy(db_reply.message, reply_data->msg, sizeof(db_reply.message) - 1);
+        db_reply.message[sizeof(db_reply.message) - 1] = '\0';
+        db_reply.timestamp = time(NULL);
+        // Reply sahibine bildirim gönder (admin_reply_manager kullanarak)
+        admin_reply_manager_send_reply(reply_data->report_id, reply_data->msg, client_socket);
+
+        free(reply_data);
+    } else {
+        snprintf(out, out_size, "HATA: Admin reply verisi geçersiz format");
+        if (reply_data) free(reply_data);
     }
 }

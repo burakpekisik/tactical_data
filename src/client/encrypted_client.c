@@ -1153,8 +1153,6 @@ void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token)
     }
     PRINTF_LOG("[CLIENT][REPLY_QUERY] Mesaj gönderildi (%zd bytes), yanıt bekleniyor...\n", bytes_sent);
     
-    PRINTF_LOG("[CLIENT][REPLY_QUERY] Mesaj gönderildi, yanıt bekleniyor...\n");
-    
     // --- Parçalı yanıt toplama (REPLY_QUERY için) ---
     char* all_hex_data = NULL;
     size_t all_hex_len = 0;
@@ -1167,6 +1165,8 @@ void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token)
     size_t streambuf_len = 0;
     
     while (!done) {
+        PRINTF_LOG("[CLIENT][RECV] Yanıt bekleniyor...\n");
+        PRINTF_LOG("[CLIENT][RECV] Toplam buffer: %zu bytes, ilk 100 karakter: %.100s\n", streambuf_len, streambuf);
         // Eğer streambuf'da yeterli veri yoksa, recv ile tamamla
         if (streambuf_len < 4096) {
             ssize_t pn = recv(conn->socket, streambuf + streambuf_len, sizeof(streambuf) - streambuf_len - 1, 0);
@@ -1180,10 +1180,14 @@ void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token)
             streambuf[streambuf_len] = '\0';
             PRINTF_LOG("[CLIENT][RECV] Toplam buffer: %zu bytes, ilk 100 karakter: %.100s\n", streambuf_len, streambuf);
         }
+
+        PRINTF_LOG("[CLIENT][RECV] Gelen verinin ilk 100 karakteri: %.100s\n", streambuf);
+
         
         // ENCRYPTED:REPLY_QUERY: formatı kontrol et (tek parça encrypted)
         const char* single_encrypted_prefix = "ENCRYPTED:REPLY_QUERY:";
         if (strncmp(streambuf, single_encrypted_prefix, strlen(single_encrypted_prefix)) == 0) {
+            PRINTF_LOG("[CLIENT][SINGLE_ENC] Tek parça ENCRYPTED:REPLY_QUERY yanıtı alınıyor...\n");
             const char* hex_data = streambuf + strlen(single_encrypted_prefix);
             char* newline = strchr(hex_data, '\n');
             size_t hex_len;
@@ -1217,6 +1221,7 @@ void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token)
         // REPLY_QUERY: formatı kontrol et (tek parça plain)
         const char* single_plain_prefix = "REPLY_QUERY:";
         if (strncmp(streambuf, single_plain_prefix, strlen(single_plain_prefix)) == 0) {
+            PRINTF_LOG("[CLIENT][REPLY_QUERY] Tek parça REPLY_QUERY yanıtı kontrol ediliyor...\n");
             const char* plain_data = streambuf + strlen(single_plain_prefix);
             const char* newline = strchr(plain_data, '\n');
             if (!newline) newline = plain_data + strlen(plain_data); // Eğer \n yoksa sonuna kadar
@@ -1233,6 +1238,7 @@ void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token)
         // ENCRYPTED_PART header'ı ara (çok parçalı encrypted)
         char* encrypted_header = strstr(streambuf, "ENCRYPTED_PART:");
         if (encrypted_header) {
+            PRINTF_LOG("[CLIENT][ENC_PART] Çok parçalı ENCRYPTED_PART header bulundu: %s\n", encrypted_header);
             char* after_header = encrypted_header + 15;
             int idx = 0, total = 0;
             size_t plen = 0;
@@ -1285,61 +1291,6 @@ void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token)
             continue;
         }
         
-        // PLAIN_PART header'ı ara (çok parçalı plain)
-        char* plain_header = strstr(streambuf, "PLAIN_PART:REPLY_QUERY:");
-        if (plain_header) {
-            char* after_header = plain_header + 23; // "PLAIN_PART:REPLY_QUERY:" uzunluğu
-            int idx = 0, total = 0;
-            size_t plen = 0;
-            int n = sscanf(after_header, "%d:%d:%zu:", &idx, &total, &plen);
-            if (n != 3) {
-                PRINTF_LOG("[CLIENT][PARSE] PLAIN_PART header parse hatası!\n");
-                break;
-            }
-            
-            // Header'ın sonunu bul
-            char* data_start = after_header;
-            int colon_count = 0;
-            while (*data_start && colon_count < 3) {
-                if (*data_start == ':') colon_count++;
-                data_start++;
-            }
-            
-            // Yeterli plain verisi var mı kontrol et
-            size_t available = streambuf + streambuf_len - data_start;
-            while (available < plen && recv_count < 10) {
-                ssize_t pn = recv(conn->socket, streambuf + streambuf_len, sizeof(streambuf) - streambuf_len - 1, 0);
-                recv_count++;
-                PRINTF_LOG("[CLIENT][RECV] plain_data tamamlanıyor, recv_count=%d, bytes=%zd\n", recv_count, pn);
-                if (pn <= 0) break;
-                streambuf_len += pn;
-                streambuf[streambuf_len] = '\0';
-                available = streambuf + streambuf_len - data_start;
-            }
-            
-            PRINTF_LOG("[CLIENT][PLAIN_PART] PLAIN_PART idx=%d/%d, plen=%zu, available=%zu\n", idx, total, plen, available);
-            
-            all_plain_data = realloc(all_plain_data, all_plain_len + plen + 1);
-            memcpy(all_plain_data + all_plain_len, data_start, plen);
-            all_plain_len += plen;
-            all_plain_data[all_plain_len] = '\0';
-            received_parts++;
-            if (expected_parts == 0) expected_parts = total;
-            
-            // Tüketilen veriyi buffer'dan çıkar
-            size_t consumed = (data_start - streambuf) + plen;
-            memmove(streambuf, streambuf + consumed, streambuf_len - consumed);
-            streambuf_len -= consumed;
-            streambuf[streambuf_len] = '\0';
-            
-            if (received_parts >= expected_parts) { 
-                PRINTF_LOG("[CLIENT][PLAIN_PART] Tüm PLAIN parçalar alındı: %d/%d\n", received_parts, expected_parts);
-                done = 1; 
-                break; 
-            }
-            continue;
-        }
-        
         // Hiçbir format bulunamadı, çok fazla deneme yapıldı
         if (recv_count > 5) {
             PRINTF_LOG("[CLIENT][TIMEOUT] Çok fazla recv denemesi yapıldı, çıkılıyor...\n");
@@ -1353,14 +1304,30 @@ void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token)
     // Sonuçları işle
     if (all_hex_data && all_hex_len > 16) {
         PRINTF_LOG("[CLIENT][DECRYPT] Encrypted data çözülüyor...\n");
-        char* decrypted = decrypt_protocol_message(all_hex_data, conn->ecdh_ctx.aes_key);
-        if (decrypted) {
-            PRINTF_CLIENT("\n[REPLY_QUERY] Şifreli cevap çözüldü:\n%s\n", decrypted);
-            free(decrypted);
+        size_t encrypted_length;
+        uint8_t* encrypted_bytes = hex_to_bytes(all_hex_data, &encrypted_length);
+        if (!encrypted_bytes || encrypted_length < CRYPTO_IV_SIZE) {
+            PRINTF_LOG("[CLIENT][DECRYPT] Hex decode hatası!\n");
+            if (encrypted_bytes) free(encrypted_bytes);
+            free(all_hex_data);
+            return;
+        }
+        uint8_t iv[CRYPTO_IV_SIZE];
+        memcpy(iv, encrypted_bytes, CRYPTO_IV_SIZE);
+        char* decrypted_json = decrypt_data(
+            encrypted_bytes + CRYPTO_IV_SIZE,
+            encrypted_length - CRYPTO_IV_SIZE,
+            conn->ecdh_ctx.aes_key,
+            iv
+        );
+        free(encrypted_bytes);
+        free(all_hex_data);
+        if (decrypted_json) {
+            PRINTF_CLIENT("\n[REPLY_QUERY] Şifreli cevap çözüldü:\n%s\n", decrypted_json);
+            free(decrypted_json);
         } else {
             PRINTF_CLIENT("Şifreli cevap çözülemedi!\n");
         }
-        free(all_hex_data);
     } else if (all_plain_data && all_plain_len > 0) {
         PRINTF_CLIENT("\n[REPLY_QUERY] Plain cevap alındı:\n%s\n", all_plain_data);
         free(all_plain_data);
@@ -1407,12 +1374,14 @@ void query_my_replies(client_connection_t* conn, const char* jwt_token) {
     // --- Parçalı yanıt toplama (QUERY_MY_REPLIES için) ---
     char* all_hex_data = NULL;
     size_t all_hex_len = 0;
-    int recv_count = 0;
+    int expected_parts = 0, received_parts = 0;
     int done = 0;
+    int recv_count = 0;
     char streambuf[65536];
     size_t streambuf_len = 0;
-    
+
     while (!done) {
+        PRINTF_LOG("[CLIENT][RECV] Yanıt bekleniyor...\n");
         // Eğer streambuf'da yeterli veri yoksa, recv ile tamamla
         if (streambuf_len < 4096) {
             ssize_t pn = recv(conn->socket, streambuf + streambuf_len, sizeof(streambuf) - streambuf_len - 1, 0);
@@ -1424,16 +1393,16 @@ void query_my_replies(client_connection_t* conn, const char* jwt_token) {
             }
             streambuf_len += pn;
             streambuf[streambuf_len] = '\0';
-            PRINTF_LOG("[CLIENT][RECV] Toplam buffer: %zu bytes\n", streambuf_len);
+            PRINTF_LOG("[CLIENT][RECV] Toplam buffer: %zu bytes, ilk 100 karakter: %.100s\n", streambuf_len, streambuf);
         }
-        
+
         // ENCRYPTED:QUERY_MY_REPLIES: formatı kontrol et (tek parça encrypted)
         const char* single_encrypted_prefix = "ENCRYPTED:QUERY_MY_REPLIES:";
         if (strncmp(streambuf, single_encrypted_prefix, strlen(single_encrypted_prefix)) == 0) {
+            PRINTF_LOG("[CLIENT][SINGLE_ENC] Tek parça ENCRYPTED:QUERY_MY_REPLIES yanıtı alınıyor...\n");
             const char* hex_data = streambuf + strlen(single_encrypted_prefix);
             char* newline = strchr(hex_data, '\n');
             size_t hex_len;
-            
             if (newline) {
                 hex_len = newline - hex_data;
             } else {
@@ -1442,9 +1411,7 @@ void query_my_replies(client_connection_t* conn, const char* jwt_token) {
                     hex_len--;
                 }
             }
-            
             PRINTF_LOG("[CLIENT][SINGLE_ENC] Hex veri uzunluğu: %zu\n", hex_len);
-            
             if (hex_len > 0) {
                 all_hex_data = malloc(hex_len + 1);
                 memcpy(all_hex_data, hex_data, hex_len);
@@ -1452,18 +1419,71 @@ void query_my_replies(client_connection_t* conn, const char* jwt_token) {
                 all_hex_len = hex_len;
                 PRINTF_LOG("[CLIENT][SINGLE_ENC] Tek parça ENCRYPTED:QUERY_MY_REPLIES yanıtı alındı, hex_len=%zu\n", hex_len);
                 done = 1;
+                break;
             }
-        } else {
-            // Başka format veya veri bekleniyor
-            PRINTF_LOG("[CLIENT] Beklenen format bulunamadı, daha fazla veri bekleniyor...\n");
+        }
+
+        // ENCRYPTED_PART: formatı kontrol et (çok parçalı encrypted, yeni format)
+        char* encrypted_header = strstr(streambuf, "ENCRYPTED_PART:");
+        if (encrypted_header) {
+            PRINTF_LOG("[CLIENT][ENC_PART] Çok parçalı ENCRYPTED_PART header bulundu: %s\n", encrypted_header);
+            char* after_header = encrypted_header + strlen("ENCRYPTED_PART:");
+            int idx = 0, total = 0;
+            size_t plen = 0;
+            int n = sscanf(after_header, "%d:%d:%zu:", &idx, &total, &plen);
+            if (n != 3) {
+                PRINTF_LOG("[CLIENT][PARSE] ENCRYPTED_PART header parse hatası!\n");
+                break;
+            }
+            // Header'ın sonunu bul
+            char* hex_start = after_header;
+            int colon_count = 0;
+            while (*hex_start && colon_count < 3) {
+                if (*hex_start == ':') colon_count++;
+                hex_start++;
+            }
+            // Yeterli hex verisi var mı kontrol et
+            size_t available = streambuf + streambuf_len - hex_start;
+            while (available < plen && recv_count < 10) {
+                ssize_t pn = recv(conn->socket, streambuf + streambuf_len, sizeof(streambuf) - streambuf_len - 1, 0);
+                recv_count++;
+                PRINTF_LOG("[CLIENT][RECV] hex_data tamamlanıyor, recv_count=%d, bytes=%zd\n", recv_count, pn);
+                if (pn <= 0) break;
+                streambuf_len += pn;
+                streambuf[streambuf_len] = '\0';
+                available = streambuf + streambuf_len - hex_start;
+            }
+            PRINTF_LOG("[CLIENT][ENC_PART] ENCRYPTED_PART idx=%d/%d, plen=%zu, available=%zu\n", idx, total, plen, available);
+            all_hex_data = realloc(all_hex_data, all_hex_len + plen + 1);
+            memcpy(all_hex_data + all_hex_len, hex_start, plen);
+            all_hex_len += plen;
+            all_hex_data[all_hex_len] = '\0';
+            received_parts++;
+            if (expected_parts == 0) expected_parts = total;
+            // Tüketilen veriyi buffer'dan çıkar
+            size_t consumed = (hex_start - streambuf) + plen;
+            memmove(streambuf, streambuf + consumed, streambuf_len - consumed);
+            streambuf_len -= consumed;
+            streambuf[streambuf_len] = '\0';
+            if (received_parts >= expected_parts) {
+                PRINTF_LOG("[CLIENT][ENC_PART] Tüm ENCRYPTED parçalar alındı: %d/%d\n", received_parts, expected_parts);
+                done = 1;
+                break;
+            }
             continue;
         }
+
+        // Hiçbir format bulunamadı, daha fazla veri bekleniyor
+        PRINTF_LOG("[CLIENT] Beklenen format bulunamadı, daha fazla veri bekleniyor...\n");
+        if (recv_count > 10) {
+            PRINTF_LOG("[CLIENT][TIMEOUT] Çok fazla recv denemesi yapıldı, çıkılıyor...\n");
+            break;
+        }
     }
-    
+
     // Decrypt işlemi
     if (all_hex_data && all_hex_len > 0) {
         PRINTF_LOG("[CLIENT][DECRYPT] Hex veri decrypt ediliyor...\n");
-        
         size_t encrypted_length;
         uint8_t* encrypted_bytes = hex_to_bytes(all_hex_data, &encrypted_length);
         if (!encrypted_bytes || encrypted_length < CRYPTO_IV_SIZE) {
@@ -1472,20 +1492,16 @@ void query_my_replies(client_connection_t* conn, const char* jwt_token) {
             free(all_hex_data);
             return;
         }
-        
         uint8_t iv[CRYPTO_IV_SIZE];
         memcpy(iv, encrypted_bytes, CRYPTO_IV_SIZE);
-        
         char* decrypted_json = decrypt_data(
             encrypted_bytes + CRYPTO_IV_SIZE,
             encrypted_length - CRYPTO_IV_SIZE,
             conn->ecdh_ctx.aes_key,
             iv
         );
-        
         free(encrypted_bytes);
         free(all_hex_data);
-        
         if (decrypted_json) {
             PRINTF_LOG("[CLIENT][DECRYPT] Decrypt başarılı!\n");
             PRINTF_LOG("\n=== RAPORLARIMA GELEN CEVAPLAR ===\n");

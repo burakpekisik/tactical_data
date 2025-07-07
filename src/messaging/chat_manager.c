@@ -297,7 +297,7 @@ int enter_chat_session(client_connection_t* conn, const char* jwt_token, int roo
         }
     }
 
-    PRINTF_CLIENT("[LEAVE] Oda ID: %d, Oda Anahtarı: %s\n", room_id, bytes_to_hex(room_key, ROOM_KEY_SIZE));
+    // PRINTF_CLIENT("[LEAVE] Oda ID: %d, Oda Anahtarı: %s\n", room_id, bytes_to_hex(room_key, ROOM_KEY_SIZE));
     // Odadan çık
     send_leave_room_request(conn, jwt_token, room_id);
     if (room_key) {

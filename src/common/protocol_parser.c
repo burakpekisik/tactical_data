@@ -89,13 +89,13 @@ int parse_encrypted_protocol_message(const char* message, char** command, char**
     size_t msglen = strlen(message);
     while (msglen > 0 && (message[msglen-1] == '\n' || message[msglen-1] == '\r' || message[msglen-1] == ' ')) msglen--;
     char* trimmed = strndup(message, msglen);
-    printf("[PROTOCOL][DEBUG] trimmed message: '%s'\n", trimmed);
+    // printf("[PROTOCOL][DEBUG] trimmed message: '%s'\n", trimmed);
     char* first_colon = strchr(trimmed, ':');
-    if (!first_colon) { printf("[PROTOCOL][ERROR] 1. ':' bulunamadı\n"); free(trimmed); return -1; }
+    if (!first_colon) { printf("[PROTOCOL][ERROR] 1. ':' bulunamadı, gelen: '%s'\n", trimmed); free(trimmed); return -1; }
     char* second_colon = strchr(first_colon + 1, ':');
-    if (!second_colon) { printf("[PROTOCOL][ERROR] 2. ':' bulunamadı\n"); free(trimmed); return -1; }
+    if (!second_colon) { printf("[PROTOCOL][ERROR] 2. ':' bulunamadı, gelen: '%s'\n", trimmed); free(trimmed); return -1; }
     char* third_colon = strchr(second_colon + 1, ':');
-    if (!third_colon) { printf("[PROTOCOL][ERROR] 3. ':' bulunamadı\n"); free(trimmed); return -1; }
+    if (!third_colon) { printf("[PROTOCOL][ERROR] 3. ':' bulunamadı, gelen: '%s'\n", trimmed); free(trimmed); return -1; }
     size_t command_length = first_colon - trimmed;
     size_t filename_length = second_colon - first_colon - 1;
     size_t hex_length = third_colon - second_colon - 1;
@@ -105,7 +105,7 @@ int parse_encrypted_protocol_message(const char* message, char** command, char**
     *hex_data = malloc(hex_length + 1);
     *jwt_token = malloc(jwt_length + 1);
     if (!*command || !*filename || !*hex_data || !*jwt_token) {
-        printf("[PROTOCOL][ERROR] malloc başarısız\n");
+        printf("[PROTOCOL][ERROR] malloc başarısız (command_len=%zu, filename_len=%zu, hex_len=%zu, jwt_len=%zu)\n", command_length, filename_length, hex_length, jwt_length);
         if (*command) free(*command);
         if (*filename) free(*filename);
         if (*hex_data) free(*hex_data);
