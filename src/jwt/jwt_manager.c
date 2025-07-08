@@ -5,8 +5,9 @@
 #include <jwt.h>
 #include "logger.h"
 #include "config.h"
+#include "database.h"
 
-char * generate_jwt(const char* user_id, const char* name, const char* surname, int privilege) {
+char* generate_jwt(const char* user_id, const char* name, const char* surname, int privilege) {
     jwt_t *jwt;
     char *out;
     time_t current_time = time(NULL);
@@ -24,7 +25,7 @@ char * generate_jwt(const char* user_id, const char* name, const char* surname, 
     return out;
 }
 
-int verify_jwt(const char *token) {
+int verify_jwt(const char* token) {
     jwt_t *jwt;
     int rc = jwt_decode(&jwt, token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
     PRINTF_LOG("verify_jwt: token=%s, decode_result=%d\n", token, rc);
@@ -44,7 +45,7 @@ int verify_jwt(const char *token) {
     return 0; // JWT is valid
 }
 
-int get_jwt_privilege(const char *token) {
+int get_jwt_privilege(const char* token) {
     jwt_t *jwt;
     if (jwt_decode(&jwt, token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) != 0) {
         fprintf(stderr, "JWT decode error\n");
@@ -55,7 +56,7 @@ int get_jwt_privilege(const char *token) {
     return privilege; // Return the privilege level
 }
 
-char * get_user_id_and_name(const char * token) {
+char* get_user_id_and_name(const char* token) {
     jwt_t *jwt;
     if (jwt_decode(&jwt, token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) != 0) {
         fprintf(stderr, "JWT decode error\n");
@@ -71,4 +72,26 @@ char * get_user_id_and_name(const char * token) {
     sprintf(result, "%s %s", user_id, name);
     jwt_free(jwt);
     return result; // Return user ID and name
+}
+
+// JWT'den user_id çekip db_select_user_by_id ile unit_id döndüren fonksiyon
+int jwt_get_unit_id(const char* token) {
+    jwt_t *jwt;
+    if (jwt_decode(&jwt, token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) != 0) {
+        fprintf(stderr, "JWT decode error\n");
+        return -1; // JWT verification failed
+    }
+    const char *user_id = jwt_get_grant(jwt, "sub");
+    if (!user_id) {
+        jwt_free(jwt);
+        return -1;
+    }
+    int user_id_int = atoi(user_id);
+    int unit_id = -1;
+    if (db_select_user_by_id(user_id_int, &unit_id, NULL, NULL, NULL, NULL, NULL, NULL, NULL) != 0) {
+        jwt_free(jwt);
+        return -1; // Kullanıcı bulunamadı
+    }
+    jwt_free(jwt);
+    return unit_id;
 }

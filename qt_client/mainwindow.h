@@ -53,13 +53,12 @@ private slots:
     void onLogMessage(const QString& message);
     void onReportsReceived(const QJsonArray& reports, int privilege); // <-- RAPOR SLOTU
     void onAdminReplyToReport();
-    void onQueryMyReplies();
-    void onListenForNotifications();
+    void onqueryMyReplies();
     void onTestConnections();
-    void onAdminNotificationReceived(const QString& notification);
     void onReplyQueryResultReceived(const QJsonArray& replies);
     void onNewReportReplyReceived(int reportId, const QString& message);
     void onWatchReportReplies();
+    void onAdminNotificationReceived(const QString& notification);
     void onConnectionTypeChanged(ClientWrapper::ConnectionType type);
     void onFallbackStatusChanged(const QString& status);
     void onFallbackTestResult(const QString& connectionType, bool success, const QString& message);
@@ -70,10 +69,6 @@ private slots:
     void stopPeriodicLocationUpdates();
     void onPeriodicLocationUpdate();
     
-    // Admin bildirim dinleyicisi otomatik kontrol slots
-    void onAutoAdminNotificationCheck();
-    void startAutoAdminNotificationListener();
-    void stopAutoAdminNotificationListener();
     
     // Bildirim dialog slots
     void showNotificationDialog(const QString& notification);
@@ -85,6 +80,7 @@ private slots:
     void onFindMyLocation();
     void onPositionUpdated(const QGeoPositionInfo &info);
     void onPositionError(QGeoPositionInfoSource::Error error);
+    void onListenForNotifications();
 
 private:
     void setupUI();
@@ -163,9 +159,6 @@ private:
     bool autoCheckEnabled = true;  // Default olarak açık
     
     // Admin bildirim dinleyicisi otomatik çalışma kontrolü
-    QTimer *adminNotificationTimer;
-    bool isAdminNotificationActive = false;
-    int adminNotificationRetryCount = 0;
     static const int MAX_ADMIN_NOTIFICATION_RETRY = 5;
     
     // Konum servisleri

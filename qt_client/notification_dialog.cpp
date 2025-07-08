@@ -14,6 +14,16 @@
 #include <QFontMetrics>
 #include <QDateTime>
 #include <QRegularExpression>
+#include <QGuiApplication>
+
+static bool supportsWindowOpacity() {
+#if defined(Q_OS_WIN)
+    return true;
+#else
+    QString platform = QGuiApplication::platformName();
+    return (platform == "xcb" || platform == "windows" || platform == "cocoa");
+#endif
+}
 
 /**
  * @brief NotificationDialog constructor'ı
@@ -110,23 +120,23 @@ void NotificationDialog::showWithAnimation()
         int y = (screenGeometry.height() - height()) / 2;
         move(x, y);
     }
-    
-    // İlk başta görünmez yap
-    setWindowOpacity(0.0);
-    show();
-    
-    // Fade-in animasyonu
-    showAnimation = new QPropertyAnimation(this, "windowOpacity", this);
-    showAnimation->setDuration(500);
-    showAnimation->setStartValue(0.0);
-    showAnimation->setEndValue(1.0);
-    showAnimation->setEasingCurve(QEasingCurve::OutCubic);
-    showAnimation->start();
-    
+
+    if (supportsWindowOpacity()) {
+        setWindowOpacity(0.0);
+        show();
+        // Fade-in animasyonu
+        showAnimation = new QPropertyAnimation(this, "windowOpacity", this);
+        showAnimation->setDuration(500);
+        showAnimation->setStartValue(0.0);
+        showAnimation->setEndValue(1.0);
+        showAnimation->setEasingCurve(QEasingCurve::OutCubic);
+        showAnimation->start();
+    } else {
+        show();
+    }
+
     // Otomatik kapatma timer'ını başlat
     autoCloseTimer->start();
-    
-    // Dialog açıldığında ses çıkar (sistem bildirimi)
     QApplication::beep();
 }
 
@@ -500,20 +510,17 @@ void NotificationDialog::onCloseDialog()
     if (autoCloseTimer && autoCloseTimer->isActive()) {
         autoCloseTimer->stop();
     }
-    
     emit dialogClosed();
-    
-    // Fade-out animasyonu ile kapat
-    if (showAnimation) {
+    if (supportsWindowOpacity() && showAnimation) {
         showAnimation->stop();
+        QPropertyAnimation *closeAnimation = new QPropertyAnimation(this, "windowOpacity", this);
+        closeAnimation->setDuration(300);
+        closeAnimation->setStartValue(windowOpacity());
+        closeAnimation->setEndValue(0.0);
+        closeAnimation->setEasingCurve(QEasingCurve::InCubic);
+        connect(closeAnimation, &QPropertyAnimation::finished, this, &QDialog::close);
+        closeAnimation->start();
+    } else {
+        close();
     }
-    
-    QPropertyAnimation *closeAnimation = new QPropertyAnimation(this, "windowOpacity", this);
-    closeAnimation->setDuration(300);
-    closeAnimation->setStartValue(windowOpacity());
-    closeAnimation->setEndValue(0.0);
-    closeAnimation->setEasingCurve(QEasingCurve::InCubic);
-    
-    connect(closeAnimation, &QPropertyAnimation::finished, this, &QDialog::close);
-    closeAnimation->start();
 }

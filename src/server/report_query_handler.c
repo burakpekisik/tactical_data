@@ -169,7 +169,7 @@ int handle_query_my_replies(const char* jwt_token, char* out_json, size_t out_js
     // JSON cevabı oluştur
     char* ptr = out_json;
     size_t used = 0;
-    used += snprintf(ptr + used, out_json_size - used, "{\"my_replies\":[");
+    used += snprintf(ptr + used, out_json_size - used, "{\"replies\":[");
     
     for (int i = 0; i < reply_count; ++i) {
         char entry[1024];

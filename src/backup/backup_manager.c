@@ -7,6 +7,7 @@
 #include "config.h"
 #include "backup_manager.h"
 #include "logger.h"
+#include <unistd.h>
 /**
  * 
  * @brief Veritabanı dosyasını zaman damgalı olarak yedekler.

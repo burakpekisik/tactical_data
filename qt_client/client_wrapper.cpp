@@ -35,19 +35,6 @@ QByteArray decryptAes256Cbc(const QByteArray &cipher, const QByteArray &key, con
 /**
  * @brief ClientWrapper constructor'ı
  * @param parent        // Shared secret hesapla
-        if (ecdh_compute_shared_secret(&ecdhContext, 
-                                      reinterpret_cast<const uint8_t*>(serverPublicKey.constData())) == 0) {
-            LOG_CLIENT_ERROR("Failed to compute shared secret");
-            logError("Shared secret hesaplanamadı");
-            return;
-        }
-        
-        // AES anahtarını türet
-        if (ecdh_derive_aes_key(&ecdhContext) == 0) {
-            LOG_CLIENT_ERROR("Failed to derive AES key");
-            logError("AES anahtar türetme hatası");
-            return;
-        }*/
 ClientWrapper::ClientWrapper(QObject *parent)
     : QObject(parent)
     , tcpSocket(nullptr)
@@ -66,7 +53,6 @@ ClientWrapper::ClientWrapper(QObject *parent)
     , tcpRetryCount(0)
     , udpRetryCount(0)
     , p2pRetryCount(0)
-    , isAdminNotificationActive(false)
 {
     // ECDH context'i sıfırla
     memset(&ecdhContext, 0, sizeof(ecdh_context_t));
@@ -334,81 +320,91 @@ void ClientWrapper::onDataReceived()
             // Tam JSON var
             QString jsonStr = bufferStr.mid(jsonStart, jsonEnd - jsonStart + 1);
             qDebug() << "[DEBUG] Complete JSON extracted:" << jsonStr.left(200);
-            
-            // Admin notification kontrolü
-            if (jsonStr.contains("user_id") && jsonStr.contains("status") && jsonStr.contains("latitude")) {
-                qDebug() << "[DEBUG] Admin notification detected:" << jsonStr;
-                emit adminNotificationReceived(jsonStr);
-                
-                // JSON'u buffer'dan çıkar
-                QByteArray jsonBytes = jsonStr.toUtf8();
-                int removeStart = incomingBuffer.indexOf(jsonBytes);
-                if (removeStart != -1) {
-                    incomingBuffer.remove(removeStart, jsonBytes.length());
-                }
-                // JSON admin notification işlendikten sonra buffer'ı temizle
-                incomingBuffer.clear();
-                return; // Admin notification işlendi, çık
-            }
         }
     }
     
     // --- Düz metin/legacy mesajları ayıkla ---
+    // Notification JSON'u için buffer
+    static QString notificationBuffer;
     while (!incomingBuffer.isEmpty()) {
         int plainEnd = incomingBuffer.indexOf('\n');
         if (plainEnd == -1) break; // Satır sonu yoksa bekle
-        
+
         QByteArray plainMsg = incomingBuffer.left(plainEnd);
         incomingBuffer.remove(0, plainEnd + 1);
-        
+
         QString msgStr = QString::fromUtf8(plainMsg);
         if (!msgStr.startsWith("ENCRYPTED") && !msgStr.isEmpty()) {
             qDebug() << "[DEBUG] Plain/legacy data received:" << msgStr.left(200);
-            
-            // Birleşik mesajları işle: İlk REPORT_REPLY: konumunu bul
+
+            // --- ADMIN_NOTIFY ve REPORT_REPLY mesajlarını işle ---
+            int adminPos = msgStr.indexOf("ADMIN_NOTIFY:");
             int replyPos = msgStr.indexOf("REPORT_REPLY:");
-            
-            // Eğer birleşik mesaj varsa (REPORT_REPLY: başlangıçta değil)
-            if (replyPos > 0) {
-                // REPORT_REPLY: öncesi mesajı normal mesaj olarak işle
+            if (adminPos > 0) {
+                QString normalMsg = msgStr.left(adminPos);
+                emit dataReceived(normalMsg);
+                QString notifyMsg = msgStr.mid(adminPos);
+                if (notifyMsg.startsWith("ADMIN_NOTIFY:")) {
+                    qDebug() << "[DEBUG] Admin notify extracted from combined message:" << notifyMsg;
+                    QString notification = notifyMsg.mid(13);
+                    emit adminNotificationReceived(notification);
+                }
+                continue;
+            } else if (msgStr.startsWith("ADMIN_NOTIFY:")) {
+                qDebug() << "[DEBUG] Admin notify detected:" << msgStr;
+                QString notification = msgStr.mid(13);
+                emit adminNotificationReceived(notification);
+                continue;
+            } else if (replyPos > 0) {
                 QString normalMsg = msgStr.left(replyPos);
                 emit dataReceived(normalMsg);
-                
-                // REPORT_REPLY: mesajını ayrı işle
                 QString replyMsg = msgStr.mid(replyPos);
-                
                 if (replyMsg.startsWith("REPORT_REPLY:")) {
                     qDebug() << "[DEBUG] Report reply extracted from combined message:" << replyMsg;
-                    
-                    // Format: REPORT_REPLY:<report_id>:<message>
-                    QString content = replyMsg.mid(13); // Remove "REPORT_REPLY:"
+                    QString content = replyMsg.mid(13);
                     int reportId = content.section(':', 0, 0).toInt();
                     QString message = content.section(':', 1);
-                    
                     qDebug() << "[DEBUG] Extracted reportId:" << reportId << ", message:" << message;
-                    
                     emit newReportReplyReceived(reportId, message);
                 }
                 continue;
-            }
-            // Normal REPORT_REPLY: mesajını işle (başlangıçta)
-            else if (msgStr.startsWith("REPORT_REPLY:")) {
+            } else if (msgStr.startsWith("REPORT_REPLY:")) {
                 qDebug() << "[DEBUG] Report reply detected:" << msgStr;
-                
-                // Format: REPORT_REPLY:<report_id>:<message>
-                QString content = msgStr.mid(13); // Remove "REPORT_REPLY:"
+                QString content = msgStr.mid(13);
                 int reportId = content.section(':', 0, 0).toInt();
                 QString message = content.section(':', 1);
-                
                 emit newReportReplyReceived(reportId, message);
                 continue;
-            }
-            // REPORT_REPLY_PONG mesajını sessizce işle
-            else if (msgStr.startsWith("REPORT_REPLY_PONG")) {
+            } else if (msgStr.startsWith("REPORT_REPLY_PONG")) {
                 qDebug() << "[DEBUG] Report reply keepalive response received";
                 continue;
             }
-            
+
+            // JSON notification biriktirme
+            if (msgStr.startsWith("{") || !notificationBuffer.isEmpty()) {
+                notificationBuffer += msgStr;
+                // Her satırdan sonra yeni satır ekle (görsellik için, JSON bozulmaz)
+                if (!msgStr.endsWith("}"))
+                    notificationBuffer += "\n";
+            }
+
+            // Her yeni satırda buffer'ı JSON olarak parse etmeyi dene
+            if (!notificationBuffer.isEmpty() && notificationBuffer.trimmed().startsWith("{") && notificationBuffer.trimmed().endsWith("}")) {
+                QJsonParseError parseError;
+                QJsonDocument doc = QJsonDocument::fromJson(notificationBuffer.toUtf8(), &parseError);
+                if (parseError.error == QJsonParseError::NoError) {
+                    QJsonObject obj = doc.object();
+                    // Sadece notification ise göster (user_id, status, description varsa)
+                    if (obj.contains("user_id") || obj.contains("status") || obj.contains("description")) {
+                        emit adminNotificationReceived(notificationBuffer);
+                        qDebug() << "[DEBUG] Notification JSON detected and emitted.";
+                        notificationBuffer.clear();
+                        continue;
+                    }
+                }
+                // Parse başarısızsa buffer'ı temizleme, yeni satır gelmesini bekle
+            }
+
             // JSON parçası değilse normal data olarak emit et
             if (!msgStr.startsWith("{") && !msgStr.startsWith("\t")) {
                 emit dataReceived(msgStr);
@@ -434,23 +430,9 @@ QString ClientWrapper::createTacticalDataJson(double latitude, double longitude,
                                             const QString& dataType, const QString& message)
 {
     QJsonObject jsonObj;
-    jsonObj["unit_id"] = "BİRİM-01";
+    // jsonObj["unit_id"] = "BİRİM-01";
     
-    // Veri tipini status'a çevir
-    QString status;
-    if (dataType == "Enemy Contact") {
-        status = "Düşman Teması";
-    } else if (dataType == "Friendly Unit") {
-        status = "Dost Birlik";
-    } else if (dataType == "Objective") {
-        status = "Hedef";
-    } else if (dataType == "Hazard") {
-        status = "Tehlike";
-    } else {
-        status = "Taktik Pozisyon";
-    }
-    
-    jsonObj["status"] = status;
+    jsonObj["status"] = dataType;
     jsonObj["latitude"] = latitude;
     jsonObj["longitude"] = longitude;
     jsonObj["description"] = message.isEmpty() ? "Qt Client'tan gönderildi" : message;
@@ -1024,7 +1006,7 @@ void ClientWrapper::queryMyReplies() {
     QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
     
     // Şifreli protokol mesajı oluştur
-    char* encryptedMsg = create_encrypted_protocol_message("REPLY_QUERY", 
+    char* encryptedMsg = create_encrypted_protocol_message("QUERY_MY_REPLIES", 
                                                           jsonData.constData(), 
                                                           aesKey, 
                                                           jwtToken.toUtf8().constData());
@@ -1041,109 +1023,6 @@ void ClientWrapper::queryMyReplies() {
     tcpSocket->flush();
     
     logInfo("Kendi reply'lar sorgulandı");
-}
-
-/**
- * @brief Admin bildirimlerini dinlemeyi başlatır
- */
-void ClientWrapper::listenForAdminNotifications() {
-    // Eğer zaten açık bir adminNotifySocket varsa tekrar başlatma
-    if (adminNotifySocket && adminNotifySocket->state() == QAbstractSocket::ConnectedState) {
-        logInfo("Admin bildirim dinleyicisi zaten aktif (ayrı bağlantı)");
-        return;
-    }
-    // Önce eski socket'i temizle
-    if (adminNotifySocket) {
-        adminNotifySocket->disconnect(this);
-        adminNotifySocket->deleteLater();
-        adminNotifySocket = nullptr;
-    }
-    adminNotifySocket = new QTcpSocket(this);
-    connect(adminNotifySocket, &QTcpSocket::readyRead, this, &ClientWrapper::onAdminNotifySocketReadyRead);
-    connect(adminNotifySocket, &QTcpSocket::disconnected, this, &ClientWrapper::onAdminNotifySocketDisconnected);
-    // Bağlantı kur
-    adminNotifySocket->connectToHost(serverHost, serverPort);
-    if (!adminNotifySocket->waitForConnected(3000)) {
-        logError("Admin bildirim dinleme bağlantısı kurulamadı!");
-        adminNotifySocket->deleteLater();
-        adminNotifySocket = nullptr;
-        return;
-    }
-
-    // --- ECDH handshake başlat ---
-    memset(&ecdhContextAdmin, 0, sizeof(ecdh_context_t));
-    memset(aesKeyAdmin, 0, sizeof(aesKeyAdmin));
-    adminHandshakeCompleted = false;
-    if (ecdh_init_context(&ecdhContextAdmin) == 0) {
-        logError("[ADMIN_NOTIFY] ECDH context başlatılamadı");
-        return;
-    }
-    if (ecdh_generate_keypair(&ecdhContextAdmin) == 0) {
-        logError("[ADMIN_NOTIFY] ECDH anahtar çifti oluşturulamadı");
-        return;
-    }
-    QByteArray adminPubKey(reinterpret_cast<const char*>(ecdhContextAdmin.public_key), ECC_PUB_KEY_SIZE);
-    qint64 bytesWritten = adminNotifySocket->write(adminPubKey);
-    if (bytesWritten != ECC_PUB_KEY_SIZE) {
-        logError("[ADMIN_NOTIFY] Public key gönderimi başarısız");
-        return;
-    }
-    adminNotifySocket->flush();
-    // Sunucudan public key'i oku
-    QByteArray serverPubKey;
-    while (serverPubKey.size() < ECC_PUB_KEY_SIZE) {
-        if (!adminNotifySocket->waitForReadyRead(3000)) {
-            logError("[ADMIN_NOTIFY] Sunucu public key beklenirken timeout");
-            return;
-        }
-        serverPubKey += adminNotifySocket->read(ECC_PUB_KEY_SIZE - serverPubKey.size());
-    }
-    if (serverPubKey.size() != ECC_PUB_KEY_SIZE) {
-        logError("[ADMIN_NOTIFY] Sunucu public key boyutu hatalı");
-        return;
-    }
-    if (ecdh_compute_shared_secret(&ecdhContextAdmin, reinterpret_cast<const uint8_t*>(serverPubKey.constData())) == 0) {
-        logError("[ADMIN_NOTIFY] Shared secret hesaplanamadı");
-        return;
-    }
-    if (ecdh_derive_aes_key(&ecdhContextAdmin) == 0) {
-        logError("[ADMIN_NOTIFY] AES anahtar türetme hatası");
-        return;
-    }
-    memcpy(aesKeyAdmin, ecdhContextAdmin.aes_key, 32);
-    adminHandshakeCompleted = true;
-    logInfo("[ADMIN_NOTIFY] ECDH handshake tamamlandı, bildirim dinleme başlatılıyor");
-
-    // Komutu gönder (şifresiz, çünkü server öyle bekliyor)
-    QString notifyCmd = QString("ADMIN_NOTIFY_LISTEN:%1").arg(jwtToken);
-    adminNotifySocket->write(notifyCmd.toUtf8());
-    adminNotifySocket->flush();
-    logInfo("Admin bildirim dinleme başlatıldı (ayrı bağlantı)");
-
-    isAdminNotificationActive = true;
-}
-
-// Admin bildirim dinleme socket'inden veri geldiğinde çağrılır
-void ClientWrapper::onAdminNotifySocketReadyRead()
-{
-    if (!adminNotifySocket) return;
-    while (adminNotifySocket->bytesAvailable() > 0) {
-        QByteArray data = adminNotifySocket->readLine();
-        if (!data.isEmpty()) {
-            emit adminNotificationReceived(QString::fromUtf8(data));
-        }
-    }
-}
-
-// Admin bildirim dinleme bağlantısı koptuğunda çağrılır
-void ClientWrapper::onAdminNotifySocketDisconnected()
-{
-    logInfo("Admin bildirim dinleme bağlantısı kapatıldı (ayrı bağlantı)");
-    isAdminNotificationActive = false;
-    if (adminNotifySocket) {
-        adminNotifySocket->deleteLater();
-        adminNotifySocket = nullptr;
-    }
 }
 
 /**
@@ -1407,8 +1286,26 @@ void ClientWrapper::handleAdvancedError(const QString& error, bool canFallback) 
 }
 
 /**
- * @brief Parçalı ENCRYPTED_PART yanıtlarını işler
+ * @brief Admin bildirim dinleme komutu gönder
  */
+void ClientWrapper::listenForAdminNotifications()
+{
+    if (!isConnected()) {
+        logError("Bağlantı yok, admin bildirimleri dinlenemez");
+        return;
+    }
+    if (jwtToken.isEmpty()) {
+        logError("JWT token yok, admin bildirimleri dinlenemez");
+        return;
+    }
+    QString cmd = QString("ADMIN_NOTIFY_LISTEN:%1").arg(jwtToken);
+    QByteArray cmdData = cmd.toUtf8();
+    tcpSocket->write(cmdData);
+    tcpSocket->flush();
+    logInfo("Admin bildirim dinleme başlatıldı");
+}
+
+// --- Parçalı ENCRYPTED_PART yanıtlarını işler ---
 void ClientWrapper::processEncryptedParts()
 {
     // ENCRYPTED_PART: formatını ara ve işle
@@ -1548,7 +1445,7 @@ void ClientWrapper::processEncryptedResponse()
                 
                 if (!plainJson.isEmpty()) {
                     qDebug() << "[DEBUG] Decrypt başarılı, JSON size:" << plainJson.size();
-                    // qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
+                    qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
                     
                     QJsonDocument doc = QJsonDocument::fromJson(plainJson);
                     if (doc.isObject()) {
@@ -1559,9 +1456,14 @@ void ClientWrapper::processEncryptedResponse()
                             int privilege = obj.contains("privilege") ? obj["privilege"].toInt() : 0;
                             emit reportsReceived(obj["reports"].toArray(), privilege);
                         }
-                        // REPLY_QUERY yanıtı
+                        // QUERY_MY_REPLIES yanıtı
                         else if (obj.contains("replies") && obj["replies"].isArray()) {
-                            qDebug() << "[DEBUG] REPLY_QUERY yanıtı bulundu, replies array size:" << obj["replies"].toArray().size();
+                            qDebug() << "[DEBUG] QUERY_MY_REPLIES yanıtı bulundu, replies array size:" << obj["replies"].toArray().size();
+                            // Log decrypted QUERY_MY_REPLIES JSON
+                            QJsonDocument logDoc(obj["replies"].toArray());
+                            emit logMessage(QString("<b>[QUERY_MY_REPLIES][DECRYPT]</b> %1 adet reply çözüldü:<br><pre>%2</pre>")
+                                .arg(obj["replies"].toArray().size())
+                                .arg(QString::fromUtf8(logDoc.toJson(QJsonDocument::Indented))));
                             emit replyQueryResultReceived(obj["replies"].toArray());
                         }
                         // Diğer yanıtlar
@@ -1627,9 +1529,9 @@ void ClientWrapper::finalizePartProcessing()
                     emit reportsReceived(obj["reports"].toArray(), privilege);
                     qDebug() << "[DEBUG] Raporlar emit edildi, sayı:" << obj["reports"].toArray().size();
                 }
-                // REPLY_QUERY yanıtı  
+                // QUERY_MY_REPLIES yanıtı  
                 else if (obj.contains("replies") && obj["replies"].isArray()) {
-                    qDebug() << "[DEBUG] REPLY_QUERY yanıtı bulundu (parçalı), replies array size:" << obj["replies"].toArray().size();
+                    qDebug() << "[DEBUG] QUERY_MY_REPLIES yanıtı bulundu (parçalı), replies array size:" << obj["replies"].toArray().size();
                     emit replyQueryResultReceived(obj["replies"].toArray());
                 }
                 else {
@@ -1959,7 +1861,7 @@ void ClientWrapper::queryRepliesForReport(int reportId) {
         QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
         
         // Şifreli protokol mesajı oluştur
-        char* encryptedMsg = create_encrypted_protocol_message("REPLY_QUERY", 
+        char* encryptedMsg = create_encrypted_protocol_message("QUERY_MY_REPLIES", 
                                                               jsonData.constData(), 
                                                               aesKey, 
                                                               jwtToken.toUtf8().constData());

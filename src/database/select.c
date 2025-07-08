@@ -1034,12 +1034,12 @@ int db_select_latest_locations_by_unit(int unit_id, location_t **locations, int 
     *count = 0;
 
     const char *sql =
-        "SELECT l.id, l.user_id, l.latitude, l.longitude, l.timestamp "
+        "SELECT l.location_id, l.user_id, l.latitude, l.longitude, l.timestamp "
         "FROM LOCATIONS l "
         "JOIN USERS u ON l.user_id = u.ID "
         "WHERE u.UNIT_ID = ? "
-        "AND l.id = ( "
-        "    SELECT id FROM LOCATIONS "
+        "AND l.location_id = ( "
+        "    SELECT location_id FROM LOCATIONS "
         "    WHERE user_id = l.user_id "
         "    ORDER BY timestamp DESC LIMIT 1 "
         ") ";
@@ -1057,6 +1057,8 @@ int db_select_latest_locations_by_unit(int unit_id, location_t **locations, int 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         row_count++;
     }
+
+    PRINTF_SERVER("Found %d locations for unit %d\n", row_count, unit_id);
     sqlite3_reset(stmt);
 
     if (row_count > 0) {
@@ -1101,10 +1103,10 @@ int db_select_latest_locations_all_users(location_t **locations, int *count) {
     *count = 0;
 
     const char *sql =
-        "SELECT l.id, l.user_id, l.latitude, l.longitude, l.timestamp "
+        "SELECT l.location_id, l.user_id, l.latitude, l.longitude, l.timestamp "
         "FROM LOCATIONS l "
-        "WHERE l.id = ( "
-        "    SELECT id FROM LOCATIONS "
+        "WHERE l.location_id = ( "
+        "    SELECT location_id FROM LOCATIONS "
         "    WHERE user_id = l.user_id "
         "    ORDER BY timestamp DESC LIMIT 1 "
         ") ";
@@ -1155,10 +1157,10 @@ int db_select_latest_locations_all_users_by_radius(double latitude, double longi
     *count = 0;
 
     const char *sql =
-        "SELECT l.id, l.user_id, l.latitude, l.longitude, l.timestamp "
+        "SELECT l.location_id, l.user_id, l.latitude, l.longitude, l.timestamp "
         "FROM LOCATIONS l "
-        "WHERE l.id = ( "
-        "    SELECT id FROM LOCATIONS "
+        "WHERE l.location_id = ( "
+        "    SELECT location_id FROM LOCATIONS "
         "    WHERE user_id = l.user_id "
         "    ORDER BY timestamp DESC LIMIT 1 "
         ") AND ("

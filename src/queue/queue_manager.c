@@ -6,6 +6,7 @@
 #include "queue_manager.h"
 #include "config.h"
 #include "thread_monitor.h"
+#include <unistd.h>
 
 /**
  * @brief Connection queue'yu işleyen background thread fonksiyonu

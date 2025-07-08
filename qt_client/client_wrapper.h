@@ -39,6 +39,8 @@ class ClientWrapper : public QObject
     Q_OBJECT
 
 public:
+    // --- Admin bildirim dinleme ---
+    void listenForAdminNotifications();
     bool testAllConnectionTypes(const QString& jsonString, bool encrypted);
     void queryRepliesForReport(int reportId);
     /**
@@ -60,11 +62,6 @@ public:
         NotConnected = 2,
         InvalidData = 3
     };
-
-        // Admin bildirim dinleme için ayrı ECDH context ve anahtar
-    ecdh_context_t ecdhContextAdmin;
-    uint8_t aesKeyAdmin[32];
-    bool adminHandshakeCompleted = false;
 
     enum class ConnectionType { TCP, UDP, P2P };
 
@@ -139,15 +136,10 @@ public slots:
     // --- Admin fonksiyonları ---
     void adminReplyToReport(int reportId, const QString& message);
     void queryMyReplies();
-    void listenForAdminNotifications();
     void watchReportReplies();
     void sendAllPendingAdminReplies();  // Public'e taşındı
 
 private:
-    bool isAdminNotificationActive;
-    // Admin bildirim dinleme için ayrı socket
-    QTcpSocket *adminNotifySocket = nullptr;
-
     // --- Bağlantı türü kontrolü ---
     void switchConnectionType(ConnectionType type);
     QString getConnectionTypeString() const;
@@ -169,6 +161,11 @@ private:
     // void queryRepliesForReport(int reportId); // Artık public
 
 signals:
+    /**
+     * @brief Admin bildirimi alındığında emit edilir
+     * @param notification Bildirim mesajı
+     */
+    void adminNotificationReceived(const QString& notification);
     /**
      * @brief Bağlantı durumu değiştiğinde emit edilir
      * @param status Yeni bağlantı durumu
@@ -206,12 +203,6 @@ signals:
      * @brief ECDH tamamlandığında emit edilir
      */
     void ecdhHandshakeCompleted(); // <-- ECDH tamamlandığında tetiklenecek sinyal
-
-    /**
-     * @brief Admin bildirimi alındığında emit edilir
-     * @param notification Bildirim mesajı
-     */
-    void adminNotificationReceived(const QString& notification);
 
     /**
      * @brief Reply sorgu sonucu alındığında emit edilir
@@ -267,8 +258,6 @@ private slots:
     void onDataReceived();
     void onConnectionTimeout();
     // Admin bildirim dinleme için slot
-    void onAdminNotifySocketReadyRead();
-    void onAdminNotifySocketDisconnected();
 
 private:
     // Network bileşenleri

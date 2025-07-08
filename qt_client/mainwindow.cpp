@@ -11,6 +11,7 @@
 
 #include "mainwindow.h"
 #include "login_dialog.h"
+#include "fallback_test_thread.h"
 #include <QApplication>
 #include <QMessageBox>
 #include <QDateTime>
@@ -23,6 +24,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QJsonDocument>
+#include "location_manager.h"
 
 /**
  * @brief MainWindow sınıfının constructor'ı
@@ -63,8 +65,6 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onReplyQueryResultReceived);
     connect(clientWrapper, &ClientWrapper::fallbackTestResult,
             this, &MainWindow::onFallbackTestResult);
-    connect(clientWrapper, &ClientWrapper::adminNotificationReceived,
-            this, &MainWindow::onAdminNotificationReceived);
     connect(clientWrapper, &ClientWrapper::newReportReplyReceived,
             this, &MainWindow::onNewReportReplyReceived);
     // Admin reply signal'ları
@@ -77,20 +77,24 @@ MainWindow::MainWindow(QWidget *parent)
     connect(clientWrapper, &ClientWrapper::dataError, this, [this](const QString& message) {
         logTextEdit->append(QString("<span style='color: #e74c3c;'><b>[HATA]</b></span> %1").arg(message));
     });
+    connect(clientWrapper, &ClientWrapper::adminNotificationReceived,
+            this, &MainWindow::onAdminNotificationReceived);
     connect(clientWrapper, &ClientWrapper::ecdhHandshakeCompleted, this, [this](){
         logTextEdit->append("<b>[INFO]</b> ECDH tamamlandı, otomatik rapor sorgulanıyor...");
         clientWrapper->getReports();
-        
         // Bekleyen admin reply'ları gönder
         QTimer::singleShot(1000, this, [this]() {
             logTextEdit->append("<b>[INFO]</b> Bekleyen admin reply'lar kontrol ediliyor...");
             clientWrapper->sendAllPendingAdminReplies();
         });
-        
         // Login sonrası hemen bağlantı durumunu kontrol et
         QTimer::singleShot(2000, this, [this]() {
             logTextEdit->append("<b>[INFO]</b> Login sonrası bağlantı durumu kontrol ediliyor...");
             onPeriodicConnectionCheck();
+        });
+        QTimer::singleShot(3000, this, [this]() {
+            logTextEdit->append("<b>[INFO]</b> Admin notify watch başlatılıyor...");
+            clientWrapper->listenForAdminNotifications();
         });
     });
     
@@ -98,11 +102,6 @@ MainWindow::MainWindow(QWidget *parent)
     connectionCheckTimer = new QTimer(this);
     connect(connectionCheckTimer, &QTimer::timeout, this, &MainWindow::onPeriodicConnectionCheck);
     connectionCheckTimer->setInterval(30000); // 30 saniye
-    
-    // Admin bildirim dinleyicisi timer'ı
-    adminNotificationTimer = new QTimer(this);
-    connect(adminNotificationTimer, &QTimer::timeout, this, &MainWindow::onAutoAdminNotificationCheck);
-    adminNotificationTimer->setInterval(15000); // 15 saniye aralıkla kontrol et
     
     // Konum servisleri başlat
     positionSource = QGeoPositionInfoSource::createDefaultSource(this);
@@ -135,6 +134,25 @@ MainWindow::MainWindow(QWidget *parent)
             logTextEdit->append("<b>[INFO]</b> Otomatik bağlantı kontrolü başlatıldı (30 saniye aralık)");
         }
     });
+    
+    // Otomatik olarak admin notification dinleme başlat
+    if (clientWrapper) {
+        clientWrapper->listenForAdminNotifications();
+        if (adminLogEdit) {
+            adminLogEdit->append("<b>[INFO]</b> Admin bildirim dinleme komutu otomatik gönderildi.");
+        }
+    }
+}
+
+// Admin bildirimi geldiğinde kullanıcıya göster
+void MainWindow::onAdminNotificationReceived(const QString& notification)
+{
+    // Artık notification dialog ile göster
+    showNotificationDialog(notification);
+    // Ayrıca log'a da ekle
+    if (logTextEdit) {
+        logTextEdit->append(QString("<span style='color: #f39c12;'><b>[ADMIN BİLDİRİM]</b></span> %1").arg(notification));
+    }
 }
 
 /**
@@ -149,10 +167,6 @@ MainWindow::~MainWindow()
         connectionCheckTimer->stop();
     }
     
-    if (adminNotificationTimer && adminNotificationTimer->isActive()) {
-        adminNotificationTimer->stop();
-    }
-    
     if (locationUpdateTimer && locationUpdateTimer->isActive()) {
         locationUpdateTimer->stop();
     }
@@ -163,9 +177,6 @@ MainWindow::~MainWindow()
         currentNotificationDialog->deleteLater();
         currentNotificationDialog = nullptr;
     }
-    
-    // Admin bildirim dinleyicisini durdur
-    stopAutoAdminNotificationListener();
 }
 
 /**
@@ -330,7 +341,12 @@ void MainWindow::setupDataPanel()
     QHBoxLayout *typeLayout = new QHBoxLayout();
     typeLayout->addWidget(new QLabel("Veri Tipi:"));
     dataTypeCombo = new QComboBox();
-    dataTypeCombo->addItems({"Tactical Position", "Enemy Contact", "Friendly Unit", "Objective", "Hazard"});
+    // Türkçe veri tipi hem görünen hem arkaplan değeri olarak
+    dataTypeCombo->addItem("Taktik Pozisyon", "Taktik Pozisyon");
+    dataTypeCombo->addItem("Düşman Teması", "Düşman Teması");
+    dataTypeCombo->addItem("Dost Birim", "Dost Birim");
+    dataTypeCombo->addItem("Hedef", "Hedef");
+    dataTypeCombo->addItem("Tehlike", "Tehlike");
     typeLayout->addWidget(dataTypeCombo);
     
     // Mesaj
@@ -735,7 +751,7 @@ void MainWindow::displayRepliesForMarker(int id, QVBoxLayout* repliesLayout)
             QVBoxLayout* replyLayout = new QVBoxLayout(replyFrame);
             
             // Admin bilgisi ve tarih
-            QString adminInfo = QString("Admin ID: %1").arg(reply["user_id"].toInt());
+            QString adminInfo = QString("Admin ID: %1").arg(reply["admin_user_id"].toInt());
             qint64 timestamp = reply["timestamp"].toVariant().toLongLong();
             if (timestamp > 0) {
                 QDateTime dateTime = QDateTime::fromSecsSinceEpoch(timestamp);
@@ -907,26 +923,6 @@ void MainWindow::onConnectionStatusChanged(ClientWrapper::ConnectionStatus statu
     // Sadece GUI mesajını ekle, log formatı zaten client_wrapper'da yapılıyor
     logTextEdit->append(message);
     
-    // Bağlantı durumuna göre admin bildirim dinleyicisini yönet
-    if (userPrivilege == 1) {
-        if (status == ClientWrapper::Connected) {
-            // Bağlantı başarılı olduğunda admin bildirim dinleyicisini başlat
-            if (!isAdminNotificationActive) {
-                QTimer::singleShot(3000, this, [this]() {
-                    logTextEdit->append("<b>[ADMIN AUTO]</b> Bağlantı kuruldu, admin bildirim dinleyicisi başlatılıyor...");
-                    startAutoAdminNotificationListener();
-                });
-            }
-        } else if (status == ClientWrapper::Disconnected || status == ClientWrapper::Error) {
-            // Bağlantı koptuğunda bildirim dinleyicisini durdur ama timer'ı çalışır durumda bırak
-            if (isAdminNotificationActive) {
-                logTextEdit->append("<b>[ADMIN AUTO]</b> Bağlantı koptu, admin bildirim dinleyicisi devre dışı bırakıldı.");
-                isAdminNotificationActive = false;
-                // Timer'ı durdurmuyoruz, yeniden bağlanma denemeleri için çalışır durumda bırakıyoruz
-            }
-        }
-    }
-    
     // Bağlantı başarılı olduğunda otomatik rapor sorgula ve konum güncellemesini başlat
     if (status == ClientWrapper::Connected) {
         logTextEdit->append("<b>[INFO]</b> Bağlantı sonrası otomatik rapor sorgulanıyor...");
@@ -972,10 +968,42 @@ void MainWindow::onDataSendResult(ClientWrapper::SendResult result, const QStrin
 /**
  * @brief Sunucudan veri alındığında çağrılır
  */
+
+// Sadece notification JSON'ları için buffer
+QString notificationBuffer;
+
 void MainWindow::onDataReceived(const QString& data)
 {
     logTextEdit->append(QString("Sunucudan veri: %1").arg(data));
     showStatusMessage("Sunucudan veri alındı");
+    // Sadece notification JSON'u için buffer'da biriktir
+    QString trimmed = data.trimmed();
+    if (!trimmed.isEmpty()) {
+        // Eğer satır bir JSON parçası ise buffer'a ekle
+        if (trimmed.startsWith("{") || !notificationBuffer.isEmpty()) {
+            notificationBuffer += trimmed;
+            // Her satırdan sonra yeni satır ekle (görsellik için, JSON bozulmaz)
+            if (!trimmed.endsWith("}"))
+                notificationBuffer += "\n";
+        }
+    }
+
+    // Her yeni satırda buffer'ı JSON olarak parse etmeyi dene
+    if (!notificationBuffer.isEmpty() && notificationBuffer.startsWith("{") && notificationBuffer.trimmed().endsWith("}")) {
+        QJsonParseError parseError;
+        QJsonDocument doc = QJsonDocument::fromJson(notificationBuffer.toUtf8(), &parseError);
+        if (parseError.error == QJsonParseError::NoError) {
+            QJsonObject obj = doc.object();
+            // Sadece notification ise göster (user_id, status, description varsa)
+            if (obj.contains("user_id") || obj.contains("status") || obj.contains("description")) {
+                showNotificationDialog(notificationBuffer);
+                logTextEdit->append("<b>[NOTIFICATION]</b> NotificationDialog çağrıldı (buffer parse success).");
+                notificationBuffer.clear();
+                return;
+            }
+        }
+        // Parse başarısızsa buffer'ı temizleme, yeni satır gelmesini bekle
+    }
 }
 
 /**
@@ -1021,30 +1049,31 @@ void MainWindow::onReportsReceived(const QJsonArray& reports, int privilege)
             applyMarkerFilters();
         }
     }
+
+    if (!initialReplyQueryDone) {
+        initialReplyQueryDone = true;
+        QTimer::singleShot(1000, this, [this]() {
+            logTextEdit->append("<b>[AUTO]</b> İlk kez reply'lar sorgulanıyor...");
+            clientWrapper->queryMyReplies();
+        });
+    }
     
     // Admin ise mod switch butonunu göster ve otomatik admin bildirim dinleyicisini başlat
     if (userPrivilege == 1 && modeSwitchButton) {
         modeSwitchButton->show();
-        
         // Sadece ilk kez reply'ları sorgula
-        if (!initialReplyQueryDone) {
-            initialReplyQueryDone = true;
-            QTimer::singleShot(1000, this, [this]() {
-                logTextEdit->append("<b>[AUTO]</b> İlk kez reply'lar sorgulanıyor...");
-                clientWrapper->queryMyReplies();
-            });
-        }
-        
-        // Admin için otomatik bildirim dinleyicisini başlat
-        QTimer::singleShot(2000, this, [this]() {
-            logTextEdit->append("<b>[ADMIN AUTO]</b> Admin bildirim dinleyicisi otomatik olarak başlatılıyor...");
-            startAutoAdminNotificationListener();
-        });
-        
+        // if (!initialReplyQueryDone) {
+            // initialReplyQueryDone = true;
+            // QTimer::singleShot(1000, this, [this]() {
+                // logTextEdit->append("<b>[AUTO]</b> İlk kez reply'lar sorgulanıyor...");
+                // clientWrapper->queryMyReplies();
+            // });
+        // }
     } else if (modeSwitchButton) {
         modeSwitchButton->hide();
-        // Admin değilse dinleyiciyi durdur
-        stopAutoAdminNotificationListener();
+        // Eğer privilege 0 ise (normal kullanıcı), QUERY_MY_REPLIES fonksiyonunu çağır
+        // logTextEdit->append("<b>[AUTO]</b> Privilege 0: Kendi reply'lar JWT ile sorgulanıyor...");
+        // clientWrapper->queryMyReplies();
     }
     qDebug() << "[DEBUG] onReportsReceived END";
 }
@@ -1131,7 +1160,7 @@ void MainWindow::setupAdminPanel()
     
     // Signal bağlantıları
     connect(adminReplyButton, &QPushButton::clicked, this, &MainWindow::onAdminReplyToReport);
-    connect(queryRepliesButton, &QPushButton::clicked, this, &MainWindow::onQueryMyReplies);
+    connect(queryRepliesButton, &QPushButton::clicked, this, &MainWindow::onqueryMyReplies);
     connect(listenNotificationsButton, &QPushButton::clicked, this, &MainWindow::onListenForNotifications);
     connect(watchReplyButton, &QPushButton::clicked, this, &MainWindow::onWatchReportReplies);
 }
@@ -1235,35 +1264,10 @@ void MainWindow::onAdminReplyToReport()
 /**
  * @brief Kendi cevapları sorgulama slot'u
  */
-void MainWindow::onQueryMyReplies()
+void MainWindow::onqueryMyReplies()
 {
     adminLogEdit->append("<b>[INFO]</b> Kendi cevaplar sorgulanıyor...");
     clientWrapper->queryMyReplies();
-}
-
-/**
- * @brief Bildirim dinleme slot'u
- */
-void MainWindow::onListenForNotifications()
-{
-    if (isAdminNotificationActive) {
-        adminLogEdit->append("<b>[INFO]</b> Admin bildirim dinleyicisi zaten otomatik olarak çalışıyor.");
-        adminLogEdit->append("<b>[INFO]</b> Otomatik sistem aktif, manuel başlatma gerekmiyor.");
-        return;
-    }
-    
-    adminLogEdit->append("<b>[INFO]</b> Admin bildirimleri manuel olarak dinleniyor...");
-    clientWrapper->listenForAdminNotifications();
-    
-    // Manuel başlatıldığında da otomatik sistemi etkinleştir
-    if (userPrivilege == 1) {
-        QTimer::singleShot(2000, this, [this]() {
-            if (!isAdminNotificationActive) {
-                adminLogEdit->append("<b>[INFO]</b> Manuel başlatma sonrası otomatik sistem de etkinleştiriliyor...");
-                startAutoAdminNotificationListener();
-            }
-        });
-    }
 }
 
 /**
@@ -1271,24 +1275,17 @@ void MainWindow::onListenForNotifications()
  */
 void MainWindow::onTestConnections()
 {
-    fallbackLogEdit->clear(); // Önceki logları temizle
+    fallbackLogEdit->clear();
     fallbackLogEdit->append("<b>[TEST]</b> Bağlantı testleri başlatılıyor...");
-    
-    QString testJson = clientWrapper->createTacticalDataJson(selectedLatitude, selectedLongitude, 
-                                                           "connection_test", "Bağlantı testi");
-    clientWrapper->testAllConnectionTypes(testJson, true);
-}
 
-/**
- * @brief Admin bildirimi alındığında çağrılan slot
- */
-void MainWindow::onAdminNotificationReceived(const QString& notification)
-{
-    // Log'a ekle
-    adminLogEdit->append(QString("<b>[BİLDİRİM]</b> %1").arg(notification));
-    
-    // Görsel bildirim dialog'unu göster
-    showNotificationDialog(notification);
+    // Sadece host ve port ile thread başlat
+    auto* thread = new FallbackTestThread(serverAddressEdit->text(), serverPortSpin->value(), this);
+    connect(thread, &FallbackTestThread::fallbackTestResult, this, &MainWindow::onFallbackTestResult);
+    connect(thread, &FallbackTestThread::allTestsFinished, this, [this, thread]() {
+        fallbackLogEdit->append("<b>[TEST]</b> Tüm bağlantı testleri tamamlandı.");
+        thread->deleteLater();
+    });
+    thread->start();
 }
 
 /**
@@ -1298,10 +1295,17 @@ void MainWindow::onReplyQueryResultReceived(const QJsonArray& replies)
 {
     // Reply verilerini cache'e kaydet
     cachedReplies = replies;
-    
+
+    // QUERY_MY_REPLIES cevabını logla
+    if (logTextEdit) {
+        logTextEdit->append(QString("<b>[QUERY_MY_REPLIES]</b> %1 adet reply JSON olarak alındı:").arg(replies.size()));
+        QJsonDocument doc(replies);
+        logTextEdit->append("<pre>" + QString::fromUtf8(doc.toJson(QJsonDocument::Indented)) + "</pre>");
+    }
+
     adminLogEdit->append(QString("<b>[SORGU]</b> %1 adet cevap bulundu").arg(replies.size()));
-    
-    // REPLY_QUERY'den dönen report_id'leri QML'e aktar
+
+    // QUERY_MY_REPLIES'den dönen report_id'leri QML'e aktar
     QVariantList idList;
     for (const QJsonValue& value : replies) {
         QJsonObject reply = value.toObject();
@@ -1309,7 +1313,6 @@ void MainWindow::onReplyQueryResultReceived(const QJsonArray& replies)
         adminLogEdit->append(QString("- Rapor %1: %2")
                            .arg(reportId)
                            .arg(reply["message"].toString()));
-        
         // Report ID'yi listeye ekle
         idList << reportId;
         qDebug() << "[DEBUG] Reply bulunan report ID:" << reportId;
@@ -1457,7 +1460,7 @@ void MainWindow::onFindMyLocation()
     
     // Manuel konum talebi olduğunu işaretle
     isManualLocationRequest = true;
-    
+
     // Tek seferlik konum talebi
     positionSource->requestUpdate(10000); // 10 saniye timeout
 }
@@ -1569,7 +1572,12 @@ void MainWindow::setupFilterPanel()
     QHBoxLayout *dataTypeFilterLayout = new QHBoxLayout();
     dataTypeFilterLayout->addWidget(new QLabel("Veri Tipi:"));
     dataTypeFilterCombo = new QComboBox();
-    dataTypeFilterCombo->addItems({"Tümü", "Tactical Position", "Enemy Contact", "Friendly Unit", "Objective", "Hazard"});
+    dataTypeFilterCombo->addItem("Tümü", "Tümü");
+    dataTypeFilterCombo->addItem("Taktik Pozisyon", "Taktik Pozisyon");
+    dataTypeFilterCombo->addItem("Düşman Teması", "Düşman Teması");
+    dataTypeFilterCombo->addItem("Dost Birim", "Dost Birim");
+    dataTypeFilterCombo->addItem("Hedef", "Hedef");
+    dataTypeFilterCombo->addItem("Tehlike", "Tehlike");
     connect(dataTypeFilterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), 
             this, &MainWindow::updateFilterStatus);
     dataTypeFilterLayout->addWidget(dataTypeFilterCombo);
@@ -1631,6 +1639,8 @@ void MainWindow::applyMarkerFilters()
         logTextEdit->append("<b>[FİLTRE]</b> Reply filtresi için reply'lar sorgulanıyor...");
         clientWrapper->queryMyReplies();
     }
+    
+
     
     // QML metodunu çağır
     QMetaObject::invokeMethod(mapWidget, "applyFilters",
@@ -1841,120 +1851,6 @@ void MainWindow::togglePanel(QGroupBox* groupBox)
 }
 
 /**
- * @brief Admin bildirim dinleyicisini otomatik olarak başlatır
- * @details Privilege değeri 1 olan kullanıcılar için otomatik olarak admin bildirim 
- *          dinleyicisini başlatır ve periyodik kontrol timer'ını çalıştırır.
- */
-void MainWindow::startAutoAdminNotificationListener()
-{
-    if (userPrivilege != 1) {
-        logTextEdit->append("<b>[ADMIN AUTO]</b> Bu özellik sadece admin kullanıcılar için geçerlidir.");
-        return;
-    }
-    
-    if (isAdminNotificationActive) {
-        logTextEdit->append("<b>[ADMIN AUTO]</b> Admin bildirim dinleyicisi zaten aktif.");
-        return;
-    }
-    
-    // Admin bildirim dinleyicisini başlat
-    if (clientWrapper && clientWrapper->isConnected()) {
-        logTextEdit->append("<b>[ADMIN AUTO]</b> Admin bildirim dinleyicisi başlatılıyor...");
-        clientWrapper->listenForAdminNotifications();
-        isAdminNotificationActive = true;
-        adminNotificationRetryCount = 0;
-        
-        // Periyodik kontrol timer'ını başlat
-        adminNotificationTimer->start();
-        logTextEdit->append("<b>[ADMIN AUTO]</b> Otomatik admin bildirim kontrol timer'ı başlatıldı (15 saniye aralık).");
-    } else {
-        logTextEdit->append("<b>[ADMIN AUTO ERROR]</b> Sunucu bağlantısı yok, admin bildirim dinleyicisi başlatılamadı.");
-    }
-}
-
-/**
- * @brief Admin bildirim dinleyicisini durdurur
- * @details Otomatik admin bildirim dinleyicisini ve periyodik kontrol timer'ını durdurur.
- */
-void MainWindow::stopAutoAdminNotificationListener()
-{
-    if (adminNotificationTimer->isActive()) {
-        adminNotificationTimer->stop();
-        logTextEdit->append("<b>[ADMIN AUTO]</b> Otomatik admin bildirim kontrol timer'ı durduruldu.");
-    }
-    
-    isAdminNotificationActive = false;
-    adminNotificationRetryCount = 0;
-    logTextEdit->append("<b>[ADMIN AUTO]</b> Admin bildirim dinleyicisi durduruldu.");
-}
-
-/**
- * @brief Admin bildirim dinleyicisinin otomatik kontrol fonksiyonu
- * @details Periyodik olarak admin bildirim dinleyicisinin çalışıp çalışmadığını kontrol eder.
- *          Bağlantı kopmuşsa tekrar bağlanmaya çalışır ve dinleyiciyi yeniden başlatır.
- */
-void MainWindow::onAutoAdminNotificationCheck()
-{
-    if (userPrivilege != 1) {
-        // Admin değilse timer'ı durdur
-        stopAutoAdminNotificationListener();
-        return;
-    }
-    
-    if (!isAdminNotificationActive) {
-        // Dinleyici aktif değilse dur
-        return;
-    }
-    
-    // Bağlantı durumunu kontrol et
-    if (!clientWrapper || !clientWrapper->isConnected()) {
-        logTextEdit->append("<b>[ADMIN AUTO CHECK]</b> Bağlantı kopmuş, yeniden bağlanmaya çalışılıyor...");
-        adminNotificationRetryCount++;
-        
-        if (adminNotificationRetryCount > MAX_ADMIN_NOTIFICATION_RETRY) {
-            logTextEdit->append("<b>[ADMIN AUTO ERROR]</b> Maksimum tekrar deneme sayısına ulaşıldı, admin bildirim dinleyicisi durduruldu.");
-            stopAutoAdminNotificationListener();
-            return;
-        }
-        
-        // Sunucuya yeniden bağlanmaya çalış
-        if (serverAddressEdit && serverPortSpin) {
-            QString host = serverAddressEdit->text().isEmpty() ? "127.0.0.1" : serverAddressEdit->text();
-            int port = serverPortSpin->value();
-            
-            logTextEdit->append(QString("<b>[ADMIN AUTO RECONNECT]</b> %1:%2 adresine yeniden bağlanmaya çalışılıyor... (Deneme: %3/%4)")
-                               .arg(host).arg(port).arg(adminNotificationRetryCount).arg(MAX_ADMIN_NOTIFICATION_RETRY));
-            
-            // ClientWrapper'a yeniden bağlanma talimatı ver
-            clientWrapper->connectToServer(host, port);
-            
-            // 5 saniye sonra dinleyiciyi yeniden başlatmaya çalış
-            QTimer::singleShot(5000, this, [this]() {
-                if (clientWrapper && clientWrapper->isConnected()) {
-                    logTextEdit->append("<b>[ADMIN AUTO RECONNECT]</b> Bağlantı kuruldu, admin bildirim dinleyicisi yeniden başlatılıyor...");
-                    clientWrapper->listenForAdminNotifications();
-                    adminNotificationRetryCount = 0; // Başarılı bağlantı sonrası retry sayacını sıfırla
-                } else {
-                    logTextEdit->append("<b>[ADMIN AUTO RECONNECT]</b> Bağlantı kurulamadı, bir sonraki kontrol için bekleniyor...");
-                }
-            });
-        }
-    } else {
-        // Bağlantı varsa, dinleyicinin çalıştığını doğrula
-        logTextEdit->append("<b>[ADMIN AUTO CHECK]</b> Admin bildirim dinleyicisi aktif, bağlantı normal.");
-        adminNotificationRetryCount = 0; // Başarılı kontrol sonrası retry sayacını sıfırla
-        
-        // Dinleyicinin hala aktif olduğunu garantilemek için tekrar başlat
-        // (Eğer bir nedenden dolayı durmuşsa)
-        QTimer::singleShot(1000, this, [this]() {
-            if (clientWrapper && clientWrapper->isConnected()) {
-                clientWrapper->listenForAdminNotifications();
-            }
-        });
-    }
-}
-
-/**
  * @brief Bildirim dialog'unu gösterir
  * @param notification Bildirim JSON metni
  * @details Gelen admin bildirimini görsel dialog ile kullanıcıya gösterir.
@@ -2135,7 +2031,7 @@ void MainWindow::stopPeriodicLocationUpdates()
 }
 
 /**
- * @brief Periyodik konum güncellemesi tetiklendiğinde çağrılır
+ * @brief Periyodik konum güncellemesi tetiklendiğinde çağrılan slot
  */
 void MainWindow::onPeriodicLocationUpdate()
 {
@@ -2154,4 +2050,14 @@ void MainWindow::onPeriodicLocationUpdate()
     
     // Tek seferlik konum talebi (10 saniye timeout)
     positionSource->requestUpdate(10000);
+}
+
+void MainWindow::onListenForNotifications()
+{
+    if (clientWrapper) {
+        clientWrapper->listenForAdminNotifications();
+        if (adminLogEdit) {
+            adminLogEdit->append("<b>[INFO]</b> Admin bildirim dinleme komutu gönderildi.");
+        }
+    }
 }

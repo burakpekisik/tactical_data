@@ -23,7 +23,7 @@ Rectangle {
     property double currentLat: 0.0
     property double currentLon: 0.0
 
-    // REPLY_QUERY'den dönen id listesi
+    // QUERY_MY_REPLIES'den dönen id listesi
     property var replyIdList: []
     function setReplyIdList(idList) {
         replyIdList = idList;
@@ -404,9 +404,9 @@ Rectangle {
                 switch(type) {
                     case "Tehlike": return "#e53935"; // Kırmızı
                     case "Taktik Pozisyon": return "#3949ab"; // Mavi
-                    case "Bilgi": return "#43a047"; // Yeşil
-                    case "Uyarı": return "#fbc02d"; // Sarı
-                    case "Destek": return "#00897b"; // Turkuaz
+                    case "Düşman Teması": return "#fbc02d"; // Sarı
+                    case "Dost Birim": return "#43a047"; // Yeşil
+                    case "Hedef": return "#00897b"; // Turkuaz
                     // ... diğer veri tipleri ...
                     default: return "#757575"; // Tanımsız/gri
                 }

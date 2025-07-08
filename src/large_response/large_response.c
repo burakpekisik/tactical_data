@@ -115,3 +115,93 @@ char* send_or_format_large_encrypted_response(int client_socket, const char* pla
         }
     }
 }
+
+// Şifreli tek parça veya parça parça gelen ENCRYPTED yanıtları birleştirip çözen fonksiyon
+// out_json buffer'ına çözülen JSON yazılır, başarıda 0, hata durumunda -1 döner
+// part_callback NULL ise sadece tek parça desteklenir
+int receive_and_decrypt_encrypted_response(const char* response, const uint8_t* session_key, char* out_json, size_t out_json_size,
+                                           int (*part_callback)(char* buffer, size_t buffer_size)) {
+    // response: ENCRYPTED:ACTION:HEXDATA veya ENCRYPTED_PART:... veya birleştirilmiş HEXDATA
+    if (strncmp(response, "ENCRYPTED:", 10) == 0) {
+        // Tek parça ENCRYPTED yanıt
+        const char* p1 = strchr(response + 10, ':');
+        if (!p1) return -1;
+        const char* hex_data = p1 + 1;
+        // HEXDATA'nın başında action olabilir, onu atla
+        const char* p2 = strchr(hex_data, ':');
+        if (p2) hex_data = p2 + 1;
+        // Hex'i byte dizisine çevir
+        size_t bin_len = strlen(hex_data) / 2;
+        uint8_t* bin_data = malloc(bin_len);
+        if (!bin_data) return -1;
+        for (size_t i = 0; i < bin_len; ++i) {
+            sscanf(hex_data + 2*i, "%2hhx", &bin_data[i]);
+        }
+        // IV ve ciphertext'i ayır
+        if (bin_len < CRYPTO_IV_SIZE) {
+            free(bin_data);
+            return -1;
+        }
+        uint8_t iv[CRYPTO_IV_SIZE];
+        memcpy(iv, bin_data, CRYPTO_IV_SIZE);
+        uint8_t* ciphertext = bin_data + CRYPTO_IV_SIZE;
+        size_t ciphertext_len = bin_len - CRYPTO_IV_SIZE;
+        // AES ile çöz
+        char* decrypted = decrypt_data(ciphertext, ciphertext_len, session_key, iv);
+        if (!decrypted) {
+            free(bin_data);
+            return -1;
+        }
+        size_t copy_len = strlen(decrypted);
+        if (copy_len > out_json_size-1) copy_len = out_json_size-1;
+        memcpy(out_json, decrypted, copy_len);
+        out_json[copy_len] = '\0';
+        free(decrypted);
+        free(bin_data);
+        return 0;
+    } else if (strncmp(response, "ENCRYPTED_PART:", 15) == 0) {
+        // Parça parça ENCRYPTED yanıt
+        // part_callback ile tüm parçalar birleştirilmeli, burada sadece çözme işlemi yapılır
+        if (!part_callback) return -1;
+        // part_callback, tüm HEXDATA'yı birleştirip buffer'a yazar ve buffer_size döndürür
+        char* hex_buffer = malloc(ENCRYPTED_PART_SIZE * 32); // Yeterli büyük buffer
+        int hex_len = part_callback(hex_buffer, ENCRYPTED_PART_SIZE * 32);
+        if (hex_len <= 0) {
+            free(hex_buffer);
+            return -1;
+        }
+        size_t bin_len = hex_len / 2;
+        uint8_t* bin_data = malloc(bin_len);
+        if (!bin_data) {
+            free(hex_buffer);
+            return -1;
+        }
+        for (size_t i = 0; i < bin_len; ++i) {
+            sscanf(hex_buffer + 2*i, "%2hhx", &bin_data[i]);
+        }
+        if (bin_len < CRYPTO_IV_SIZE) {
+            free(bin_data);
+            free(hex_buffer);
+            return -1;
+        }
+        uint8_t iv[CRYPTO_IV_SIZE];
+        memcpy(iv, bin_data, CRYPTO_IV_SIZE);
+        uint8_t* ciphertext = bin_data + CRYPTO_IV_SIZE;
+        size_t ciphertext_len = bin_len - CRYPTO_IV_SIZE;
+        char* decrypted = decrypt_data(ciphertext, ciphertext_len, session_key, iv);
+        if (!decrypted) {
+            free(bin_data);
+            free(hex_buffer);
+            return -1;
+        }
+        size_t copy_len = strlen(decrypted);
+        if (copy_len > out_json_size-1) copy_len = out_json_size-1;
+        memcpy(out_json, decrypted, copy_len);
+        out_json[copy_len] = '\0';
+        free(decrypted);
+        free(bin_data);
+        free(hex_buffer);
+        return 0;
+    }
+    return -1;
+}

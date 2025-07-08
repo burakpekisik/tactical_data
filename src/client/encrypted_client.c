@@ -32,6 +32,7 @@
 #include "json_utils.h"
 #include "load_balancer.h"
 #include "chat_manager.h"
+#include "location_manager.h"
  
 char jwt_token[1024] = ""; // Global JWT token
 static lb_config_t lb_config; // Global load balancer config
@@ -243,8 +244,82 @@ int main() {
                     PRINTF_CLIENT("Chat odalarına erişim başarısız!\n");
                 }
                 break;
+            case 13:
+            {
+                double latitude = 0.0, longitude = 0.0;
+                printf("Lütfen enlem (latitude) değerini girin: ");
+                if (scanf("%lf", &latitude) != 1) {
+                    PRINTF_CLIENT("Latitude değeri alınamadı!\n");
+                    while (getchar() != '\n');
+                    break;
+                }
+                printf("Lütfen boylam (longitude) değerini girin: ");
+                if (scanf("%lf", &longitude) != 1) {
+                    PRINTF_CLIENT("Longitude değeri alınamadı!\n");
+                    while (getchar() != '\n');
+                    break;
+                }
+                while (getchar() != '\n'); // input buffer temizle
+
+                location_t location;
+                memset(&location, 0, sizeof(location));
+                // Kullanıcı ID'si JWT'den veya başka bir yerden alınmalı, örnek olarak 0 verildi
+                location.user_id = 0;
+                location.latitude = latitude;
+                location.longitude = longitude;
+                location.timestamp = time(NULL);
+
+                send_insert_location(conn, &location, jwt_token);
+                PRINTF_CLIENT("Konum gönderildi: (%.8f, %.8f)\n", latitude, longitude);
+                break;
+            }
+            case 14:
+                send_select_location_of_user(conn, jwt_token);
+                break;
+
+            case 15:
+                int unit_id;
+                printf("Lütfen birim numarası (unit_id) değerini girin: ");
+                if (scanf("%d", &unit_id) != 1) {
+                    PRINTF_CLIENT("Latitude değeri alınamadı!\n");
+                    while (getchar() != '\n');
+                    break;
+                }
                 
-            case 13: // Cikis
+                while (getchar() != '\n'); // input buffer temizle
+
+                send_select_latest_locations_by_unit(conn, unit_id, jwt_token);
+                break;
+
+            case 16: // Tüm kullanıcıların son konumları
+                send_select_latest_locations_all_users(conn, jwt_token);
+                break;
+            case 17: // Tüm kullanıcları yarıçapa göre seç
+                double latitude = 0.0, longitude = 0.0, radius = 0.0;
+                printf("Lütfen enlem (latitude) değerini girin: ");
+                if (scanf("%lf", &latitude) != 1) {
+                    PRINTF_CLIENT("Latitude değeri alınamadı!\n");
+                    while (getchar() != '\n');
+                    break;
+                }
+                printf("Lütfen boylam (longitude) değerini girin: ");
+                if (scanf("%lf", &longitude) != 1) {
+                    PRINTF_CLIENT("Longitude değeri alınamadı!\n");
+                    while (getchar() != '\n');
+                    break;
+                }
+
+                printf("Lütfen arama yarıçapı (radius) değerini girin: ");
+                if (scanf("%lf", &radius) != 1) {
+                    PRINTF_CLIENT("Yarıçap değeri alınamadı!\n");
+                    while (getchar() != '\n');
+                    break;
+                }
+                while (getchar() != '\n'); // input buffer temizle
+
+                send_select_latest_locations_all_users_by_radius(conn, latitude, longitude, radius, jwt_token);
+                break;
+            case 18: // Cikis
             {
                 LOG_CLIENT_INFO("User requested shutdown");
                 PRINTF_CLIENT("Baglanti kapatiliyor...\n");
@@ -302,7 +377,12 @@ void show_menu(void) {
     PRINTF_LOG("10. Load balancer istatistikleri\n");
     PRINTF_LOG("11. Chat odasi olustur\n");
     PRINTF_LOG("12. Chat odalarini listele ve katil\n");
-    PRINTF_LOG("13. Cikis\n");
+    PRINTF_LOG("13. Lokasyon bilgisi gonder\n");
+    PRINTF_LOG("14. Kullanici konumunu al\n");
+    PRINTF_LOG("15. Unit ID'ye ait birimlerin konumunu al\n");
+    PRINTF_LOG("16. Tüm kullanıcıların son konumları\n");
+    PRINTF_LOG("17. Kullanıcıları çap göre seç\n");
+    PRINTF_LOG("18. Cikis\n");
     PRINTF_LOG("================\n");
 }
 
@@ -1005,26 +1085,29 @@ void* report_reply_listener_thread(void* arg) {
             perror("[CLIENT][report_reply_listener_thread] select error");
             break;
         } 
-        else if (sel == 0) {
-            // Timeout occurred, send a keepalive to check connection
-            if (++retries >= 3) { // After 3 timeouts (15 seconds)
-                char ping_cmd[2048];
-                snprintf(ping_cmd, sizeof(ping_cmd), "REPORT_REPLY_PING:%s", jwt_token);
-                LOG_CLIENT_DEBUG("Sending keepalive ping for report replies");
+        // else if (sel == 0) {
+        //     // Timeout occurred, send a keepalive to check connection
+        //     if (++retries >= 3) { // After 3 timeouts (15 seconds)
+        //         char ping_cmd[2048];
+        //         snprintf(ping_cmd, sizeof(ping_cmd), "REPORT_REPLY_PING:%s", jwt_token);
+        //         LOG_CLIENT_DEBUG("Sending keepalive ping for report replies");
                 
-                ssize_t sent = send(conn->socket, ping_cmd, strlen(ping_cmd), 0);
-                if (sent <= 0) {
-                    LOG_CLIENT_ERROR("Failed to send keepalive, connection may be lost");
-                    printf("[CLIENT][report_reply_listener_thread] Connection check failed\n");
-                    break;
-                }
-                retries = 0; // Reset retry counter after sending ping
-            }
-            continue;
-        }
+        //         ssize_t sent = send(conn->socket, ping_cmd, strlen(ping_cmd), 0);
+        //         if (sent <= 0) {
+        //             LOG_CLIENT_ERROR("Failed to send keepalive, connection may be lost");
+        //             printf("[CLIENT][report_reply_listener_thread] Connection check failed\n");
+        //             break;
+        //         }
+        //         retries = 0; // Reset retry counter after sending ping
+        //     }
+        //     continue;
+        // }
         
         // Data is available
         ssize_t n = recv(conn->socket, buffer, sizeof(buffer)-1, 0);
+
+        
+
         if (n > 0) {
             buffer[n] = '\0';
             printf("[CLIENT][report_reply_listener_thread] Mesaj alındı: %s\n", buffer);
@@ -1041,9 +1124,9 @@ void* report_reply_listener_thread(void* arg) {
                 else msg = "";
                 add_report_reply(report_id, msg);
             }
-            else if (strncmp(buffer, "REPORT_REPLY_PONG", 17) == 0) {
-                LOG_CLIENT_DEBUG("Received keepalive pong for report replies");
-            }
+            // else if (strncmp(buffer, "REPORT_REPLY_PONG", 17) == 0) {
+            //     LOG_CLIENT_DEBUG("Received keepalive pong for report replies");
+            // }
         } else {
             LOG_CLIENT_ERROR("Error or connection closed in report reply listener: n=%zd", n);
             printf("[CLIENT][report_reply_listener_thread] recv döngüsü kırıldı. n=%zd\n", n);

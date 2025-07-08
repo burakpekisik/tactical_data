@@ -33,7 +33,10 @@
 #include "chat_handler.h"
 #include "broadcast_manager.h"
 #include "large_response.h"
+
 #include "tactical_data_handler.h"
+#include "location_handler.h"
+#include "client_notify_threads.h"
 
 // Global chat room state (only defined here)
 server_chat_room_t server_rooms[MAX_CHAT_ROOMS];
@@ -215,7 +218,37 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         send_or_format_large_encrypted_response(client_socket, plain_result, session_key, filename);
         free(plain_result);
         free(decrypted_json);
-    } else if (strcmp(filename, "REPLY_REPORT") == 0) {
+        return NULL; // Hatalı double free'i engelle
+    }
+
+    if(strcmp(filename, "INSERT_LOCATION") == 0 || strcmp(filename, "SELECT_LOCATION_OF_USER") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_BY_UNIT") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS_BY_RADIUS") == 0) {
+        cJSON* root_location = cJSON_Parse(decrypted_json);
+
+        if (!root_location) {
+            PRINTF_LOG("DEBUG: cJSON_Parse failed! Input: %s\n", decrypted_json);
+        }
+
+        char* plain_result = NULL;
+        if(strcmp(filename, "INSERT_LOCATION") == 0) {
+            plain_result = handle_insert_location(root_location);
+        } else if(strcmp(filename, "SELECT_LOCATION_OF_USER") == 0) {
+            plain_result = handle_select_location_of_user(root);
+        } else if(strcmp(filename, "SELECT_LATEST_LOCATIONS_BY_UNIT") == 0) {
+            plain_result = handle_select_latest_locations_by_unit(root);
+        } else if(strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS") == 0) {
+            plain_result = handle_select_latest_locations_all_users(root);
+        } else if(strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS_BY_RADIUS") == 0) {
+            plain_result = handle_select_latest_locations_all_users_by_radius(root);
+        }
+        send_or_format_large_encrypted_response(client_socket, plain_result, session_key, filename);
+        if (plain_result) free(plain_result);
+        if (root) cJSON_Delete(root);
+        free(decrypted_json);
+        return NULL;
+    }
+
+    
+    if (strcmp(filename, "REPLY_REPORT") == 0) {
         char plain_result[2048];
         if (jwt_token) {
             handle_reply_report(decrypted_json, jwt_token, client_socket, plain_result, sizeof(plain_result));
@@ -327,41 +360,6 @@ void* handle_client(void* arg) {
         return NULL;
     }
     
-    // --- Bağlantı başında JWT token ile mapping güncelle (ilk mesajdan JWT ayıkla) ---
-    // İlk mesajda JWT token varsa, user_id <-> socket mapping'i güncelle
-    // char* jwt_token_init = NULL;
-    // // ENCRYPTED veya PARSE mesajı ise JWT token olabilir
-    // if (strncmp(buffer, "ENCRYPTED:", 10) == 0) {
-    //     char *command = NULL, *filename = NULL, *hex_data = NULL;
-    //     if (parse_encrypted_protocol_message(buffer, &command, &filename, &hex_data, &jwt_token_init) == 0 && jwt_token_init) {
-    //         jwt_t *jwt_ptr = NULL;
-    //         if (jwt_decode(&jwt_ptr, jwt_token_init, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
-    //             const char* sub = jwt_get_grant(jwt_ptr, "sub");
-    //             if (sub) {
-    //                 int user_id = atoi(sub);
-    //                 admin_reply_manager_register_user(user_id, client_socket);
-    //                 PRINTF_LOG("[ADMIN_REPLY] Bağlantı başında mapping güncellendi: user_id=%d, socket=%d\n", user_id, client_socket);
-    //             }
-    //             jwt_free(jwt_ptr);
-    //         }
-    //     }
-    // } else if (strncmp(buffer, "PARSE:", 6) == 0) {
-    //     // PARSE mesajında JWT token son parametre olabilir
-    //     char *last_colon = strrchr(buffer, ':');
-    //     if (last_colon && strlen(last_colon + 1) > 10) {
-    //         jwt_token_init = last_colon + 1;
-    //         jwt_t *jwt_ptr = NULL;
-    //         if (jwt_decode(&jwt_ptr, jwt_token_init, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
-    //             const char* sub = jwt_get_grant(jwt_ptr, "sub");
-    //             if (sub) {
-    //                 int user_id = atoi(sub);
-    //                 admin_reply_manager_register_user(user_id, client_socket);
-    //                 PRINTF_LOG("[ADMIN_REPLY] Bağlantı başında mapping güncellendi: user_id=%d, socket=%d\n", user_id, client_socket);
-    //             }
-    //             jwt_free(jwt_ptr);
-    //         }
-    //     }
-    // }
     int request_count = 0;
     
     while (1) {
@@ -422,7 +420,6 @@ void* handle_client(void* arg) {
         if (strncmp(bufptr, "REPORT_REPLY_WATCH:", 19) == 0) {
             // JWT token'ı ayıkla
             const char* jwt_token = bufptr + 19;
-            // Boşlukları ve yeni satırları temizle
             while (*jwt_token == ' ' || *jwt_token == '\t' || *jwt_token == '\n' || *jwt_token == ':') jwt_token++;
             int user_id = -1;
             if (jwt_token && strlen(jwt_token) > 10) {
@@ -437,6 +434,13 @@ void* handle_client(void* arg) {
                 admin_reply_manager_register_user(user_id, client_socket);
                 PRINTF_LOG("[REPORT_REPLY_WATCH] REPORT_REPLY_WATCH kaydı: user_id=%d, socket=%d\n", user_id, client_socket);
                 send(client_socket, "REPORT_REPLY_WATCH_OK\n", 23, 0);
+                // Yeni thread başlat
+                int* arg = malloc(sizeof(int));
+                *arg = client_socket;
+                pthread_t t;
+                pthread_create(&t, NULL, report_reply_watch_thread, arg);
+                pthread_detach(t);
+                return NULL;
             } else {
                 send(client_socket, "HATA: Gecersiz veya eksik JWT token\n", 34, 0);
             }
@@ -456,15 +460,15 @@ void* handle_client(void* arg) {
             }
             admin_notify_manager_add_client(client_socket, privilege, username);
             PRINTF_LOG("[ADMIN_NOTIFY_LISTEN] ADMIN_NOTIFY_LISTEN komutu alındı, socket %d admin olarak kaydedildi (privilege=%d, username=%s)\n", client_socket, privilege, username);
-            // Admin dinleme modunda sonsuz döngüde bekle
-            while (1) {
-                ssize_t n = recv(client_socket, buffer, sizeof(buffer)-1, 0);
-                if (n <= 0) break;
-                // Admin dinleme modunda başka veri beklenmiyor, sadece bağlantı açık tutuluyor
-            }
-            close(client_socket);
-            admin_notify_manager_remove_client(client_socket);
-            PRINTF_LOG("[ADMIN_NOTIFY] Admin dinleme bağlantısı kapatıldı (socket %d)\n", client_socket);
+            // Yeni thread başlat
+            struct notify_thread_args* args = malloc(sizeof(struct notify_thread_args));
+            args->client_socket = client_socket;
+            args->privilege = privilege;
+            strncpy(args->username, username, sizeof(args->username)-1);
+            args->username[sizeof(args->username)-1] = '\0';
+            pthread_t t;
+            pthread_create(&t, NULL, admin_notify_listen_thread, args);
+            pthread_detach(t);
             remove_thread_info(current_thread);
             return NULL;
         }
@@ -552,24 +556,6 @@ void* handle_client(void* arg) {
             if (jwt_token) free(jwt_token);
             continue;
         }
-        // else {
-        //     if (parse_protocol_message(buffer, &command, &filename, &content) != 0) {
-        //         // Standart parse başarısızsa REPLY_QUERY:<jwt_token> gibi iki parçalı komutları kontrol et
-        //         char* colon = strchr(buffer, ':');
-        //         if (colon && strncmp(buffer, "REPLY_QUERY", 11) == 0) {
-        //             size_t cmd_len = colon - buffer;
-        //             command = malloc(cmd_len + 1);
-        //             strncpy(command, buffer, cmd_len);
-        //             command[cmd_len] = '\0';
-        //             filename = NULL;
-        //             content = strdup(colon + 1);
-        //         } else {
-        //             char *error_response = "HATA: Gecersiz protokol formati. Format: COMMAND:FILENAME:CONTENT";
-        //             send(client_socket, error_response, strlen(error_response), 0);
-        //             continue;
-        //         }
-        //     }
-        // }
         // --- ECDH bağlantısı için user_id <-> socket mapping güncelle ---
         if (jwt_token) {
             jwt_t *jwt_ptr = NULL;
@@ -658,63 +644,7 @@ void* handle_client(void* arg) {
             PRINTF_LOG("Sifreli JSON parse ediliyor (Tactical Data format)...\n");
             PRINTF_LOG("[DEBUG] ENCRYPTED content: %s\n", content);
             fflush(stdout);
-            parsed_result = handle_encrypted_request(filename, content, get_session_key(&client_manager), jwt_token, client_socket, client_ip, 0);        } else if (strcmp(command, "REPORT_QUERY") == 0) {
-            char* jwt_token_part = NULL;
-            // content doğrudan JWT token ise
-            // if (content && strlen(content) > 10) {
-            //     jwt_token_part = strdup(content);
-            // }
-            // if (!jwt_token_part) {
-            //     PRINTF_LOG("HATA: REPORT_QUERY mesajında JWT token yok!\n");
-            //     char* error_response = "HATA: REPORT_QUERY mesajında JWT token yok!";
-            //     send(client_socket, error_response, strlen(error_response), 0);
-            //     continue;
-            // }
-            // char json_result[32768];
-            // handle_report_query(jwt_token_part, json_result, sizeof(json_result));
-            // send(client_socket, json_result, strlen(json_result), 0);
-            // free(jwt_token_part);
-        // } else if (command && strcmp(command, "REPLY_QUERY") == 0) {
-        //     PRINTF_LOG("REPLY_QUERY komutu alındı. JWT ile reply sorgulama başlatılıyor...\n");
-        //     char* jwt_token_part = NULL;
-        //     if (content && strlen(content) > 10) {
-        //         jwt_token_part = strdup(content);
-        //     }
-        //     if (!jwt_token_part) {
-        //         PRINTF_LOG("HATA: REPLY_QUERY mesajında JWT token yok!\n");
-        //         char* error_response = "HATA: REPLY_QUERY mesajında JWT token yok!";
-        //         send(client_socket, error_response, strlen(error_response), 0);
-        //         if (command) free(command);
-        //         if (filename) free(filename);
-        //         if (content) free(content);
-        //         continue;
-        //     }
-            
-        //     // Büyük yanıtlar için chunked response kullan
-        //     char* json_result = malloc(65536); // Daha büyük buffer
-        //     handle_reply_query(jwt_token_part, json_result, 65536);
-            
-        //     PRINTF_LOG("[SERVER][REPLY_QUERY] JSON yanıt uzunluğu: %zu\n", strlen(json_result));
-            
-        //     // Eğer yanıt çok büyükse, parça parça gönder
-        //     size_t result_len = strlen(json_result);
-        //     if (result_len > 8192) { // 8KB'den büyükse parça parça gönder
-        //         PRINTF_LOG("[SERVER][REPLY_QUERY] Büyük yanıt parça parça gönderiliyor...\n");
-        //         send_large_encrypted_response(client_socket, json_result);
-        //     } else {
-        //         PRINTF_LOG("[SERVER][REPLY_QUERY] Küçük yanıt tek parça gönderiliyor...\n");
-        //         char* full_response = malloc(result_len + 64);
-        //         snprintf(full_response, result_len + 64, "REPLY_QUERY:%s", json_result);
-        //         send(client_socket, full_response, strlen(full_response), 0);
-        //         free(full_response);
-        //     }
-            
-        //     free(json_result);
-        //     free(jwt_token_part);
-        //     if (command) free(command);
-        //     if (filename) free(filename);
-        //     if (content) free(content);
-        //     continue;
+            parsed_result = handle_encrypted_request(filename, content, get_session_key(&client_manager), jwt_token, client_socket, client_ip, 0);        
         } else {
             parsed_result = malloc(256);
             snprintf(parsed_result, 256, "HATA: Bilinmeyen komut: %s", command);
