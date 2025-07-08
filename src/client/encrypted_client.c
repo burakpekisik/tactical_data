@@ -319,7 +319,10 @@ int main() {
 
                 send_select_latest_locations_all_users_by_radius(conn, latitude, longitude, radius, jwt_token);
                 break;
-            case 18: // Cikis
+            case 18:
+                send_select_latest_locations_by_current_unit(conn, jwt_token);
+                break;
+            case 19: // Cikis
             {
                 LOG_CLIENT_INFO("User requested shutdown");
                 PRINTF_CLIENT("Baglanti kapatiliyor...\n");
@@ -382,7 +385,8 @@ void show_menu(void) {
     PRINTF_LOG("15. Unit ID'ye ait birimlerin konumunu al\n");
     PRINTF_LOG("16. Tüm kullanıcıların son konumları\n");
     PRINTF_LOG("17. Kullanıcıları çap göre seç\n");
-    PRINTF_LOG("18. Cikis\n");
+    PRINTF_LOG("18. Birliğime ait son konumları al\n");
+    PRINTF_LOG("19. Cikis\n");
     PRINTF_LOG("================\n");
 }
 

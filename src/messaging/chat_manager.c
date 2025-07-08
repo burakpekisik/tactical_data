@@ -487,15 +487,25 @@ int enter_chat_session_with_key(client_connection_t* conn, const char* jwt_token
             continue;
         }
         if (strcmp(message, "/quit") == 0) {
-            PRINTF_CLIENT("Oda sohbetinden çıkılıyor...\n");
+            PRINTF_CLIENT("🚪 Odadan çıkılıyor...\n");
             break;
         }
         if (strcmp(message, "/history") == 0) {
+            PRINTF_CLIENT("📜 Son mesajları getiriliyor...\n");
             receive_chat_messages(conn, jwt_token, room_id, room_key);
             continue;
         }
         send_chat_message(conn, jwt_token, room_id, message, room_key);
     }
+
+    // PRINTF_CLIENT("[LEAVE] Oda ID: %d, Oda Anahtarı: %s\n", room_id, bytes_to_hex(room_key, ROOM_KEY_SIZE));
+    // Odadan çık
+    send_leave_room_request(conn, jwt_token, room_id);
+    if (room_key) {
+        free(room_key);
+    }
+    PRINTF_CLIENT("✅ Chat oturumu sonlandırıldı.\n");
+
     // Thread'i durdur
     pthread_mutex_lock(&listener_args->lock);
     listener_args->running = 0;

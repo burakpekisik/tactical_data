@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <cjson/cJSON.h>
 #include "database.h"
 #include "connection_manager.h"
 #include <jwt.h>
@@ -159,6 +158,40 @@ void send_select_latest_locations_all_users_by_radius(client_connection_t* conn,
         latitude, longitude, radius, jwt_token);
 
     char* protocol_message = create_encrypted_protocol_message("SELECT_LATEST_LOCATIONS_ALL_USERS_BY_RADIUS", cmd_json, conn->ecdh_ctx.aes_key, jwt_token);
+    if (!protocol_message) {
+        PRINTF_CLIENT("Şifreleme hatası!\n");
+        return;
+    }
+
+    send(conn->socket, protocol_message, strlen(protocol_message), 0);
+    free(protocol_message);
+
+    // Sunucu yanıtını al ve çöz
+    char buffer[CONFIG_BUFFER_SIZE] = {0};
+    ssize_t bytes_received = receive_tcp_response(conn, buffer, CONFIG_BUFFER_SIZE - 1);
+    if (bytes_received <= 0) {
+        PRINTF_CLIENT("Sunucudan yanıt alınamadı veya bağlantı kapatıldı.\n");
+        return;
+    }
+    buffer[bytes_received] = '\0';
+    PRINTF_CLIENT("[DEBUG] Sunucu yanıtı: %s\n", buffer);
+
+    char json_out[2048];
+    int result = receive_and_decrypt_encrypted_response(buffer, conn->ecdh_ctx.aes_key, json_out, sizeof(json_out), NULL);
+    if (result == 0) {
+        PRINTF_CLIENT("[DEBUG] Çözülen JSON: %s\n", json_out);
+    } else {
+        PRINTF_CLIENT("Yanıt çözme hatası!\n");
+    }
+}
+
+// 6. Birimimdeki kullanıcıların son konumları
+void send_select_latest_locations_by_current_unit(client_connection_t* conn, const char* jwt_token) {
+    char cmd_json[512];
+    snprintf(cmd_json, sizeof(cmd_json),
+        "{\"jwt\":\"%s\"}", jwt_token);
+
+    char* protocol_message = create_encrypted_protocol_message("SELECT_LATEST_LOCATIONS_MY_UNIT", cmd_json, conn->ecdh_ctx.aes_key, jwt_token);
     if (!protocol_message) {
         PRINTF_CLIENT("Şifreleme hatası!\n");
         return;

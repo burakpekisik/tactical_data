@@ -43,6 +43,10 @@ public:
     void listenForAdminNotifications();
     bool testAllConnectionTypes(const QString& jsonString, bool encrypted);
     void queryRepliesForReport(int reportId);
+    void sendSelectLatestLocationsAllUsers();
+    // --- Normal kullanıcılar için birimin son konumları ---
+    void sendSelectLatestLocationsByCurrentUnit();
+
     /**
      * @brief Bağlantı durumu enum'u
      */
@@ -75,6 +79,7 @@ public:
     // JWT token set/get fonksiyonları
     void setJwtToken(const QString& token) { jwtToken = token; }
     QString getJwtToken() const { return jwtToken; }
+    client_connection_t* getClientConnection() const { return clientConnection; }
 
 public slots:
     /**
@@ -107,6 +112,22 @@ public slots:
      * @param encrypted Şifreli gönderim (true/false)
      */
     void sendJsonFile(const QString& filePath, bool encrypted = true);
+
+    /**
+     * @brief Konum bilgisini sunucuya gönderir (taktik veri gibi, JSON ile)
+     * @param latitude Enlem
+     * @param longitude Boylam
+     * @param timestamp Unix zaman damgası
+     * @param description Açıklama (opsiyonel)
+     * @param encrypted Şifreli gönderim
+     */
+    void sendLocation(double latitude, double longitude, long timestamp, const QString& description = QString(), bool encrypted = true);
+    /**
+     * @brief Konum JSON'unu uygun protokol ile gönderir
+     * @param jsonString JSON verisi
+     * @param encrypted Şifreli gönderim
+     */
+    void sendLocationJson(const QString& jsonString, bool encrypted = true);
 
     // Fallback ve alternatif bağlantı fonksiyonları
     bool connectUdp(const QString& host, int port);
@@ -161,6 +182,16 @@ private:
     // void queryRepliesForReport(int reportId); // Artık public
 
 signals:
+    /**
+     * @brief Tüm kullanıcıların son konumları alındığında emit edilir
+     * @param locations QJsonArray (her biri: user_id, latitude, longitude, timestamp, description)
+     */
+    void allUsersLatestLocationsReceived(const QJsonArray& locations);
+    /**
+     * @brief Normal kullanıcılar için birimin son konumları alındığında emit edilir
+     * @param locations QJsonArray (her biri: user_id, latitude, longitude, timestamp, description)
+     */
+    void myUnitLatestLocationsReceived(const QJsonArray& locations);
     /**
      * @brief Admin bildirimi alındığında emit edilir
      * @param notification Bildirim mesajı

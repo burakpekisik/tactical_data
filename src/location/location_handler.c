@@ -137,6 +137,41 @@ char* handle_select_latest_locations_by_unit(const cJSON* request_json) {
     return resp_str;
 }
 
+// SELECT_LATEST_LOCATIONS_OF_MY_UNIT
+char* handle_select_latest_locations_of_my_unit(const cJSON* request_json) {
+    const cJSON *jwt_item = cJSON_GetObjectItem(request_json, "jwt");
+
+    location_t* locations = NULL;
+
+    // JWT'den user_id çek
+    jwt_t *jwt = NULL;
+    jwt_decode(&jwt, jwt_item->valuestring, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
+
+    int user_unit_id = jwt_get_unit_id(jwt_item->valuestring);
+
+    int count = 0;
+    int found = db_select_latest_locations_by_unit(user_unit_id, &locations, &count);
+    cJSON* resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "action", "select_latest_locations_of_my_unit_response");
+    cJSON_AddBoolToObject(resp, "success", found == 0);
+    cJSON* arr = cJSON_CreateArray();
+    if (found == 0 && locations) {
+        for (int i = 0; i < count; i++) {
+            cJSON* item = cJSON_CreateObject();
+            cJSON_AddNumberToObject(item, "user_id", locations[i].user_id);
+            cJSON_AddNumberToObject(item, "latitude", locations[i].latitude);
+            cJSON_AddNumberToObject(item, "longitude", locations[i].longitude);
+            cJSON_AddNumberToObject(item, "timestamp", locations[i].timestamp);
+            cJSON_AddItemToArray(arr, item);
+        }
+        free(locations);
+    }
+    cJSON_AddItemToObject(resp, "locations", arr);
+    char* resp_str = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    return resp_str;
+}
+
 // SELECT_LATEST_LOCATIONS_ALL_USERS
 char* handle_select_latest_locations_all_users(const cJSON* request_json) {
     const cJSON *jwt_item = cJSON_GetObjectItem(request_json, "jwt");

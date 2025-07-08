@@ -33,7 +33,6 @@
 #include "chat_handler.h"
 #include "broadcast_manager.h"
 #include "large_response.h"
-
 #include "tactical_data_handler.h"
 #include "location_handler.h"
 #include "client_notify_threads.h"
@@ -221,7 +220,7 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         return NULL; // Hatalı double free'i engelle
     }
 
-    if(strcmp(filename, "INSERT_LOCATION") == 0 || strcmp(filename, "SELECT_LOCATION_OF_USER") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_BY_UNIT") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS_BY_RADIUS") == 0) {
+    if(strcmp(filename, "INSERT_LOCATION") == 0 || strcmp(filename, "SELECT_LOCATION_OF_USER") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_BY_UNIT") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS_BY_RADIUS") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_MY_UNIT") == 0) {
         cJSON* root_location = cJSON_Parse(decrypted_json);
 
         if (!root_location) {
@@ -239,6 +238,8 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
             plain_result = handle_select_latest_locations_all_users(root);
         } else if(strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS_BY_RADIUS") == 0) {
             plain_result = handle_select_latest_locations_all_users_by_radius(root);
+        } else if (strcmp(filename, "SELECT_LATEST_LOCATIONS_MY_UNIT") == 0) {
+            plain_result = handle_select_latest_locations_of_my_unit(root);
         }
         send_or_format_large_encrypted_response(client_socket, plain_result, session_key, filename);
         if (plain_result) free(plain_result);

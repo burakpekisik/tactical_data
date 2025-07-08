@@ -14,8 +14,8 @@ class MapWidget : public QWidget
 
 public:
     explicit MapWidget(QWidget *parent = nullptr);
-    Q_INVOKABLE void addMarker(double latitude, double longitude, const QString& description, const QString& status, int id, qint64 timestamp, bool isTemporary = false);
-    Q_INVOKABLE void clearMapItems();
+    Q_INVOKABLE void addMarker(double latitude, double longitude, const QString& description, const QString& status, int id, qint64 timestamp, bool isTemporary = false, const QString& markerType = "report");
+    Q_INVOKABLE void clearMapItems(const QString& markerType = "");
     Q_INVOKABLE void setMarkersVisible(bool visible);
     Q_INVOKABLE void setMode(int modeValue);
     Q_INVOKABLE void setCurrentLocation(double latitude, double longitude);
@@ -26,12 +26,12 @@ public:
 
 signals:
     void pointClicked(double latitude, double longitude);
-    void markerClicked(int id, double latitude, double longitude);
+    void markerClicked(int id, double latitude, double longitude, const QString& markerType, const QString& description, const QString& status, const QString& timestamp);
     void currentLocationMarkerClicked(double latitude, double longitude);
 
 private slots:
     void onQmlPointClicked(double latitude, double longitude);
-    void onQmlMarkerClicked(int id, double latitude, double longitude);
+    void onQmlMarkerClicked(int id, double latitude, double longitude, const QString& markerType, const QString& description, const QString& status, const QString& timestamp);
     void onQmlCurrentLocationMarkerClicked(double latitude, double longitude);
 
 private:

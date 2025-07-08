@@ -56,8 +56,8 @@ void MapWidget::setupQmlMap()
     if (rootObject) {
         connect(rootObject, SIGNAL(mapClicked(double, double)),
                 this, SLOT(onQmlPointClicked(double, double)));
-        connect(rootObject, SIGNAL(markerClicked(int, double, double)),
-                this, SLOT(onQmlMarkerClicked(int, double, double)));
+        connect(rootObject, SIGNAL(markerClicked(int, double, double, QString, QString, QString, QString)),
+                this, SLOT(onQmlMarkerClicked(int, double, double, QString, QString, QString, QString)));
         connect(rootObject, SIGNAL(currentLocationMarkerClicked(double, double)),
                 this, SLOT(onQmlCurrentLocationMarkerClicked(double, double)));
     }
@@ -76,10 +76,10 @@ void MapWidget::onQmlPointClicked(double latitude, double longitude)
     emit pointClicked(latitude, longitude);
 }
 
-void MapWidget::onQmlMarkerClicked(int id, double latitude, double longitude)
+void MapWidget::onQmlMarkerClicked(int id, double latitude, double longitude, const QString& markerType, const QString& description, const QString& status, const QString& timestamp)
 {
-    qDebug() << "Marker tıklandı:" << id << latitude << longitude;
-    emit markerClicked(id, latitude, longitude);
+    qDebug() << "Marker tıklandı:" << id << latitude << longitude << markerType << description << status << timestamp;
+    emit markerClicked(id, latitude, longitude, markerType, description, status, timestamp);
 }
 
 void MapWidget::onQmlCurrentLocationMarkerClicked(double latitude, double longitude)
@@ -89,7 +89,7 @@ void MapWidget::onQmlCurrentLocationMarkerClicked(double latitude, double longit
     emit currentLocationMarkerClicked(latitude, longitude);
 }
 
-void MapWidget::addMarker(double latitude, double longitude, const QString& description, const QString& status, int id, qint64 timestamp, bool isTemporary)
+void MapWidget::addMarker(double latitude, double longitude, const QString& description, const QString& status, int id, qint64 timestamp, bool isTemporary, const QString& markerType)
 {
     if (!qmlWidget) return;
     QVariant returnedValue;
@@ -100,17 +100,22 @@ void MapWidget::addMarker(double latitude, double longitude, const QString& desc
         Q_ARG(QVariant, status),
         Q_ARG(QVariant, id),
         Q_ARG(QVariant, timestamp),
-        Q_ARG(QVariant, isTemporary)
+        Q_ARG(QVariant, isTemporary),
+        Q_ARG(QVariant, markerType)
     );
-    // logToConsole(QString("addMarker çağrıldı: %1, %2, %3, %4, %5, %6, %7")
-    //     .arg(latitude).arg(longitude).arg(description).arg(status).arg(id).arg(timestamp).arg(isTemporary));
+    // logToConsole(QString("addMarker çağrıldı: %1, %2, %3, %4, %5, %6, %7, %8")
+    //     .arg(latitude).arg(longitude).arg(description).arg(status).arg(id).arg(timestamp).arg(isTemporary).arg(markerType));
 }
 
-void MapWidget::clearMapItems()
+void MapWidget::clearMapItems(const QString& markerType)
 {
     if (!qmlWidget) return;
-    QMetaObject::invokeMethod(qmlWidget->rootObject(), "clearMapItems");
-    logToConsole("clearMapItems çağrıldı");
+    if (markerType.isEmpty()) {
+        QMetaObject::invokeMethod(qmlWidget->rootObject(), "clearMapItems");
+    } else {
+        QMetaObject::invokeMethod(qmlWidget->rootObject(), "clearMapItems", Q_ARG(QVariant, markerType));
+    }
+    logToConsole(QString("clearMapItems çağrıldı, markerType=%1").arg(markerType));
 }
 
 void MapWidget::setMarkersVisible(bool visible)

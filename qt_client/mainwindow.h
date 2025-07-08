@@ -1,3 +1,5 @@
+    
+
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
@@ -40,11 +42,21 @@ public:
 
 private slots:
     void onMapClicked(double latitude, double longitude);
-    void onMarkerClicked(int id, double latitude, double longitude);
+    void onMarkerClicked(int id, double latitude, double longitude, const QString& markerType, const QString& description, const QString& status, const QString& timestamp);
     void onCurrentLocationMarkerClicked(double latitude, double longitude);
     void onSendData();
     void onConnectToServer();
     void onDisconnectFromServer();
+
+    // --- Normal kullanıcılar için birimin son konumlarını periyodik çekme ---
+    void startMyUnitLocationUpdates();
+    void stopMyUnitLocationUpdates();
+    void onMyUnitLatestLocationsReceived(const QJsonArray& locations);
+
+    // --- Admin için tüm kullanıcıların son konumlarını periyodik çekme ---
+    void startAllUsersLocationUpdates();
+    void stopAllUsersLocationUpdates();
+    void onAllUsersLatestLocationsReceived(const QJsonArray& locations);
     
     // Client wrapper slots
     void onConnectionStatusChanged(ClientWrapper::ConnectionStatus status, const QString& message);

@@ -32,9 +32,6 @@ extern "C" {
 QByteArray decryptAes256Cbc(const QByteArray &cipher, const QByteArray &key, const QByteArray &iv);
 
 
-/**
- * @brief ClientWrapper constructor'ı
- * @param parent        // Shared secret hesapla
 ClientWrapper::ClientWrapper(QObject *parent)
     : QObject(parent)
     , tcpSocket(nullptr)
@@ -1387,22 +1384,17 @@ void ClientWrapper::processEncryptedResponse()
         // Tek parça yanıt bulundu
         int dataStart = encIdx + 10; // "ENCRYPTED:" uzunluğu
         int lineEnd = incomingBuffer.indexOf('\n', dataStart);
-        
         if (lineEnd == -1 && incomingBuffer.size() - dataStart > 100) {
             // Satır sonu yok ama yeterli veri var, tümünü al
             lineEnd = incomingBuffer.size();
         }
-        
         if (lineEnd != -1) {
             QByteArray fullData = incomingBuffer.mid(dataStart, lineEnd - dataStart);
-            
             qDebug() << "[DEBUG] Tek parça ENCRYPTED yanıt bulundu, uzunluk:" << fullData.size();
             qDebug() << "[DEBUG] Full data (ilk 100):" << QString(fullData.left(100));
-            
             // Format kontrolü: filename:hex_data:jwt_token veya sadece hex_data
             QList<QByteArray> dataParts = fullData.split(':');
             QByteArray hexData;
-            
             if (dataParts.size() >= 3) {
                 // Format: filename:hex_data:jwt_token
                 hexData = dataParts[1];
@@ -1419,7 +1411,6 @@ void ClientWrapper::processEncryptedResponse()
                 qDebug() << "[DEBUG] Format: direkt hex data, uzunluk:" << hexData.size();
                 qDebug() << "[DEBUG] Raw hex data (ilk 64):" << QString(hexData.left(64));
             }
-            
             // Hex veriyi temizle (sadece hex karakterler) - trim de yap
             hexData = hexData.trimmed();
             QByteArray cleanHex;
@@ -1428,29 +1419,22 @@ void ClientWrapper::processEncryptedResponse()
                     cleanHex.append(c);
                 }
             }
-            
             qDebug() << "[DEBUG] Temizlenmiş hex uzunluk:" << cleanHex.size();
             qDebug() << "[DEBUG] Temizlenmiş hex (ilk 32):" << QString(cleanHex.left(32));
-            
             // Hex'i binary'ye çevir ve decrypt et
             QByteArray binData = QByteArray::fromHex(cleanHex);
             if (binData.size() >= 16) {
                 QByteArray iv = binData.left(16);
                 QByteArray enc = binData.mid(16);
-                
                 qDebug() << "[DEBUG] IV:" << iv.toHex();
                 qDebug() << "[DEBUG] Encrypted size:" << enc.size();
-                
                 QByteArray plainJson = decryptAes256Cbc(enc, QByteArray(reinterpret_cast<const char*>(aesKey), 32), iv);
-                
                 if (!plainJson.isEmpty()) {
                     qDebug() << "[DEBUG] Decrypt başarılı, JSON size:" << plainJson.size();
                     qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
-                    
                     QJsonDocument doc = QJsonDocument::fromJson(plainJson);
                     if (doc.isObject()) {
                         QJsonObject obj = doc.object();
-                        
                         // REPORT_LIST yanıtı
                         if (obj.contains("reports") && obj["reports"].isArray()) {
                             int privilege = obj.contains("privilege") ? obj["privilege"].toInt() : 0;
@@ -1466,6 +1450,14 @@ void ClientWrapper::processEncryptedResponse()
                                 .arg(QString::fromUtf8(logDoc.toJson(QJsonDocument::Indented))));
                             emit replyQueryResultReceived(obj["replies"].toArray());
                         }
+                        // Tüm kullanıcıların son konumları yanıtı (admin) veya birim son konumları (normal kullanıcı)
+                        else if (obj.contains("locations") && obj["locations"].isArray()) {
+                            if (obj.contains("type") && obj["type"].toString() == "my_unit") {
+                                emit myUnitLatestLocationsReceived(obj["locations"].toArray());
+                            } else {
+                                emit allUsersLatestLocationsReceived(obj["locations"].toArray());
+                            }
+                        }
                         // Diğer yanıtlar
                         else {
                             emit dataReceived(QString::fromUtf8(plainJson));
@@ -1475,7 +1467,6 @@ void ClientWrapper::processEncryptedResponse()
                     qDebug() << "[DEBUG] Decrypt başarısız";
                 }
             }
-            
             // Bu mesajı buffer'dan çıkar
             incomingBuffer.remove(encIdx, lineEnd - encIdx + (lineEnd < incomingBuffer.size() ? 1 : 0));
         }
@@ -1883,4 +1874,155 @@ void ClientWrapper::queryRepliesForReport(int reportId) {
     } catch (...) {
         emit dataError("Reply sorgulama hatası");
     }
+}
+
+/**
+ * @brief Konum bilgisini sunucuya gönderir (taktik veri gibi, JSON ile)
+ * @param latitude Enlem
+ * @param longitude Boylam
+ * @param timestamp Unix zaman damgası
+ * @param description Açıklama (opsiyonel)
+ * @param encrypted Şifreli gönderim
+ */
+void ClientWrapper::sendLocation(double latitude, double longitude, long timestamp, const QString& description, bool encrypted)
+{
+    if (!isConnected()) {
+        PRINTF_LOG("✗ Not connected to server - cannot send location\n");
+        LOG_CLIENT_ERROR("Attempted to send location while not connected");
+        emit dataSendResult(NotConnected, "Sunucuya bağlı değilsiniz");
+        return;
+    }
+    if (jwtToken.isEmpty()) {
+        PRINTF_LOG("✗ JWT token yok - konum gönderilemiyor\n");
+        LOG_CLIENT_ERROR("JWT token yok - konum gönderilemedi");
+        emit dataSendResult(InvalidData, "JWT token yok, konum gönderilemedi");
+        return;
+    }
+    if (std::isnan(latitude) || std::isnan(longitude)) {
+        PRINTF_LOG("✗ Geçersiz konum verisi (NaN)\n");
+        LOG_CLIENT_ERROR("Geçersiz konum verisi (NaN)");
+        emit dataSendResult(InvalidData, "Geçersiz konum verisi (NaN)");
+        return;
+    }
+    QJsonObject jsonObj;
+    jsonObj["latitude"] = latitude;
+    jsonObj["longitude"] = longitude;
+    jsonObj["timestamp"] = static_cast<qint64>(timestamp);
+    jsonObj["jwt"] = jwtToken;
+    if (!description.isEmpty())
+        jsonObj["description"] = description;
+    QJsonDocument jsonDoc(jsonObj);
+    QString jsonString = jsonDoc.toJson(QJsonDocument::Compact);
+    // Komut adını belirtmek için protokol mesajı oluşturulurken komut adı kullanılacak
+    sendLocationJson(jsonString, encrypted);
+}
+
+/**
+ * @brief Konum JSON'unu uygun protokol ile gönderir
+ * @param jsonString JSON verisi
+ * @param encrypted Şifreli gönderim
+ */
+void ClientWrapper::sendLocationJson(const QString& jsonString, bool encrypted)
+{
+    // Bağlantı ve handshake kontrolü
+    if (!isConnected()) {
+        PRINTF_LOG("[KONUM][SEND][ERROR] Not connected, konum JSON gönderilemiyor\n");
+        logError("[KONUM][SEND][ERROR] Not connected, konum JSON gönderilemiyor");
+        return;
+    }
+    if (encrypted && !handshakeCompleted) {
+        PRINTF_LOG("[KONUM][SEND][ERROR] ECDH handshake tamamlanmamış, şifreli konum gönderilemez\n");
+        logError("[KONUM][SEND][ERROR] ECDH handshake tamamlanmamış, şifreli konum gönderilemez");
+        return;
+    }
+    char* protocolMessage = nullptr;
+    if (encrypted) {
+        protocolMessage = create_encrypted_protocol_message("INSERT_LOCATION", jsonString.toUtf8().constData(), aesKey, jwtToken.toUtf8().constData());
+    } else {
+        protocolMessage = create_normal_protocol_message("INSERT_LOCATION", jsonString.toUtf8().constData(), jwtToken.toUtf8().constData());
+    }
+    if (!protocolMessage) {
+        PRINTF_LOG("[KONUM][SEND][ERROR] Protocol message oluşturulamadı\n");
+        logError("[KONUM][SEND][ERROR] Protocol message oluşturulamadı");
+        return;
+    }
+    QByteArray messageData(protocolMessage, strlen(protocolMessage));
+    qint64 bytesWritten = tcpSocket->write(messageData);
+    tcpSocket->flush();
+    free(protocolMessage);
+    if (bytesWritten == -1) {
+        PRINTF_LOG("[KONUM][SEND][ERROR] Protocol message gönderilemedi, tcpSocket error: %s\n", tcpSocket->errorString().toUtf8().constData());
+        logError(QString("[KONUM][SEND][ERROR] tcpSocket->write() error: %1").arg(tcpSocket->errorString()));
+        return;
+    } else {
+        PRINTF_LOG("[KONUM][SEND] Konum başarıyla gönderildi (%lld bytes)\n", bytesWritten);
+        logInfo(QString("[KONUM][SEND] Konum başarıyla gönderildi (%1 bytes)").arg(bytesWritten));
+        // emit dataSendResult(SendSuccess, "Konum başarıyla gönderildi"); // Bildirim kutusu çıkmasın diye kapatıldı
+    }
+}
+
+/**
+ * @brief Tüm kullanıcıların son konumlarını sunucudan çeker (sadece admin için)
+ */
+void ClientWrapper::sendSelectLatestLocationsAllUsers()
+{
+    if (!isConnected() || !handshakeCompleted) {
+        logError("Bağlantı yok veya ECDH tamamlanmamış, tüm kullanıcı konumları sorgulanamaz");
+        return;
+    }
+    if (jwtToken.isEmpty()) {
+        logError("JWT token yok, tüm kullanıcı konumları sorgulanamaz");
+        return;
+    }
+    // Komut JSON'u hazırla
+    QJsonObject queryObj;
+    queryObj["jwt"] = jwtToken;
+    QJsonDocument doc(queryObj);
+    QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
+    char* encryptedMsg = create_encrypted_protocol_message("SELECT_LATEST_LOCATIONS_ALL_USERS",
+                                                          jsonData.constData(),
+                                                          aesKey,
+                                                          jwtToken.toUtf8().constData());
+    if (!encryptedMsg) {
+        logError("Tüm kullanıcı konumları için şifreli mesaj oluşturulamadı");
+        return;
+    }
+    QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
+    free(encryptedMsg);
+    tcpSocket->write(msgData);
+    tcpSocket->flush();
+    logInfo("Tüm kullanıcıların son konumları sorgulandı");
+}
+
+/**
+ * @brief Sadece normal kullanıcılar için birimin son konumlarını sunucudan çeker
+ */
+void ClientWrapper::sendSelectLatestLocationsByCurrentUnit()
+{
+    if (!isConnected() || !handshakeCompleted) {
+        logError("Bağlantı yok veya ECDH tamamlanmamış, birim konumları sorgulanamaz");
+        return;
+    }
+    if (jwtToken.isEmpty()) {
+        logError("JWT token yok, birim konumları sorgulanamaz");
+        return;
+    }
+    // Komut JSON'u hazırla
+    QJsonObject queryObj;
+    queryObj["jwt"] = jwtToken;
+    QJsonDocument doc(queryObj);
+    QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
+    char* encryptedMsg = create_encrypted_protocol_message("SELECT_LATEST_LOCATIONS_MY_UNIT",
+                                                          jsonData.constData(),
+                                                          aesKey,
+                                                          jwtToken.toUtf8().constData());
+    if (!encryptedMsg) {
+        logError("Birim konumları için şifreli mesaj oluşturulamadı");
+        return;
+    }
+    QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
+    free(encryptedMsg);
+    tcpSocket->write(msgData);
+    tcpSocket->flush();
+    logInfo("Birim son konumları sorgulandı");
 }

@@ -24,7 +24,10 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QJsonDocument>
-#include "location_manager.h"
+
+extern "C" {
+    #include "location_manager.h"
+}
 
 /**
  * @brief MainWindow sınıfının constructor'ı
@@ -67,6 +70,8 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onFallbackTestResult);
     connect(clientWrapper, &ClientWrapper::newReportReplyReceived,
             this, &MainWindow::onNewReportReplyReceived);
+    connect(clientWrapper, &ClientWrapper::myUnitLatestLocationsReceived,
+            this, &MainWindow::onMyUnitLatestLocationsReceived);
     // Admin reply signal'ları
     connect(clientWrapper, &ClientWrapper::dataSuccess, this, [this](const QString& message) {
         logTextEdit->append(QString("<span style='color: #27ae60;'><b>[BAŞARILI]</b></span> %1").arg(message));
@@ -92,10 +97,10 @@ MainWindow::MainWindow(QWidget *parent)
             logTextEdit->append("<b>[INFO]</b> Login sonrası bağlantı durumu kontrol ediliyor...");
             onPeriodicConnectionCheck();
         });
-        QTimer::singleShot(3000, this, [this]() {
-            logTextEdit->append("<b>[INFO]</b> Admin notify watch başlatılıyor...");
-            clientWrapper->listenForAdminNotifications();
-        });
+        // QTimer::singleShot(3000, this, [this]() {
+        //     logTextEdit->append("<b>[INFO]</b> Admin notify watch başlatılıyor...");
+        //     clientWrapper->listenForAdminNotifications();
+        // });
     });
     
     // Periyodik bağlantı kontrolü timer'ı
@@ -116,7 +121,7 @@ MainWindow::MainWindow(QWidget *parent)
     // Periyodik konum güncellemesi timer'ı
     locationUpdateTimer = new QTimer(this);
     connect(locationUpdateTimer, &QTimer::timeout, this, &MainWindow::onPeriodicLocationUpdate);
-    locationUpdateTimer->setInterval(30000); // 30 saniye aralıkla güncelle
+    locationUpdateTimer->setInterval(10000); // 10 saniye aralıkla güncelle
     
     setupUI();
     setWindowTitle("Tactical Data Client - Harita Arayüzü");
@@ -469,13 +474,15 @@ void MainWindow::onMapClicked(double latitude, double longitude)
     updateUIState();
 }
 
-void MainWindow::onMarkerClicked(int id, double latitude, double longitude)
+void MainWindow::onMarkerClicked(int id, double latitude, double longitude, const QString& markerType, const QString& description, const QString& status, const QString& timestamp)
 {
+    if (markerType == "user") {
+        return;
+    }
+    // Report marker ise eski davranış
     if (currentMode == ReplyMode) {
-        // Admin dönüt modunda: Dönüt gönder menüsü aç
         showAdminReplyDialog(id, latitude, longitude);
     } else {
-        // Normal modda: Bu marker için mevcut reply'ları göster
         showMarkerRepliesDialog(id, latitude, longitude);
     }
 }
@@ -1022,9 +1029,21 @@ void MainWindow::onReportsReceived(const QJsonArray& reports, int privilege)
 {
     qDebug() << "[DEBUG] onReportsReceived called, privilege:" << privilege << ", reports size:" << reports.size();
     userPrivilege = privilege;
+    // Admin ise periyodik tüm kullanıcı konum sorgusunu başlat
+    if (userPrivilege == 1) {
+        startAllUsersLocationUpdates();
+    } else if (userPrivilege == 0) {
+        startMyUnitLocationUpdates();
+    } else {
+        stopAllUsersLocationUpdates();
+        stopMyUnitLocationUpdates();
+    }
+    // --- Tüm kullanıcı konumları sinyalini bağla ---
+    connect(clientWrapper, &ClientWrapper::allUsersLatestLocationsReceived,
+            this, &MainWindow::onAllUsersLatestLocationsReceived);
     logTextEdit->append("<b>[RAPOR]</b> Sunucudan rapor listesi alındı. Toplam: " + QString::number(reports.size()));
     if (!mapWidget) return;
-    QMetaObject::invokeMethod(mapWidget, "clearMapItems");
+    mapWidget->clearMapItems("report");
     for (const QJsonValue& val : reports) {
         if (!val.isObject()) continue;
         QJsonObject obj = val.toObject();
@@ -1036,8 +1055,7 @@ void MainWindow::onReportsReceived(const QJsonArray& reports, int privilege)
         qint64 timestamp = obj.value("timestamp").toVariant().toLongLong();
         QString logMsg = QString("Marker eklendi: [%1, %2] - %3").arg(lat, 0, 'f', 6).arg(lon, 0, 'f', 6).arg(desc);
         logTextEdit->append(logMsg);
-        QMetaObject::invokeMethod(mapWidget, "addMarker",
-            Q_ARG(double, lat), Q_ARG(double, lon), Q_ARG(QString, desc), Q_ARG(QString, status), Q_ARG(int, id), Q_ARG(qint64, timestamp), Q_ARG(bool, false));
+        mapWidget->addMarker(lat, lon, desc, status, id, timestamp, false, "report");
     }
     
     // Marker'lar eklendikten sonra mevcut filtreleri uygula
@@ -1499,7 +1517,7 @@ void MainWindow::onPositionUpdated(const QGeoPositionInfo &info)
         QMetaObject::invokeMethod(mapWidget, "setCurrentLocation",
                                 Q_ARG(double, currentLatitude),
                                 Q_ARG(double, currentLongitude));
-        
+
         // Sadece manuel istek olduğunda zoom yap
         if (isManualLocationRequest) {
             QMetaObject::invokeMethod(mapWidget, "centerOnLocation",
@@ -1524,6 +1542,9 @@ void MainWindow::onPositionUpdated(const QGeoPositionInfo &info)
     if (isManualLocationRequest) {
         isManualLocationRequest = false;
     }
+
+    clientWrapper->sendLocation(currentLatitude, currentLongitude, QDateTime::currentSecsSinceEpoch(), "", true);
+    logTextEdit->append("<b>[KONUM]</b> Konum sunucuya gönderildi");
 }
 
 /**
@@ -1986,7 +2007,7 @@ void MainWindow::onWatchReportReplies()
     }
     
     // Sunucuya izleme isteği gönder
-    clientWrapper->watchReportReplies();
+    // clientWrapper->watchReportReplies();
     
     // Kullanıcıya bilgilendirme mesajı
     QString logMessage = "<span style='color: #3498db;'><b>[BİLGİ]</b></span> Rapor cevapları izleme başlatıldı. Yeni cevaplar otomatik olarak gösterilecek.";
@@ -2059,5 +2080,100 @@ void MainWindow::onListenForNotifications()
         if (adminLogEdit) {
             adminLogEdit->append("<b>[INFO]</b> Admin bildirim dinleme komutu gönderildi.");
         }
+    }
+}
+
+// --- Admin (privilege==1) için tüm kullanıcıların son konumlarını periyodik çekme ---
+QTimer* allUsersLocationTimer = nullptr;
+
+void MainWindow::startAllUsersLocationUpdates()
+{
+    if (!allUsersLocationTimer) {
+        allUsersLocationTimer = new QTimer(this);
+        connect(allUsersLocationTimer, &QTimer::timeout, this, [this]() {
+            if (clientWrapper && userPrivilege == 1) {
+                clientWrapper->sendSelectLatestLocationsAllUsers();
+            }
+        });
+        allUsersLocationTimer->setInterval(10000); // 10 saniye
+    }
+    if (userPrivilege == 1) {
+        allUsersLocationTimer->start();
+        logTextEdit->append("<b>[ADMIN]</b> Tüm kullanıcı konumları periyodik sorgulanıyor (10sn)");
+    }
+}
+
+void MainWindow::stopAllUsersLocationUpdates()
+{
+    if (allUsersLocationTimer && allUsersLocationTimer->isActive()) {
+        allUsersLocationTimer->stop();
+        logTextEdit->append("<b>[ADMIN]</b> Tüm kullanıcı konumları sorgulama durduruldu");
+    }
+}
+
+// Tüm kullanıcıların son konumları geldiğinde haritaya ekle
+void MainWindow::onAllUsersLatestLocationsReceived(const QJsonArray& locations)
+{
+    if (!mapWidget) return;
+    mapWidget->clearMapItems("user");
+    for (const QJsonValue& val : locations) {
+        if (!val.isObject()) continue;
+        QJsonObject obj = val.toObject();
+        double lat = obj.value("latitude").toDouble();
+        double lon = obj.value("longitude").toDouble();
+        QString desc = obj.value("description").toString();
+        QString status = obj.value("status").toString();
+        int id = obj.value("user_id").toInt();
+        qint64 timestamp = obj.value("timestamp").toVariant().toLongLong();
+        mapWidget->addMarker(lat, lon, desc, status, id, timestamp, false, "user");
+    }
+    logTextEdit->append(QString("<b>[ADMIN]</b> %1 kullanıcının son konumu haritaya işlendi.").arg(locations.size()));
+}
+
+// --- Normal kullanıcılar (privilege==0) için birimin son konumlarını periyodik çekme ---
+QTimer* myUnitLocationTimer = nullptr;
+
+void MainWindow::startMyUnitLocationUpdates()
+{
+    if (!myUnitLocationTimer) {
+        myUnitLocationTimer = new QTimer(this);
+        connect(myUnitLocationTimer, &QTimer::timeout, this, [this]() {
+            if (clientWrapper && userPrivilege == 0) {
+                clientWrapper->sendSelectLatestLocationsByCurrentUnit();
+            }
+        });
+        myUnitLocationTimer->setInterval(10000); // 10 saniye
+    }
+    if (userPrivilege == 0) {
+        myUnitLocationTimer->start();
+        logTextEdit->append("<b>[BIRIM]</b> Birim konumları periyodik sorgulanıyor (10sn)");
+    }
+}
+
+void MainWindow::stopMyUnitLocationUpdates()
+{
+    if (myUnitLocationTimer && myUnitLocationTimer->isActive()) {
+        myUnitLocationTimer->stop();
+        logTextEdit->append("<b>[BIRIM]</b> Birim konumları sorgulama durduruldu");
+    }
+}
+
+// Birimin son konumları geldiğinde haritaya ekle
+void MainWindow::onMyUnitLatestLocationsReceived(const QJsonArray& locations)
+{
+    if (!mapWidget) return;
+    mapWidget->clearMapItems("user");
+    for (const QJsonValue& val : locations) {
+        if (!val.isObject()) continue;
+        QJsonObject obj = val.toObject();
+        double lat = obj.value("latitude").toDouble();
+        double lon = obj.value("longitude").toDouble();
+        QString desc = obj.value("description").toString();
+        int id = obj.value("user_id").toInt();
+        qint64 timestamp = 0;
+        if (obj.contains("timestamp")) {
+            timestamp = obj.value("timestamp").toVariant().toLongLong();
+        }
+        mapWidget->addMarker(lat, lon, desc, "", id, timestamp, false, "user");
     }
 }

@@ -12,10 +12,10 @@ Rectangle {
     border.width: 1
 
     signal mapClicked(double latitude, double longitude)
-    signal markerClicked(int id, double latitude, double longitude)
+    signal markerClicked(int id, double latitude, double longitude, string markerType, string description, string status, string timestamp)
     signal currentLocationMarkerClicked(double latitude, double longitude)
-    function emitMarkerClicked(markerId, lat, lon) {
-        mapContainer.markerClicked(markerId, lat, lon);
+    function emitMarkerClicked(markerId, lat, lon, markerType, description, status, timestamp) {
+        mapContainer.markerClicked(markerId, lat, lon, markerType, description, status, timestamp);
     }
     
     // Mevcut konum için değişkenler
@@ -345,6 +345,7 @@ Rectangle {
     }
     
     // İşaretçi komponenti
+    // Report marker komponenti
     Component {
         id: markerComponent
         MapQuickItem {
@@ -353,7 +354,6 @@ Rectangle {
                 width: 16
                 height: 16
                 radius: 8
-                // Renk eşlemesi fonksiyonu
                 property string dataType: status
                 color: marker.getColorForType(dataType)
                 border.width: 3
@@ -375,17 +375,17 @@ Rectangle {
                     onClicked: {
                         if (marker.isTemporary) {
                             // Geçici marker'ı kaldır
-                            for (var i = markers.length - 1; i >= 0; --i) {
-                                if (markers[i] === marker) {
-                                    markers[i].destroy();
-                                    markers.splice(i, 1);
+                            for (var i = reportMarkers.length - 1; i >= 0; --i) {
+                                if (reportMarkers[i] === marker) {
+                                    reportMarkers[i].destroy();
+                                    reportMarkers.splice(i, 1);
                                     break;
                                 }
                             }
                         } else if (marker.id !== -1) {
                             Qt.callLater(function() {
                                 marker.showDetails();
-                                mapContainer.emitMarkerClicked(marker.id, marker.coordinate.latitude, marker.coordinate.longitude);
+                                mapContainer.emitMarkerClicked(marker.id, marker.coordinate.latitude, marker.coordinate.longitude, "report", marker.description, marker.status, marker.timestamp);
                             });
                         }
                     }
@@ -393,13 +393,11 @@ Rectangle {
                 }
             }
             coordinate: QtPositioning.coordinate(0, 0)
-            // --- Sadeleştirilmiş property'ler ---
             property int id: -1
             property string status: ""
             property string description: ""
             property string timestamp: ""
             property bool isTemporary: false
-            // Renk eşlemesi fonksiyonu
             function getColorForType(type) {
                 switch(type) {
                     case "Tehlike": return "#e53935"; // Kırmızı
@@ -407,36 +405,121 @@ Rectangle {
                     case "Düşman Teması": return "#fbc02d"; // Sarı
                     case "Dost Birim": return "#43a047"; // Yeşil
                     case "Hedef": return "#00897b"; // Turkuaz
-                    // ... diğer veri tipleri ...
-                    default: return "#757575"; // Tanımsız/gri
+                    default: return "#757575";
                 }
             }
             function formatTimestamp(timestamp) {
-                // Unix timestamp'ini JavaScript Date objesine çevir
-                var date = new Date(parseInt(timestamp) * 1000); // Unix timestamp saniye cinsinden
-                
-                // GG-AA-YYYY HH:MM:SS formatında formatla
+                var date = new Date(parseInt(timestamp) * 1000);
                 var day = ("0" + date.getDate()).slice(-2);
                 var month = ("0" + (date.getMonth() + 1)).slice(-2);
                 var year = date.getFullYear();
                 var hours = ("0" + date.getHours()).slice(-2);
                 var minutes = ("0" + date.getMinutes()).slice(-2);
                 var seconds = ("0" + date.getSeconds()).slice(-2);
-                
                 return day + "." + month + "." + year + " " + hours + ":" + minutes + ":" + seconds;
             }
-            
             function showDetails() {
                 var formattedTime = timestamp ? formatTimestamp(timestamp) : "Bilinmiyor";
-                var details =
-                    "<b>ID:</b> " + id + "<br>" +
-                    "<b>Durum:</b> " + status + "<br>" +
-                    "<b>Açıklama:</b> " + description + "<br>" +
-                    "<b>Zaman:</b> " + formattedTime;
+                var details = "";
+                if (typeof status === "string" && status.length > 0) {
+                    // Report marker
+                    details =
+                        "<b>ID:</b> " + id + "<br>" +
+                        "<b>Durum:</b> " + status + "<br>" +
+                        "<b>Açıklama:</b> " + description + "<br>" +
+                        "<b>Zaman:</b> " + formattedTime;
+                } else {
+                    // User marker (status boş veya yok)
+                    details =
+                        "<b>Kullanıcı ID:</b> " + id + "<br>" +
+                        "<b>Enlem:</b> " + coordinate.latitude.toFixed(6) + "<br>" +
+                        "<b>Boylam:</b> " + coordinate.longitude.toFixed(6) + "<br>" +
+                        "<b>Zaman:</b> " + formattedTime;
+                }
                 Qt.createQmlObject(
                     'import QtQuick 2.15; import QtQuick.Controls 2.15; Popup { width: 320; height: 120; modal: false; focus: true; contentItem: Text { text: "' + details.replace(/"/g, '\\"') + '"; wrapMode: Text.Wrap; anchors.centerIn: parent; font.pixelSize: 13; textFormat: Text.RichText; } }',
                     map,
                     "dynamicPopup"
+                ).open();
+            }
+        }
+    }
+
+    // User marker komponenti (daha büyük, farklı renkli, border'ı siyah)
+    Component {
+        id: userMarkerComponent
+        MapQuickItem {
+            id: userMarker
+            sourceItem: Rectangle {
+                width: 22
+                height: 22
+                radius: 11
+                color: "#ff9800" // Turuncu
+                border.width: 4
+                border.color: "#222" // Siyah
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 8
+                    height: 8
+                    radius: 4
+                    color: "white"
+                }
+                SequentialAnimation on scale {
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 1.18; duration: 900 }
+                    NumberAnimation { from: 1.18; to: 1.0; duration: 900 }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        if (userMarker.id !== -1) {
+                            Qt.callLater(function() {
+                                userMarker.showDetails();
+                                mapContainer.emitMarkerClicked(userMarker.id, userMarker.coordinate.latitude, userMarker.coordinate.longitude, "user", userMarker.description, userMarker.status, userMarker.timestamp);
+                            });
+                        }
+                    }
+                    cursorShape: Qt.PointingHandCursor
+                }
+            }
+            coordinate: QtPositioning.coordinate(0, 0)
+            property int id: -1
+            property string status: ""
+            property string description: ""
+            property string timestamp: ""
+            property bool isTemporary: false
+            function formatTimestamp(timestamp) {
+                var date = new Date(parseInt(timestamp) * 1000);
+                var day = ("0" + date.getDate()).slice(-2);
+                var month = ("0" + (date.getMonth() + 1)).slice(-2);
+                var year = date.getFullYear();
+                var hours = ("0" + date.getHours()).slice(-2);
+                var minutes = ("0" + date.getMinutes()).slice(-2);
+                var seconds = ("0" + date.getSeconds()).slice(-2);
+                return day + "." + month + "." + year + " " + hours + ":" + minutes + ":" + seconds;
+            }
+            function showDetails() {
+                var formattedTime = timestamp ? formatTimestamp(timestamp) : "Bilinmiyor";
+                var details = "";
+                if (typeof status === "string" && status.length > 0) {
+                    // Report marker
+                    details =
+                        "<b>ID:</b> " + id + "<br>" +
+                        "<b>Durum:</b> " + status + "<br>" +
+                        "<b>Açıklama:</b> " + description + "<br>" +
+                        "<b>Zaman:</b> " + formattedTime;
+                } else {
+                    // User marker (status boş veya yok)
+                    details =
+                        "<b>Kullanıcı ID:</b> " + id + "<br>" +
+                        "<b>Enlem:</b> " + coordinate.latitude.toFixed(6) + "<br>" +
+                        "<b>Boylam:</b> " + coordinate.longitude.toFixed(6) + "<br>" +
+                        "<b>Zaman:</b> " + formattedTime;
+                }
+                Qt.createQmlObject(
+                    'import QtQuick 2.15; import QtQuick.Controls 2.15; Popup { width: 320; height: 120; modal: false; focus: true; contentItem: Text { text: "' + details.replace(/"/g, '\\"') + '"; wrapMode: Text.Wrap; anchors.centerIn: parent; font.pixelSize: 13; textFormat: Text.RichText; } }',
+                    map,
+                    "dynamicUserPopup"
                 ).open();
             }
         }
@@ -563,7 +646,10 @@ Rectangle {
     
     // Marker yönetim fonksiyonları
     property bool visibleMarkers: true
-    property var markers: []
+    // Report ve user marker'larını ayrı ayrı tut
+    property var reportMarkers: []
+    property var userMarkers: []
+    property var markers: [] // Geriye dönük uyumluluk için, sadece reportMarkers ile aynı olacak
     property var currentLocationMarker: null
     // allowAddMarker context property olarak C++'tan geliyor
     
@@ -577,39 +663,77 @@ Rectangle {
         console.log("[QML] Marker görünürlüğü (sadece rapor markerları):", visible);
     }
 
-    function addMarker(lat, lon, desc, status, id, timestamp, isTemporary) {
-        // console.log("[QML] [REQ] Marker ekleme isteği: lat=", lat, "lon=", lon, "desc=", desc, "status=", status, "id=", id, "timestamp=", timestamp, "isTemporary=", isTemporary);
-        var marker = markerComponent.createObject(map, {
-            "coordinate": QtPositioning.coordinate(lat, lon),
-            "description": desc,
-            "status": status,
-            "id": id,
-            "timestamp": timestamp,
-            "isTemporary": isTemporary === true,
-            "visible": isTemporary === true ? true : visibleMarkers
-        });
-        if (marker) {
-            map.addMapItem(marker);
-            markers.push(marker);
-            // console.log("[QML] [RESP] Marker eklendi:", lat, lon, desc, status, id, timestamp, isTemporary);
+    // markerType: "report" veya "user" (zorunlu!)
+    function addMarker(lat, lon, desc, status, id, timestamp, isTemporary, markerType) {
+        // Varsayılan markerType: report (eski çağrılar için)
+        if (markerType === undefined) markerType = "report";
+        var markerObj;
+        if (markerType === "user") {
+            markerObj = userMarkerComponent.createObject(map, {
+                "coordinate": QtPositioning.coordinate(lat, lon),
+                "description": desc,
+                "status": status,
+                "id": id,
+                "timestamp": timestamp,
+                "isTemporary": isTemporary === true,
+                "visible": true
+            });
+            if (markerObj) {
+                map.addMapItem(markerObj);
+                userMarkers.push(markerObj);
+            }
+        } else {
+            markerObj = markerComponent.createObject(map, {
+                "coordinate": QtPositioning.coordinate(lat, lon),
+                "description": desc,
+                "status": status,
+                "id": id,
+                "timestamp": timestamp,
+                "isTemporary": isTemporary === true,
+                "visible": isTemporary === true ? true : visibleMarkers
+            });
+            if (markerObj) {
+                map.addMapItem(markerObj);
+                reportMarkers.push(markerObj);
+                markers.push(markerObj); // markers sadece report marker'ları için
+            }
         }
     }
-    function clearMapItems() {
-        console.log("[QML] [REQ] Tüm markerları temizle isteği");
-        for (var i = 0; i < markers.length; ++i) {
-            markers[i].destroy();
+    // markerType: "report", "user", veya undefined (hepsi)
+    function clearMapItems(markerType) {
+        if (markerType === "user") {
+            for (var i = 0; i < userMarkers.length; ++i) {
+                userMarkers[i].destroy();
+            }
+            userMarkers = [];
+            console.log("[QML] [RESP] User markerlar temizlendi");
+        } else if (markerType === "report") {
+            for (var i = 0; i < reportMarkers.length; ++i) {
+                reportMarkers[i].destroy();
+            }
+            reportMarkers = [];
+            markers = [];
+            console.log("[QML] [RESP] Report markerlar temizlendi");
+        } else {
+            // Hepsi
+            for (var i = 0; i < userMarkers.length; ++i) {
+                userMarkers[i].destroy();
+            }
+            userMarkers = [];
+            for (var i = 0; i < reportMarkers.length; ++i) {
+                reportMarkers[i].destroy();
+            }
+            reportMarkers = [];
+            markers = [];
+            // Mevcut konum marker'ını da temizle
+            if (currentLocationMarker) {
+                map.removeMapItem(currentLocationMarker);
+                currentLocationMarker.destroy();
+                currentLocationMarker = null;
+                hasCurrentLocation = false;
+            }
+            console.log("[QML] [RESP] Tüm markerlar temizlendi");
         }
-        markers = [];
-        
-        // Mevcut konum marker'ını da temizle
-        if (currentLocationMarker) {
-            map.removeMapItem(currentLocationMarker);
-            currentLocationMarker.destroy();
-            currentLocationMarker = null;
-            hasCurrentLocation = false;
-        }
-        
-        console.log("[QML] [RESP] Tüm markerlar temizlendi");
     }
     
     function setCurrentLocation(lat, lon) {
@@ -758,6 +882,45 @@ Rectangle {
             console.log("[QML] Harita konumu güncellendi:", coordinate, "zoom:", map.zoomLevel);
         } else {
             console.log("[QML] Hata: map objesi null!");
+        }
+    }
+    
+    // Menü açma butonu (sağ üstte)
+    Button {
+        id: openRoomMenuButton
+        text: "Odalar"
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 12
+        anchors.rightMargin: 12
+        z: 100
+        onClicked: {
+            if (!roomMenu) {
+                console.log("[QML] RoomMenu component bulunamadı!");
+                return;
+            }
+            roomMenu.open();
+        }
+    }
+
+    // RoomMenu popup'ı (import edildiği varsayılır)
+    RoomMenu {
+        id: roomMenu
+        roomList: [
+            { name: "deneme_privilege2", privilege: 1, current: 1, max: 5, id: 61 },
+            { name: "deneme_privilege", privilege: 1, current: 1, max: 5, id: 60 },
+            { name: "deneme_tek", privilege: 0, current: 2, max: 2, id: 59 },
+            { name: "mesaj_deneme", privilege: 0, current: 0, max: 20, id: 58 },
+            { name: "deneme", privilege: 0, current: 0, max: 20, id: 57 },
+            { name: "deneme2", privilege: 0, current: 1, max: 2, id: 6 },
+            { name: "1", privilege: 0, current: 1, max: 1, id: 5 },
+            { name: "deneme", privilege: 0, current: 1, max: 21, id: 4 },
+            { name: "deneme123", privilege: 0, current: 1, max: 20, id: 3 }
+        ]
+        userPrivilege: 0 // Gerekirse C++'tan veya üst QML'den set edilebilir
+        onRoomJoined: {
+            // Odaya katılınca yapılacaklar
+            console.log("Odaya katılındı, ID:", roomId);
         }
     }
 }
