@@ -27,8 +27,8 @@ set(C_SOURCES
     ../src/client/fallback_manager.c
     ../cjson/cJSON.c
     ../cjson/cJSON_Utils.c
-    ../src/location/location_manager.c
-    ../src/large_response/large_response.c
+    ../src/messaging/chat_protocol.c
+    ../src/messaging/chat_utils.c
 )
 
 set(SOURCES
@@ -67,7 +67,6 @@ target_link_libraries(TacticalMapClient
     Qt6::Positioning
     Qt6::Network
     m  # Math library for crypto operations
-    jwt
 )
 
 # Copy QML file to build directory

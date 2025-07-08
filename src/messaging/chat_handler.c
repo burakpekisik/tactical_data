@@ -329,20 +329,29 @@ char* handle_chat_join_room(const char* decrypted_json, const char* jwt_token, i
 char* handle_chat_list_rooms(const char* decrypted_json, const char* jwt_token) {
     PRINTF_LOG("[CHAT] handle_chat_list_rooms çağrıldı\n");
     PRINTF_LOG("[CHAT] Gelen JSON: %s\n", decrypted_json);
+    PRINTF_LOG("[CHAT] Gelen JWT: %s\n", jwt_token ? jwt_token : "(null)");
     // JWT'den user_id ve privilege al
     char user_id[64] = "";
     int user_privilege = 0;
     if (jwt_token) {
+        PRINTF_LOG("[CHAT] JWT decode başlatılıyor\n");
         jwt_t *jwt_ptr = NULL;
-        if (jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
+        int jwt_decode_result = jwt_decode(&jwt_ptr, jwt_token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET));
+        PRINTF_LOG("[CHAT] jwt_decode sonucu: %d\n", jwt_decode_result);
+        if (jwt_decode_result == 0 && jwt_ptr) {
             const char* sub = jwt_get_grant(jwt_ptr, "sub");
+            if (sub) PRINTF_LOG("[CHAT] JWT sub: %s\n", sub);
             if (sub) strncpy(user_id, sub, sizeof(user_id)-1);
             user_privilege = jwt_get_grant_int(jwt_ptr, "privilege");
+            PRINTF_LOG("[CHAT] JWT privilege: %d\n", user_privilege);
             jwt_free(jwt_ptr);
+        } else {
+            PRINTF_LOG("[CHAT] JWT decode başarısız!\n");
         }
     }
     chat_room_t* rooms = NULL;
     int count = 0;
+    PRINTF_LOG("[CHAT] db_select_user_accessible_chat_rooms çağrılıyor: user_id=%s, privilege=%d\n", user_id, user_privilege);
     db_select_user_accessible_chat_rooms(user_id, user_privilege, &rooms, &count);
     PRINTF_LOG("[CHAT] db_select_user_accessible_chat_rooms: user_id=%s, privilege=%d, count=%d\n", user_id, user_privilege, count);
     cJSON* arr = cJSON_CreateArray();

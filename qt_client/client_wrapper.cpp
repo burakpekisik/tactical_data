@@ -27,6 +27,7 @@ extern "C" {
     #include "config.h"
     #include "logger.h"
     #include "cJSON.h"
+    #include "chat_protocol.h"
 }
 
 QByteArray decryptAes256Cbc(const QByteArray &cipher, const QByteArray &key, const QByteArray &iv);
@@ -297,6 +298,18 @@ void ClientWrapper::onDataReceived()
         LOG_CLIENT_INFO("Processing server public key for ECDH handshake");
         processECDHResponse(pubKey);
         return;
+    }
+
+    // onDataReceived içinde:
+    QJsonDocument doc = QJsonDocument::fromJson(incomingBuffer);
+    if (doc.isObject()) {
+        QJsonObject obj = doc.object();
+        if (obj.contains("rooms")) {
+            QJsonArray rooms = obj["rooms"].toArray();
+            logInfo("[CHAT] Chat odası listesi yanıtı alındı. Oda sayısı: " + QString::number(rooms.size()));
+            logInfo("[CHAT] Chat odası listesi JSON: " + QString::fromUtf8(QJsonDocument(rooms).toJson(QJsonDocument::Compact)));
+            emit chatRoomListReceived(rooms);
+        }
     }
 
     // --- Parçalı ENCRYPTED_PART yanıtları işle ---
@@ -660,17 +673,14 @@ void ClientWrapper::initializeECDHHandshake()
     
     // Public key'i sunucuya gönder (raw binary olarak)
     QByteArray publicKeyData(reinterpret_cast<const char*>(ecdhContext.public_key), ECC_PUB_KEY_SIZE);
-    
     PRINTF_LOG("Sending public key (%d bytes)\n", ECC_PUB_KEY_SIZE);
     LOG_CLIENT_INFO("Sending ECDH public key to server");
-    
     qint64 bytesWritten = tcpSocket->write(publicKeyData);
     if (bytesWritten != ECC_PUB_KEY_SIZE) {
         LOG_CLIENT_ERROR("Failed to send complete public key");
         logError("Public key gönderimi başarısız");
         return;
     }
-    
     tcpSocket->flush();
     PRINTF_LOG("✓ Public key sent successfully (%lld bytes)\n", bytesWritten);
     logInfo("Public key başarıyla gönderildi");
@@ -925,6 +935,39 @@ void ClientWrapper::getReports() {
     char* encryptedMsg = create_encrypted_protocol_message("REPORT_QUERY", plain.constData(), aesKey, jwtToken.toUtf8().constData());
     qDebug() << "[DEBUG] create_encrypted_protocol_message (REPORT_QUERY) jwtToken:" << jwtToken;
     QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
+
+        // ECDH ve AES anahtarı tamamlandıktan sonra C tarafı bağlantı nesnesini oluştur
+    if (clientConnection) {
+            close_connection(clientConnection);
+            clientConnection = nullptr;
+        }
+        // Bağlantı zaten kurulu, sadece yapı oluşturulacak
+        clientConnection = (client_connection_t*)calloc(1, sizeof(client_connection_t));
+        if (clientConnection) {
+        clientConnection->socket = tcpSocket->socketDescriptor();
+        clientConnection->ecdh_ctx = ecdhContext;
+        clientConnection->ecdh_initialized = true;
+        clientConnection->type = CONN_TYPE_TCP;
+        clientConnection->port = serverPort;
+
+        // server_addr doldur
+        memset(&clientConnection->server_addr, 0, sizeof(clientConnection->server_addr));
+        clientConnection->server_addr.sin_family = AF_INET;
+        clientConnection->server_addr.sin_port = htons(serverPort);
+        QHostAddress host = tcpSocket->peerAddress();
+        QByteArray addr = host.toString().toUtf8();
+        inet_pton(AF_INET, addr.constData(), &clientConnection->server_addr.sin_addr);
+
+        logInfo("[CHAT] clientConnection nesnesi ECDH sonrası oluşturuldu ve yapılandırıldı.");
+    }
+
+    printf("[DEBUG] ECDH handshake başlatıldı, public_key: %s\n", 
+          QByteArray((const char*)ecdhContext.public_key, ECC_PUB_KEY_SIZE).toHex().constData());
+    qDebug() << "[DEBUG] ECDH handshake başlatıldı, public_key:" 
+             << QByteArray((const char*)ecdhContext.public_key, ECC_PUB_KEY_SIZE).toHex();
+    printf("[DEBUG] Client Connection ECDH sonrası oluşturuldu, ecdh_ctx: %s\n", 
+           clientConnection->ecdh_ctx);
+
     free(encryptedMsg);
     tcpSocket->write(msgData);
     tcpSocket->flush();
@@ -1449,6 +1492,11 @@ void ClientWrapper::processEncryptedResponse()
                                 .arg(obj["replies"].toArray().size())
                                 .arg(QString::fromUtf8(logDoc.toJson(QJsonDocument::Indented))));
                             emit replyQueryResultReceived(obj["replies"].toArray());
+                        }
+                        // Chat room list yanıtı ("rooms" array)
+                        else if (obj.contains("rooms") && obj["rooms"].isArray()) {
+                            qDebug() << "[DEBUG] Chat room list yanıtı bulundu, rooms array size:" << obj["rooms"].toArray().size();
+                            emit chatRoomListReceived(obj["rooms"].toArray());
                         }
                         // Tüm kullanıcıların son konumları yanıtı (admin) veya birim son konumları (normal kullanıcı)
                         else if (obj.contains("locations") && obj["locations"].isArray()) {
@@ -2025,4 +2073,34 @@ void ClientWrapper::sendSelectLatestLocationsByCurrentUnit()
     tcpSocket->write(msgData);
     tcpSocket->flush();
     logInfo("Birim son konumları sorgulandı");
+}
+
+void ClientWrapper::requestChatRoomList()
+{
+    if (!isConnected() || !handshakeCompleted) {
+        logError("[CHAT] Bağlantı yok veya ECDH tamamlanmamış, chat odaları sorgulanamaz");
+        emit chatRoomListReceived(QJsonArray());
+        return;
+    }
+    if (jwtToken.isEmpty()) {
+        logError("[CHAT] JWT token yok, chat odaları sorgulanamaz");
+        emit chatRoomListReceived(QJsonArray());
+        return;
+    }
+
+    // Sadece istek gönder, yanıt processEncryptedResponse ile asenkron işlenecek
+    if (!clientConnection) {
+        logError("[CHAT] clientConnection yok, chat odaları sorgulanamaz");
+        emit chatRoomListReceived(QJsonArray());
+        return;
+    }
+    int res = send_list_rooms_request(clientConnection, jwtToken.toUtf8().constData());
+    if (res != 0) {
+        logError("[CHAT] send_list_rooms_request başarısız oldu");
+        emit chatRoomListReceived(QJsonArray());
+        return;
+    }
+    qDebug() << "[DEBUG] Chat room list request sent (send_list_rooms_request)";
+    // Yanıt processEncryptedResponse ile asenkron işlenecek
+
 }

@@ -8,6 +8,7 @@
  */
 
 #include "mapwidget.h"
+#include "mainwindow.h"
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -18,10 +19,11 @@
  * @param parent Üst widget
  * @ingroup qt_client
  */
-MapWidget::MapWidget(QWidget *parent)
+MapWidget::MapWidget(MainWindow *mainWindow, QWidget *parent)
     : QWidget(parent)
     , qmlWidget(nullptr)
     , layout(nullptr)
+    , m_mainWindow(mainWindow)
 {
     setupQmlMap();
 }
@@ -40,7 +42,8 @@ void MapWidget::setupQmlMap()
     
     // QML context'ine C++ nesnesini ve mod bilgisini kaydet
     qmlWidget->rootContext()->setContextProperty("mapWidget", this);
-    qmlWidget->rootContext()->setContextProperty("mode", 0); // 0: SendMode, 1: ReplyMode (varsayılan SendMode)
+    qmlWidget->rootContext()->setContextProperty("mainWindow", m_mainWindow);
+    qmlWidget->rootContext()->setContextProperty("mode", 0);
     
     // QML dosyasını yükle
     qmlWidget->setSource(QUrl::fromLocalFile("map.qml"));

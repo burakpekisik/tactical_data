@@ -133,20 +133,38 @@ MainWindow::MainWindow(QWidget *parent)
     
     // Otomatik durum kontrolünü başlat (UI kurulumundan sonra)
     QTimer::singleShot(1000, this, [this]() {
-        // UI tamamen yüklenince otomatik kontrolü başlat
-        if (autoCheckEnabled) {
-            connectionCheckTimer->start();
-            logTextEdit->append("<b>[INFO]</b> Otomatik bağlantı kontrolü başlatıldı (30 saniye aralık)");
+            // UI tamamen yüklenince otomatik kontrolü başlat
+            if (autoCheckEnabled) {
+                connectionCheckTimer->start();
+                logTextEdit->append("<b>[INFO]</b> Otomatik bağlantı kontrolü başlatıldı (30 saniye aralık)");
+            }
+        });
+
+        connect(clientWrapper, &ClientWrapper::chatRoomListReceived, this, [this](const QJsonArray& rooms){
+        m_roomList.clear();
+        for (const QJsonValue& val : rooms) {
+            if (val.isObject()) {
+                QJsonObject obj = val.toObject();
+                QVariantMap room;
+                room["id"] = obj.value("room_id").toInt();
+                room["name"] = obj.value("room_name").toString();
+                room["privilege"] = obj.value("room_type").toInt();
+                room["current"] = obj.value("current_users").toInt();
+                room["max"] = obj.value("max_users").toInt();
+                m_roomList.append(room);
+            }
         }
+        // QML'e property notify için:
+        emit roomListChanged();
     });
     
-    // Otomatik olarak admin notification dinleme başlat
-    if (clientWrapper) {
-        clientWrapper->listenForAdminNotifications();
-        if (adminLogEdit) {
-            adminLogEdit->append("<b>[INFO]</b> Admin bildirim dinleme komutu otomatik gönderildi.");
-        }
-    }
+    // // Otomatik olarak admin notification dinleme başlat
+    // if (clientWrapper) {
+    //     clientWrapper->listenForAdminNotifications();
+    //     if (adminLogEdit) {
+    //         adminLogEdit->append("<b>[INFO]</b> Admin bildirim dinleme komutu otomatik gönderildi.");
+    //     }
+    // }
 }
 
 // Admin bildirimi geldiğinde kullanıcıya göster
@@ -2175,5 +2193,11 @@ void MainWindow::onMyUnitLatestLocationsReceived(const QJsonArray& locations)
             timestamp = obj.value("timestamp").toVariant().toLongLong();
         }
         mapWidget->addMarker(lat, lon, desc, "", id, timestamp, false, "user");
+    }
+}
+
+void MainWindow::fetchChatRoomList() {
+    if (clientWrapper) {
+        clientWrapper->requestChatRoomList();
     }
 }

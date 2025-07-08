@@ -8,12 +8,14 @@
 #include <QQmlEngine>
 #include <QDebug>
 
+class MainWindow;
+
 class MapWidget : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit MapWidget(QWidget *parent = nullptr);
+    explicit MapWidget(MainWindow *mainWindow, QWidget *parent = nullptr);
     Q_INVOKABLE void addMarker(double latitude, double longitude, const QString& description, const QString& status, int id, qint64 timestamp, bool isTemporary = false, const QString& markerType = "report");
     Q_INVOKABLE void clearMapItems(const QString& markerType = "");
     Q_INVOKABLE void setMarkersVisible(bool visible);
@@ -38,6 +40,7 @@ private:
     void setupQmlMap();
     void logToConsole(const QString& msg) const { qDebug() << "[MapWidget]" << msg; }
 
+    MainWindow *m_mainWindow;
     QQuickWidget *qmlWidget;
     QVBoxLayout *layout;
 };

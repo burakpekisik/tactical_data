@@ -439,9 +439,9 @@ void print_room_info(const chat_room_t* room) {
     
     const char* type_str;
     switch (room->room_type) {
-        case ROOM_TYPE_EVERYONE: type_str = "🌍 Herkes"; break;
-        case ROOM_TYPE_ADMIN_ONLY: type_str = "👑 Sadece Adminler"; break;
-        case ROOM_TYPE_SPECIFIC_USERS: type_str = "👥 Belirli Kullanıcılar"; break;
+        case ROOM_TYPE_EVERYONE: type_str = "Herkes"; break;
+        case ROOM_TYPE_ADMIN_ONLY: type_str = "Sadece Adminler"; break;
+        case ROOM_TYPE_SPECIFIC_USERS: type_str = "Belirli Kullanıcılar"; break;
         default: type_str = "❓ Bilinmeyen"; break;
     }
     

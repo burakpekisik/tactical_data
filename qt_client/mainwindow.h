@@ -33,12 +33,18 @@
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
+    Q_PROPERTY(QVariantList roomList READ roomList NOTIFY roomListChanged)
 
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
     ClientWrapper* getClientWrapper() { return clientWrapper; }
+    Q_INVOKABLE void fetchChatRoomList();
+    QVariantList roomList() const { return m_roomList; }
+
+signals:
+    void roomListChanged();
 
 private slots:
     void onMapClicked(double latitude, double longitude);
@@ -109,6 +115,8 @@ private:
     // Event handling
     bool eventFilter(QObject *obj, QEvent *event) override;
     void togglePanel(QGroupBox* groupBox); // Panel açma/kapama
+
+    QVariantList m_roomList;
 
     // UI bileşenleri
     QWidget *centralWidget;

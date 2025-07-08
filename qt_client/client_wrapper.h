@@ -47,6 +47,8 @@ public:
     // --- Normal kullanıcılar için birimin son konumları ---
     void sendSelectLatestLocationsByCurrentUnit();
 
+    void requestChatRoomList();
+
     /**
      * @brief Bağlantı durumu enum'u
      */
@@ -169,6 +171,7 @@ private:
     bool testUdpConnection();
     bool testP2pConnection();
 
+
     // --- Gelişmiş bağlantı test fonksiyonları ---
     // bool testAllConnectionTypes(const QString& jsonString, bool encrypted); // Artık public
     bool connectToServerInternal(const QString& host, int port, ConnectionType type);
@@ -182,6 +185,8 @@ private:
     // void queryRepliesForReport(int reportId); // Artık public
 
 signals:
+    void chatRoomListReceived(const QJsonArray& rooms);
+
     /**
      * @brief Tüm kullanıcıların son konumları alındığında emit edilir
      * @param locations QJsonArray (her biri: user_id, latitude, longitude, timestamp, description)

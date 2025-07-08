@@ -88,8 +88,8 @@ void handle_signal(int sig) {
 
 char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key, const char* jwt_token, int client_socket, const char* client_ip, int client_port) {
     PRINTF_LOG("[DEBUG] handle_encrypted_request: filename=%s, client_socket=%d, client_ip=%s, client_port=%d, jwt_token=%s\n", filename, client_socket, client_ip ? client_ip : "(null)", client_port, jwt_token ? jwt_token : "(null)");
-    PRINTF_LOG("[CHAT] handle_encrypted_request çağrıldı\n");
-    PRINTF_LOG("[CHAT] ENCRYPTED content: %s\n", encrypted_content);
+    PRINTF_LOG("handle_encrypted_request çağrıldı\n");
+    PRINTF_LOG("ENCRYPTED content: %s\n", encrypted_content);
     char* error_msg = NULL;
     char* decrypted_json = decrypt_protocol_payload(encrypted_content, session_key, &error_msg);
     if (decrypted_json == NULL) {
@@ -107,6 +107,7 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
     cJSON* root = cJSON_Parse(decrypted_json);
 
     cJSON* action_item = cJSON_GetObjectItem(root, "action");
+    PRINTF_LOG("handle_encrypted_request: action_item=%s\n", cJSON_Print(action_item));
     if (action_item && cJSON_IsString(action_item)) {
         const char* action = action_item->valuestring;
         PRINTF_LOG("[CHAT] handle_encrypted_request: action=%s\n", action);

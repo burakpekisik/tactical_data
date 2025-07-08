@@ -899,6 +899,7 @@ Rectangle {
                 console.log("[QML] RoomMenu component bulunamadı!");
                 return;
             }
+            mainWindow.fetchChatRoomList();
             roomMenu.open();
         }
     }
@@ -906,17 +907,8 @@ Rectangle {
     // RoomMenu popup'ı (import edildiği varsayılır)
     RoomMenu {
         id: roomMenu
-        roomList: [
-            { name: "deneme_privilege2", privilege: 1, current: 1, max: 5, id: 61 },
-            { name: "deneme_privilege", privilege: 1, current: 1, max: 5, id: 60 },
-            { name: "deneme_tek", privilege: 0, current: 2, max: 2, id: 59 },
-            { name: "mesaj_deneme", privilege: 0, current: 0, max: 20, id: 58 },
-            { name: "deneme", privilege: 0, current: 0, max: 20, id: 57 },
-            { name: "deneme2", privilege: 0, current: 1, max: 2, id: 6 },
-            { name: "1", privilege: 0, current: 1, max: 1, id: 5 },
-            { name: "deneme", privilege: 0, current: 1, max: 21, id: 4 },
-            { name: "deneme123", privilege: 0, current: 1, max: 20, id: 3 }
-        ]
+        anchors.centerIn: parent
+        roomList: mainWindow.roomList
         userPrivilege: 0 // Gerekirse C++'tan veya üst QML'den set edilebilir
         onRoomJoined: {
             // Odaya katılınca yapılacaklar

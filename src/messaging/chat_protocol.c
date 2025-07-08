@@ -733,6 +733,8 @@ char* receive_encrypted_response_room_key(client_connection_t* conn, const uint8
  * @brief Şifreli chat eylemi gönder
  */
 int send_encrypted_chat_action(client_connection_t* conn, const char* action_name, const char* json_string, const char* jwt_token) {
+    flush_socket(conn->socket); // Socket'i temizle, önceki mesajları atla
+    
     LOG_CLIENT_INFO("[DEBUG] send_encrypted_chat_action çağrıldı");
     
     if (!conn || !action_name || !json_string || !jwt_token) {
@@ -769,6 +771,7 @@ int send_encrypted_chat_action(client_connection_t* conn, const char* action_nam
     size_t msglen = strlen("ENCRYPTED:") + strlen(action_name) + 1 + strlen(hexdata) + 1 + strlen(jwt_token) + 1;
     char* protocol_msg = malloc(msglen);
     snprintf(protocol_msg, msglen, "ENCRYPTED:%s:%s:%s", action_name, hexdata, jwt_token);
+    printf("[DEBUG] Protocol message: %s\n", protocol_msg); // Debug log
     free(hexdata);
     ssize_t sent = send(conn->socket, protocol_msg, strlen(protocol_msg), 0);
     free(protocol_msg);

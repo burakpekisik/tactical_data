@@ -50,5 +50,9 @@ int main(int argc, char *argv[])
     window.getClientWrapper()->setJwtToken(jwtToken);
     window.getClientWrapper()->connectToServer(serverHost, serverPort);
     window.show();
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("mainWindow", &window);
+
     return app.exec();
 }
