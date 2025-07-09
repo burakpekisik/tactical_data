@@ -48,6 +48,7 @@ public:
     void sendSelectLatestLocationsByCurrentUnit();
 
     void requestChatRoomList();
+    void createChatRoom(const QString& roomName, int accessType, int maxUsers, const QString& allowedUserIds);
 
     /**
      * @brief Bağlantı durumu enum'u
@@ -160,7 +161,7 @@ public slots:
     void adminReplyToReport(int reportId, const QString& message);
     void queryMyReplies();
     void watchReportReplies();
-    void sendAllPendingAdminReplies();  // Public'e taşındı
+    void sendAllPendingAdminReplies();
 
 private:
     // --- Bağlantı türü kontrolü ---

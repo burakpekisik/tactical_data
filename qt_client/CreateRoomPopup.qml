@@ -70,6 +70,7 @@ Popup {
                     text: "Oluştur"
                     enabled: nameField.text.length > 0 && (accessCombo.currentIndex !== 2 || userIdsField.text.length > 0)
                     onClicked: {
+                        console.log("Oluştur tıklandı", nameField.text, accessCombo.currentIndex, userIdsField.text)
                         createRoomPopup.createRoom(nameField.text, accessCombo.currentIndex, userIdsField.text)
                         createRoomPopup.close()
                     }

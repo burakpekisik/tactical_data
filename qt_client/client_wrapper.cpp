@@ -297,6 +297,40 @@ void ClientWrapper::onDataReceived()
         PRINTF_LOG("Received server public key (%d bytes)\n", pubKey.size());
         LOG_CLIENT_INFO("Processing server public key for ECDH handshake");
         processECDHResponse(pubKey);
+
+        // ECDH ve AES anahtarı tamamlandıktan sonra C tarafı bağlantı nesnesini oluştur
+        if (clientConnection) {
+            close_connection(clientConnection);
+            clientConnection = nullptr;
+        }
+
+        // Bağlantı zaten kurulu, sadece yapı oluşturulacak
+        clientConnection = (client_connection_t*)calloc(1, sizeof(client_connection_t));
+        if (clientConnection) {
+            clientConnection->socket = tcpSocket->socketDescriptor();
+            clientConnection->ecdh_ctx = ecdhContext;
+            clientConnection->ecdh_initialized = true;
+            clientConnection->type = CONN_TYPE_TCP;
+            clientConnection->port = serverPort;
+
+            // server_addr doldur
+            memset(&clientConnection->server_addr, 0, sizeof(clientConnection->server_addr));
+            clientConnection->server_addr.sin_family = AF_INET;
+            clientConnection->server_addr.sin_port = htons(serverPort);
+            QHostAddress host = tcpSocket->peerAddress();
+            QByteArray addr = host.toString().toUtf8();
+            inet_pton(AF_INET, addr.constData(), &clientConnection->server_addr.sin_addr);
+
+            logInfo("[CHAT] clientConnection nesnesi ECDH sonrası oluşturuldu ve yapılandırıldı.");
+        }
+
+        printf("[DEBUG] ECDH handshake başlatıldı, public_key: %s\n", 
+            QByteArray((const char*)ecdhContext.public_key, ECC_PUB_KEY_SIZE).toHex().constData());
+        qDebug() << "[DEBUG] ECDH handshake başlatıldı, public_key:" 
+                << QByteArray((const char*)ecdhContext.public_key, ECC_PUB_KEY_SIZE).toHex();
+        printf("[DEBUG] Client Connection ECDH sonrası oluşturuldu, ecdh_ctx: %s\n", 
+            clientConnection->ecdh_ctx);
+
         return;
     }
 
@@ -935,38 +969,6 @@ void ClientWrapper::getReports() {
     char* encryptedMsg = create_encrypted_protocol_message("REPORT_QUERY", plain.constData(), aesKey, jwtToken.toUtf8().constData());
     qDebug() << "[DEBUG] create_encrypted_protocol_message (REPORT_QUERY) jwtToken:" << jwtToken;
     QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
-
-        // ECDH ve AES anahtarı tamamlandıktan sonra C tarafı bağlantı nesnesini oluştur
-    if (clientConnection) {
-            close_connection(clientConnection);
-            clientConnection = nullptr;
-        }
-        // Bağlantı zaten kurulu, sadece yapı oluşturulacak
-        clientConnection = (client_connection_t*)calloc(1, sizeof(client_connection_t));
-        if (clientConnection) {
-        clientConnection->socket = tcpSocket->socketDescriptor();
-        clientConnection->ecdh_ctx = ecdhContext;
-        clientConnection->ecdh_initialized = true;
-        clientConnection->type = CONN_TYPE_TCP;
-        clientConnection->port = serverPort;
-
-        // server_addr doldur
-        memset(&clientConnection->server_addr, 0, sizeof(clientConnection->server_addr));
-        clientConnection->server_addr.sin_family = AF_INET;
-        clientConnection->server_addr.sin_port = htons(serverPort);
-        QHostAddress host = tcpSocket->peerAddress();
-        QByteArray addr = host.toString().toUtf8();
-        inet_pton(AF_INET, addr.constData(), &clientConnection->server_addr.sin_addr);
-
-        logInfo("[CHAT] clientConnection nesnesi ECDH sonrası oluşturuldu ve yapılandırıldı.");
-    }
-
-    printf("[DEBUG] ECDH handshake başlatıldı, public_key: %s\n", 
-          QByteArray((const char*)ecdhContext.public_key, ECC_PUB_KEY_SIZE).toHex().constData());
-    qDebug() << "[DEBUG] ECDH handshake başlatıldı, public_key:" 
-             << QByteArray((const char*)ecdhContext.public_key, ECC_PUB_KEY_SIZE).toHex();
-    printf("[DEBUG] Client Connection ECDH sonrası oluşturuldu, ecdh_ctx: %s\n", 
-           clientConnection->ecdh_ctx);
 
     free(encryptedMsg);
     tcpSocket->write(msgData);
@@ -2102,5 +2104,47 @@ void ClientWrapper::requestChatRoomList()
     }
     qDebug() << "[DEBUG] Chat room list request sent (send_list_rooms_request)";
     // Yanıt processEncryptedResponse ile asenkron işlenecek
+}
 
+/**
+ * @brief Chat odası oluşturma isteği gönderir
+ * @param roomName Oda adı
+ * @param accessType 0: Herkes, 1: Sadece Adminler, 2: Belirli Kullanıcılar
+ * @param maxUsers Maksimum kullanıcı sayısı
+ * @param allowedUserIds Belirli kullanıcılar için virgüllü ID listesi
+ */
+void ClientWrapper::createChatRoom(const QString& roomName, int accessType, int maxUsers, const QString& allowedUserIds)
+{
+    if (!isConnected() || !handshakeCompleted) {
+        logError("[CHAT] Bağlantı yok veya ECDH tamamlanmamış, oda oluşturulamaz");
+        emit dataSendResult(SendError, "Bağlantı yok veya ECDH tamamlanmamış, oda oluşturulamaz");
+        return;
+    }
+    if (jwtToken.isEmpty()) {
+        logError("[CHAT] JWT token yok, oda oluşturulamaz");
+        emit dataSendResult(SendError, "JWT token yok, oda oluşturulamaz");
+        return;
+    }
+    if (!clientConnection) {
+        logError("[CHAT] clientConnection yok, oda oluşturulamaz");
+        emit dataSendResult(SendError, "clientConnection yok, oda oluşturulamaz");
+        return;
+    }
+
+    // C API: send_create_room_request(client_connection_t*, jwt_token, room_name, room_type, max_users, allowed_user_ids)
+    int result = send_create_room_request(
+        clientConnection,
+        jwtToken.toUtf8().constData(),
+        roomName.toUtf8().constData(),
+        (chat_room_type_t)accessType,
+        maxUsers,
+        allowedUserIds.toUtf8().constData()
+    );
+    if (result != 0) {
+        logError("[CHAT] send_create_room_request başarısız oldu");
+        emit dataSendResult(SendError, "Oda oluşturma isteği başarısız oldu");
+        return;
+    }
+    logInfo("[CHAT] Oda oluşturma isteği gönderildi");
+    emit dataSendResult(SendSuccess, "Oda oluşturma isteği gönderildi");
 }

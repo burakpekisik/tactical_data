@@ -36,6 +36,7 @@ class MainWindow : public QMainWindow
     Q_PROPERTY(QVariantList roomList READ roomList NOTIFY roomListChanged)
 
 public:
+    Q_INVOKABLE void createChatRoom(const QString& name, int accessType, int maxUsers, const QString& userIds);
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 

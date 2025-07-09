@@ -31,15 +31,6 @@ Popup {
         }
     }
 
-    // Debug: roomList değiştiğinde logla
-    Connections {
-        target: roomMenu
-        onRoomListChanged: {
-            console.log("[QML][RoomMenu] roomList changed:", JSON.stringify(roomMenu.roomList));
-        }
-    }
-    
-
     property string sortColumn: "id"
     property bool sortAsc: true
 
@@ -49,9 +40,11 @@ Popup {
         id: createRoomPopup
         visible: false
         onCreateRoom: function(name, accessType, userIds) {
-            // Forward to parent or backend as needed
-            roomMenu.roomCreated(name, accessType, userIds);
+        if (typeof mainWindow !== 'undefined' && mainWindow.createChatRoom) {
+            mainWindow.createChatRoom(name, accessType, 50, userIds);
         }
+        roomMenu.roomCreated(name, accessType, userIds);
+    }
     }
 
     Rectangle {
@@ -178,7 +171,7 @@ Popup {
                             Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#eee" }
                             Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: "#eee" }
                             Text {
-                                text: model.room_id !== undefined ? "ID: " + model.room_id : ""
+                                text: roomMenu.roomList[index].id !== undefined ? "ID: " + roomMenu.roomList[index].id : ""
                                 color: "#888"
                                 font.pointSize: 12
                                 anchors.centerIn: parent
@@ -189,7 +182,7 @@ Popup {
                             Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#eee" }
                             Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: "#eee" }
                             Text {
-                                text: model.room_name !== undefined ? model.room_name : ""
+                                text: roomMenu.roomList[index].name !== undefined ? roomMenu.roomList[index].name : ""
                                 font.pointSize: 14
                                 color: "#222"
                                 elide: Text.ElideRight
@@ -201,8 +194,8 @@ Popup {
                             Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#eee" }
                             Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: "#eee" }
                             Text {
-                                text: model.room_type == 1 ? "👑 Sadece Adminler" : "🌍 Herkes"
-                                color: model.room_type == 1 ? "#e67e22" : "#2980b9"
+                                text: roomMenu.roomList[index].privilege == 1 ? "👑 Sadece Adminler" : "🌍 Herkes"
+                                color: roomMenu.roomList[index].privilege == 1 ? "#e67e22" : "#2980b9"
                                 font.pointSize: 13
                                 anchors.centerIn: parent
                             }
@@ -212,12 +205,13 @@ Popup {
                             Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#eee" }
                             Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: "#eee" }
                             Text {
-                                text: (model.current_users !== undefined && model.max_users !== undefined ? model.current_users + "/" + model.max_users : "") + " kişi"
-                                color: (model.current_users !== undefined && model.max_users !== undefined && model.current_users >= model.max_users) ? "#e74c3c" : "#27ae60"
+                                text: (roomMenu.roomList[index].current !== undefined && roomMenu.roomList[index].max !== undefined ? roomMenu.roomList[index].current + "/" + roomMenu.roomList[index].max : "") + " kişi"
+                                color: (roomMenu.roomList[index].current !== undefined && roomMenu.roomList[index].max !== undefined && roomMenu.roomList[index].current >= roomMenu.roomList[index].max) ? "#e74c3c" : "#27ae60"
                                 font.pointSize: 13
                                 anchors.centerIn: parent
                             }
                         }
+                        // Max sütunu kaldırıldı
                         Rectangle {
                             width: roomListView.width * 0.1; height: 40; color: "transparent"
                             Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: "#eee" }
@@ -244,8 +238,8 @@ Popup {
                                 }
                                 hoverEnabled: true
                                 opacity: enabled ? 1.0 : 0.5
-                                enabled: (model.current_users !== undefined && model.max_users !== undefined && model.current_users < model.max_users) && (model.room_type === 0 || roomMenu.userPrivilege === 1)
-                                onClicked: roomMenu.joinRoom(model.room_id)
+                                enabled: (roomMenu.roomList[index].current !== undefined && roomMenu.roomList[index].max !== undefined && roomMenu.roomList[index].current < roomMenu.roomList[index].max) && (roomMenu.roomList[index].privilege === 0 || roomMenu.userPrivilege === 1)
+                                onClicked: roomMenu.joinRoom(roomMenu.roomList[index].id)
                             }
                         }
                     }
@@ -269,7 +263,5 @@ Popup {
         if (typeof CreateRoomPopup === "undefined") {
             Qt.include("CreateRoomPopup.qml");
         }
-        // İlk açılışta da logla
-        console.log("[QML][RoomMenu] Component.onCompleted, roomList:", JSON.stringify(roomMenu.roomList));
     }
 }

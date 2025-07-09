@@ -2201,3 +2201,13 @@ void MainWindow::fetchChatRoomList() {
         clientWrapper->requestChatRoomList();
     }
 }
+
+/**
+ * @brief QML'den çağrılabilir chat odası oluşturma fonksiyonu
+ */
+void MainWindow::createChatRoom(const QString& name, int accessType, int maxUsers, const QString& userIds)
+{
+    if (clientWrapper) {
+        clientWrapper->createChatRoom(name, accessType, maxUsers, userIds);
+    }
+}
