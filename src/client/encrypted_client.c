@@ -33,6 +33,7 @@
 #include "load_balancer.h"
 #include "chat_manager.h"
 #include "location_manager.h"
+#include "info_manager.h"
  
 char jwt_token[1024] = ""; // Global JWT token
 static lb_config_t lb_config; // Global load balancer config
@@ -322,7 +323,10 @@ int main() {
             case 18:
                 send_select_latest_locations_by_current_unit(conn, jwt_token);
                 break;
-            case 19: // Cikis
+            case 19:
+                send_info_message(conn, jwt_token);
+                break;
+            case 20: // Cikis
             {
                 LOG_CLIENT_INFO("User requested shutdown");
                 PRINTF_CLIENT("Baglanti kapatiliyor...\n");
@@ -386,7 +390,8 @@ void show_menu(void) {
     PRINTF_LOG("16. Tüm kullanıcıların son konumları\n");
     PRINTF_LOG("17. Kullanıcıları çap göre seç\n");
     PRINTF_LOG("18. Birliğime ait son konumları al\n");
-    PRINTF_LOG("19. Cikis\n");
+    PRINTF_LOG("19. Bilgi mesajı gönder\n");
+    PRINTF_LOG("20. Cikis\n");
     PRINTF_LOG("================\n");
 }
 
@@ -1089,23 +1094,6 @@ void* report_reply_listener_thread(void* arg) {
             perror("[CLIENT][report_reply_listener_thread] select error");
             break;
         } 
-        // else if (sel == 0) {
-        //     // Timeout occurred, send a keepalive to check connection
-        //     if (++retries >= 3) { // After 3 timeouts (15 seconds)
-        //         char ping_cmd[2048];
-        //         snprintf(ping_cmd, sizeof(ping_cmd), "REPORT_REPLY_PING:%s", jwt_token);
-        //         LOG_CLIENT_DEBUG("Sending keepalive ping for report replies");
-                
-        //         ssize_t sent = send(conn->socket, ping_cmd, strlen(ping_cmd), 0);
-        //         if (sent <= 0) {
-        //             LOG_CLIENT_ERROR("Failed to send keepalive, connection may be lost");
-        //             printf("[CLIENT][report_reply_listener_thread] Connection check failed\n");
-        //             break;
-        //         }
-        //         retries = 0; // Reset retry counter after sending ping
-        //     }
-        //     continue;
-        // }
         
         // Data is available
         ssize_t n = recv(conn->socket, buffer, sizeof(buffer)-1, 0);
@@ -1128,9 +1116,6 @@ void* report_reply_listener_thread(void* arg) {
                 else msg = "";
                 add_report_reply(report_id, msg);
             }
-            // else if (strncmp(buffer, "REPORT_REPLY_PONG", 17) == 0) {
-            //     LOG_CLIENT_DEBUG("Received keepalive pong for report replies");
-            // }
         } else {
             LOG_CLIENT_ERROR("Error or connection closed in report reply listener: n=%zd", n);
             printf("[CLIENT][report_reply_listener_thread] recv döngüsü kırıldı. n=%zd\n", n);

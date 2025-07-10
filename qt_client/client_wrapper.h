@@ -39,6 +39,14 @@ class ClientWrapper : public QObject
     Q_OBJECT
 
 public:
+    // === CHAT ROOM JOIN ===
+    // Odaya katılma isteği gönderir
+    Q_INVOKABLE void joinChatRoom(int roomId);
+    // Oda anahtarını alır (asenkron)
+    Q_INVOKABLE void fetchRoomKey(int roomId, const QString& jwtToken);
+    // Chat mesajlarını getirir (asenkron)
+    Q_INVOKABLE void fetchChatMessages(int roomId, const QByteArray& roomKey);
+
     // --- Admin bildirim dinleme ---
     void listenForAdminNotifications();
     bool testAllConnectionTypes(const QString& jsonString, bool encrypted);
@@ -186,7 +194,16 @@ private:
     // void queryRepliesForReport(int reportId); // Artık public
 
 signals:
+    // Odaya katılım başarılı/başarısız olduğunda
+    void joinRoomSuccess(int roomId);
+    void joinRoomFailed(int roomId, const QString& error);
+    // Oda anahtarı alındığında/başarısız olduğunda
+    void roomKeyReceived(int roomId, const QByteArray& key);
+    void roomKeyFailed(int roomId, const QString& error);
     void chatRoomListReceived(const QJsonArray& rooms);
+    // Chat mesajları başarıyla alındığında
+    void chatMessagesReceived(int roomId, const QJsonArray& messages);
+    void chatMessagesFailed(int roomId, const QString& error);
 
     /**
      * @brief Tüm kullanıcıların son konumları alındığında emit edilir

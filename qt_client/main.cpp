@@ -53,6 +53,7 @@ int main(int argc, char *argv[])
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("mainWindow", &window);
+    engine.rootContext()->setContextProperty("clientWrapper", window.getClientWrapper());
 
     return app.exec();
 }

@@ -36,6 +36,7 @@
 #include "tactical_data_handler.h"
 #include "location_handler.h"
 #include "client_notify_threads.h"
+#include "info_handler.h"
 
 // Global chat room state (only defined here)
 server_chat_room_t server_rooms[MAX_CHAT_ROOMS];
@@ -169,7 +170,33 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
             free(error_json);
             return encrypted_result;
         }
-    } 
+    }
+    
+    if (strcmp(filename, "INFO") == 0) {
+        char* jwt_from_json = NULL;
+        if (root) {
+            cJSON* jwt_item = cJSON_GetObjectItem(root, "jwt");
+            if (jwt_item && cJSON_IsString(jwt_item)) {
+                jwt_from_json = jwt_item->valuestring;
+            }
+        }
+        char* plain_result = malloc(65536);
+        if (jwt_from_json) {
+            int info_ret = handle_info_request(jwt_from_json, plain_result, 65536);
+            if (info_ret == 0) {
+                PRINTF_LOG("[SERVER][ENCRYPTED] INFO işlendi, yanıt uzunluğu: %zu\n", strlen(plain_result));
+            } else {
+                snprintf(plain_result, 65536, "{\"error\":\"Bilgi alınamadı\"}");
+            }
+        } else {
+            snprintf(plain_result, 65536, "{\"error\":\"JWT bulunamadı\"}");
+        }
+        if (root) cJSON_Delete(root);
+        send_or_format_large_encrypted_response(client_socket, plain_result, session_key, filename);
+        free(plain_result);
+        free(decrypted_json);
+        return NULL;
+    }
 
     // Eğer dosya adı REPORT_QUERY, REPLY_QUERY veya QUERY_MY_REPLIES ise, rapor sorgulama işlemi yap
     if (strcmp(filename, "REPORT_QUERY") == 0 || strcmp(filename, "REPLY_QUERY") == 0 || strcmp(filename, "QUERY_MY_REPLIES") == 0 || strcmp(filename, "QUERY_REPLIES_ONE_REPORT") == 0) {
@@ -218,7 +245,7 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
         send_or_format_large_encrypted_response(client_socket, plain_result, session_key, filename);
         free(plain_result);
         free(decrypted_json);
-        return NULL; // Hatalı double free'i engelle
+        return NULL; 
     }
 
     if(strcmp(filename, "INSERT_LOCATION") == 0 || strcmp(filename, "SELECT_LOCATION_OF_USER") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_BY_UNIT") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS_BY_RADIUS") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_MY_UNIT") == 0) {

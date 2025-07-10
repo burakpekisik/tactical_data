@@ -44,6 +44,7 @@ void MapWidget::setupQmlMap()
     qmlWidget->rootContext()->setContextProperty("mapWidget", this);
     qmlWidget->rootContext()->setContextProperty("mainWindow", m_mainWindow);
     qmlWidget->rootContext()->setContextProperty("mode", 0);
+    qmlWidget->rootContext()->setContextProperty("clientWrapper", m_mainWindow->getClientWrapper());
     
     // QML dosyasını yükle
     qmlWidget->setSource(QUrl::fromLocalFile("map.qml"));

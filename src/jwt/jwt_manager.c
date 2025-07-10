@@ -74,24 +74,3 @@ char* get_user_id_and_name(const char* token) {
     return result; // Return user ID and name
 }
 
-// JWT'den user_id çekip db_select_user_by_id ile unit_id döndüren fonksiyon
-int jwt_get_unit_id(const char* token) {
-    jwt_t *jwt;
-    if (jwt_decode(&jwt, token, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) != 0) {
-        fprintf(stderr, "JWT decode error\n");
-        return -1; // JWT verification failed
-    }
-    const char *user_id = jwt_get_grant(jwt, "sub");
-    if (!user_id) {
-        jwt_free(jwt);
-        return -1;
-    }
-    int user_id_int = atoi(user_id);
-    int unit_id = -1;
-    if (db_select_user_by_id(user_id_int, &unit_id, NULL, NULL, NULL, NULL, NULL, NULL, NULL) != 0) {
-        jwt_free(jwt);
-        return -1; // Kullanıcı bulunamadı
-    }
-    jwt_free(jwt);
-    return unit_id;
-}

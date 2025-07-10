@@ -40,11 +40,11 @@ Popup {
         id: createRoomPopup
         visible: false
         onCreateRoom: function(name, accessType, userIds) {
-        if (typeof mainWindow !== 'undefined' && mainWindow.createChatRoom) {
-            mainWindow.createChatRoom(name, accessType, 50, userIds);
+            if (typeof mainWindow !== 'undefined' && mainWindow.createChatRoom) {
+                mainWindow.createChatRoom(name, accessType, 50, userIds);
+            }
+            roomMenu.roomCreated(name, accessType, userIds);
         }
-        roomMenu.roomCreated(name, accessType, userIds);
-    }
     }
 
     Rectangle {
@@ -250,9 +250,27 @@ Popup {
     }
 
     function joinRoom(roomId) {
-        // C++ veya QML üzerinden bağlanacak
+        console.log("[QML] mainWindow typeof:", typeof mainWindow, mainWindow)
+
+        // Oda bilgilerini bul
+        var roomInfo = null;
+        for (var i = 0; i < roomMenu.roomList.length; ++i) {
+            if (roomMenu.roomList[i].id === roomId) {
+                roomInfo = roomMenu.roomList[i];
+                break;
+            }
+        }
         roomMenu.close();
-        roomMenu.roomJoined(roomId);
+        // Odaya katılım başlat (C++/backend)
+        if (typeof clientWrapper !== 'undefined' && clientWrapper.joinChatRoom) {
+            var jwt = clientWrapper.getJwtToken ? clientWrapper.getJwtToken() : "";
+            console.log("[QML] joinRoom: joinChatRoom çağrılıyor | roomId=", roomId, ", jwtToken=", jwt);
+            clientWrapper.joinChatRoom(roomId);
+        } else {
+            console.log("[QML] joinRoom: clientWrapper yok veya joinChatRoom fonksiyonu bulunamadı!");
+        }
+        // ChatRoomWindow'u aç (katılım başarılıysa anahtar alınca açmak daha iyi olur)
+        roomMenu.roomJoined(roomId); // Sinyal ile açmak daha iyi
     }
 
     signal roomJoined(int roomId)

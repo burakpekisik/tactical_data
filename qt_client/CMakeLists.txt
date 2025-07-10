@@ -29,6 +29,9 @@ set(C_SOURCES
     ../cjson/cJSON_Utils.c
     ../src/messaging/chat_protocol.c
     ../src/messaging/chat_utils.c
+    ../src/messaging/chat_manager.c
+    ../src/messaging/chat_listener.c
+    ../src/jwt/jwt_manager.c
 )
 
 set(SOURCES
@@ -67,6 +70,7 @@ target_link_libraries(TacticalMapClient
     Qt6::Positioning
     Qt6::Network
     m  # Math library for crypto operations
+    jwt
 )
 
 # Copy QML file to build directory
@@ -75,6 +79,13 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/map.qml
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/RoomMenu.qml 
                ${CMAKE_CURRENT_BINARY_DIR}/RoomMenu.qml COPYONLY)
+
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/ChatRoomWindow.qml 
+               ${CMAKE_CURRENT_BINARY_DIR}/ChatRoomWindow.qml COPYONLY)
+
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/ChatRoomWindowLoader.qml 
+               ${CMAKE_CURRENT_BINARY_DIR}/ChatRoomWindowLoader.qml COPYONLY)
+
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/CreateRoomPopup.qml 
                ${CMAKE_CURRENT_BINARY_DIR}/CreateRoomPopup.qml COPYONLY)

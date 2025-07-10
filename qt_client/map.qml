@@ -910,9 +910,41 @@ Rectangle {
         anchors.centerIn: parent
         roomList: mainWindow.roomList
         userPrivilege: 0 // Gerekirse C++'tan veya üst QML'den set edilebilir
-        onRoomJoined: {
-            // Odaya katılınca yapılacaklar
+        onRoomJoined: function(roomId) {
             console.log("Odaya katılındı, ID:", roomId);
+            // Oda adı bulunup ChatRoomWindow açılır
+            var roomInfo = null;
+            for (var i = 0; i < roomList.length; ++i) {
+                if (roomList[i].id === roomId) {
+                    roomInfo = roomList[i];
+                    break;
+                }
+            }
+            if (!chatRoomWindowLoader) {
+                console.log("[QML] ChatRoomWindowLoader bulunamadı!");
+                return;
+            }
+            chatRoomWindowLoader.open(roomId, roomInfo ? roomInfo.name : ("Oda " + roomId), []);
+        }
+    }
+
+    // ChatRoomWindowLoader ekle
+    ChatRoomWindowLoader {
+        id: chatRoomWindowLoader
+        anchors.centerIn: parent
+        z: 1000
+        onClosed: {
+            // Kapatıldığında ek işlemler yapılabilir
+        }
+    }
+
+    // Chat odası geçmiş mesajlarını pencereye aktar
+    Connections {
+        target: clientWrapper
+        onChatMessagesReceived: function(roomId, msgArray) {
+            if (chatRoomWindowLoader && chatRoomWindowLoader.roomId === roomId) {
+                chatRoomWindowLoader.messages = msgArray;
+            }
         }
     }
 }

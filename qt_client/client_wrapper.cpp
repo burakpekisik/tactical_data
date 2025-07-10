@@ -19,6 +19,8 @@
 #include <QDir>
 #include <QDebug>
 #include <QJsonArray>
+#include <QThread>
+#include <QMetaObject>
 extern "C" {
     #include "encrypted_client.h"
     #include "crypto_utils.h"
@@ -28,6 +30,7 @@ extern "C" {
     #include "logger.h"
     #include "cJSON.h"
     #include "chat_protocol.h"
+    #include "chat_manager.h"
 }
 
 QByteArray decryptAes256Cbc(const QByteArray &cipher, const QByteArray &key, const QByteArray &iv);
@@ -324,6 +327,8 @@ void ClientWrapper::onDataReceived()
             logInfo("[CHAT] clientConnection nesnesi ECDH sonrası oluşturuldu ve yapılandırıldı.");
         }
 
+        setJwtToken(QString::fromUtf8(jwtToken.toUtf8()));
+
         printf("[DEBUG] ECDH handshake başlatıldı, public_key: %s\n", 
             QByteArray((const char*)ecdhContext.public_key, ECC_PUB_KEY_SIZE).toHex().constData());
         qDebug() << "[DEBUG] ECDH handshake başlatıldı, public_key:" 
@@ -343,6 +348,16 @@ void ClientWrapper::onDataReceived()
             logInfo("[CHAT] Chat odası listesi yanıtı alındı. Oda sayısı: " + QString::number(rooms.size()));
             logInfo("[CHAT] Chat odası listesi JSON: " + QString::fromUtf8(QJsonDocument(rooms).toJson(QJsonDocument::Compact)));
             emit chatRoomListReceived(rooms);
+        }
+        // --- ROOM KEY EMIT ---
+        if (obj.contains("room_id") && obj.contains("room_key")) {
+            int roomId = obj["room_id"].toInt();
+            QByteArray roomKey = obj["room_key"].toString().toUtf8();
+            logInfo(QString("[CHAT] Room key received for room_id=%1, key=%2").arg(roomId).arg(QString(roomKey)));
+            emit roomKeyReceived(roomId, roomKey);
+            // Oda anahtarı başarıyla alındıktan sonra geçmiş mesajları çek
+            logInfo(QString("[QT] onDataReceived: Oda anahtarı alındı, geçmiş mesajlar çekilecek | roomId=%1").arg(roomId));
+            // fetchChatMessages(roomId, roomKey);
         }
     }
 
@@ -1500,6 +1515,22 @@ void ClientWrapper::processEncryptedResponse()
                             qDebug() << "[DEBUG] Chat room list yanıtı bulundu, rooms array size:" << obj["rooms"].toArray().size();
                             emit chatRoomListReceived(obj["rooms"].toArray());
                         }
+                        // ROOM KEY yanıtı (chat join)
+                        else if (obj.contains("room_id") && obj.contains("room_key")) {
+                            int roomId = obj["room_id"].toInt();
+                            QByteArray roomKey = obj["room_key"].toString().toUtf8();
+                            logInfo(QString("[CHAT][ENCRYPTED] Room key received for room_id=%1, key=%2").arg(roomId).arg(QString(roomKey)));
+                            emit roomKeyReceived(roomId, roomKey);
+                            // Oda anahtarı başarıyla alındıktan sonra geçmiş mesajları çek
+                            logInfo(QString("[QT] processEncryptedResponse: Oda anahtarı alındı, geçmiş mesajlar çekilecek | roomId=%1").arg(roomId));
+                            fetchChatMessages(roomId, roomKey);
+                        }
+                        else if (obj.contains("room_id") && obj.contains("messages") && obj["messages"].isArray()) {
+                            int roomId = obj["room_id"].toInt();
+                            QJsonArray messages = obj["messages"].toArray();
+                            logInfo(QString("[CHAT][ENCRYPTED] Geçmiş mesajlar alındı | room_id=%1, mesaj sayısı=%2").arg(roomId).arg(messages.size()));
+                            emit chatMessagesReceived(roomId, messages);
+                        }
                         // Tüm kullanıcıların son konumları yanıtı (admin) veya birim son konumları (normal kullanıcı)
                         else if (obj.contains("locations") && obj["locations"].isArray()) {
                             if (obj.contains("type") && obj["type"].toString() == "my_unit") {
@@ -2147,4 +2178,98 @@ void ClientWrapper::createChatRoom(const QString& roomName, int accessType, int 
     }
     logInfo("[CHAT] Oda oluşturma isteği gönderildi");
     emit dataSendResult(SendSuccess, "Oda oluşturma isteği gönderildi");
+}
+
+// === CHAT ROOM JOIN ===
+// Odaya katılma isteği gönder
+
+void ClientWrapper::joinChatRoom(int roomId)
+{
+    logInfo(QString("[QML] joinChatRoom çağrıldı | roomId=%1, jwtToken=%2").arg(roomId).arg(jwtToken));
+    if (!clientConnection || !isConnected() || !handshakeCompleted) {
+        logError("Bağlantı yok veya ECDH tamamlanmamış, odaya katılım başarısız");
+        emit joinRoomFailed(roomId, "Bağlantı yok veya ECDH tamamlanmamış");
+        return;
+    }
+    logInfo("[QML] joinChatRoom: send_join_room_request çağrılıyor...");
+    int result = send_join_room_request(clientConnection, jwtToken.toUtf8().constData(), roomId);
+    logInfo(QString("[QML] joinChatRoom: send_join_room_request sonucu: %1").arg(result));
+    if (result == 0) {
+        logInfo("[QML] joinChatRoom: Katılım başarılı, joinRoomSuccess sinyali emit ediliyor.");
+        emit joinRoomSuccess(roomId);
+    } else {
+        logError("[QML] joinChatRoom: Katılım başarısız, joinRoomFailed sinyali emit ediliyor.");
+        emit joinRoomFailed(roomId, "Odaya katılım isteği başarısız");
+    }
+}
+
+// Oda anahtarını al (asenkron, thread ile)
+
+void ClientWrapper::fetchRoomKey(int roomId, const QString& jwtToken)
+{
+    logInfo(QString("[QML] fetchRoomKey çağrıldı | roomId=%1, jwtToken=%2").arg(roomId).arg(jwtToken));
+    if (!clientConnection || !isConnected() || !handshakeCompleted) {
+        logError("Bağlantı yok veya ECDH tamamlanmamış, oda anahtarı alınamaz");
+        emit roomKeyFailed(roomId, "Bağlantı yok veya ECDH tamamlanmamış");
+        return;
+    }
+    QByteArray jwtBytes = jwtToken.toUtf8();
+    logInfo("[QML] fetchRoomKey: Thread başlatılıyor...");
+    QThread* thread = QThread::create([=]() {
+        logInfo("[QML][Thread] fetchRoomKey: receive_room_key çağrılıyor...");
+        uint8_t* key = receive_room_key(clientConnection, jwtBytes.constData(), roomId);
+        if (key) {
+            logInfo("[QML][Thread] fetchRoomKey: receive_room_key başarılı, anahtar alındı.");
+            QByteArray keyArray(reinterpret_cast<const char*>(key), ROOM_KEY_SIZE);
+            free(key);
+            QMetaObject::invokeMethod(this, [=]() {
+                logInfo("[QML][Thread->Main] fetchRoomKey: roomKeyReceived sinyali emit ediliyor.");
+                emit roomKeyReceived(roomId, keyArray);
+                // Oda anahtarı başarıyla alındıktan sonra geçmiş mesajları çek
+                logInfo(QString("[QT] fetchRoomKey: Oda anahtarı alındı, geçmiş mesajlar çekilecek | roomId=%1").arg(roomId));
+                // fetchChatMessages(roomId, keyArray);
+            }, Qt::QueuedConnection);
+        } else {
+            logError("[QML][Thread] fetchRoomKey: receive_room_key başarısız.");
+            QMetaObject::invokeMethod(this, [=]() {
+                logError("[QML][Thread->Main] fetchRoomKey: roomKeyFailed sinyali emit ediliyor.");
+                emit roomKeyFailed(roomId, "Oda anahtarı alınamadı");
+            }, Qt::QueuedConnection);
+        }
+    });
+    thread->start();
+}
+
+// --- Chat mesajlarını getirir (asenkron) ---
+void ClientWrapper::fetchChatMessages(int roomId, const QByteArray& roomKey)
+{
+    logInfo(QString("[QT] fetchChatMessages çağrıldı | roomId=%1").arg(roomId));
+    if (!clientConnection || !ecdhInitialized) {
+        logError("[QT] fetchChatMessages: Bağlantı yok veya ECDH başlatılmamış!");
+        emit chatMessagesFailed(roomId, "Bağlantı yok veya ECDH başlatılmamış!");
+        return;
+    }
+    if (jwtToken.isEmpty()) {
+        logError("[QT] fetchChatMessages: JWT token boş!");
+        emit chatMessagesFailed(roomId, "JWT token boş!");
+        return;
+    }
+    logInfo("[QT] fetchChatMessages: receive_chat_messages C fonksiyonu çağrılıyor...");
+    QThread* thread = QThread::create([=]() {
+        logDebug(QString("[QT][Thread] Room Key: %1").arg(QString(roomKey.toHex())));
+        logDebug(QString("[QT][Thread] JWT Token: %1").arg(QString(jwtToken.toUtf8())));
+
+        int result = receive_chat_messages(clientConnection, jwtToken.toUtf8().constData(), roomId, reinterpret_cast<const uint8_t*>(roomKey.constData()));
+        
+        // Sadece bağlantı hatası gibi durumlarda hata sinyali gönder
+        if (result == -2 /* örn: bağlantı yok */) {
+            QMetaObject::invokeMethod(this, [=]() {
+                logError("[QT] fetchChatMessages: receive_chat_messages başarısız (bağlantı hatası)!");
+                emit chatMessagesFailed(roomId, "Bağlantı hatası!");
+            }, Qt::QueuedConnection);
+        }
+        // Başarı veya diğer durumlarda sinyal gönderme!
+        // Asıl mesajlar processEncryptedResponse ile QML'e iletilecek.
+    });
+    thread->start();
 }
