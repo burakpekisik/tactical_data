@@ -21,6 +21,7 @@
 #include <QJsonArray>
 #include <QThread>
 #include <QMetaObject>
+#include <QMetaType>
 extern "C" {
     #include "encrypted_client.h"
     #include "crypto_utils.h"
@@ -988,7 +989,6 @@ void ClientWrapper::getReports() {
     free(encryptedMsg);
     tcpSocket->write(msgData);
     tcpSocket->flush();
-    tcpSocket->waitForBytesWritten();
 }
 
 // Basit bir şablon: Gerçek AES çözümleme fonksiyonu buraya eklemelisin
@@ -1438,7 +1438,7 @@ void ClientWrapper::processEncryptedParts()
  */
 void ClientWrapper::processEncryptedResponse()
 {
-    // Tek parçalı ENCRYPTED: yanıtı ara
+    // Tek parça ENCRYPTED: yanıtı ara
     int encIdx = incomingBuffer.indexOf("ENCRYPTED:");
     if (encIdx != -1 && incomingBuffer.indexOf("ENCRYPTED_PART:") == -1) {
         // Tek parça yanıt bulundu
@@ -2243,7 +2243,9 @@ void ClientWrapper::fetchRoomKey(int roomId, const QString& jwtToken)
 // --- Chat mesajlarını getirir (asenkron) ---
 void ClientWrapper::fetchChatMessages(int roomId, const QByteArray& roomKey)
 {
-    logInfo(QString("[QT] fetchChatMessages çağrıldı | roomId=%1").arg(roomId));
+    logInfo(QString("[QML] fetchChatMessages çağrıldı | roomId=%1").arg(roomId));
+    logInfo(QString("[QML] fetchChatMessages | roomKey(hex)=%1 | roomKey.size()=%2").arg(QString(roomKey.toHex())).arg(roomKey.size()));
+
     if (!clientConnection || !ecdhInitialized) {
         logError("[QT] fetchChatMessages: Bağlantı yok veya ECDH başlatılmamış!");
         emit chatMessagesFailed(roomId, "Bağlantı yok veya ECDH başlatılmamış!");
@@ -2270,6 +2272,52 @@ void ClientWrapper::fetchChatMessages(int roomId, const QByteArray& roomKey)
         }
         // Başarı veya diğer durumlarda sinyal gönderme!
         // Asıl mesajlar processEncryptedResponse ile QML'e iletilecek.
+    });
+    thread->start();
+}
+
+/**
+ * @brief Chat mesajı gönderir (QML'den çağrılabilir)
+ * @param roomId Oda ID'si
+ * @param message Mesaj içeriği
+ * @param roomKey Oda anahtarı (QByteArray, 32 byte)
+ */
+void ClientWrapper::sendChatMessage(int roomId, const QString& message, const QByteArray& roomKey)
+{
+    logInfo(QString("[QML] sendChatMessage çağrıldı | roomId=%1, message=%2").arg(roomId).arg(message));
+    logInfo(QString("[QML] sendChatMessage | roomKey(hex)=%1 | roomKey.size()=%2").arg(QString(roomKey.toHex())).arg(roomKey.size()));
+    // Üye değişkenlere erişmek için this pointer'ı yakala
+    QThread* thread = QThread::create([=]() {
+        logInfo(QString("[QML][THREAD] sendChatMessage | roomKey(hex)=%1 | roomKey.size()=%2").arg(QString(roomKey.toHex())).arg(roomKey.size()));
+        if (!clientConnection || !isConnected() || !handshakeCompleted) {
+            logError("[QML] sendChatMessage: Bağlantı yok veya ECDH tamamlanmamış!");
+            QMetaObject::invokeMethod(this, "chatMessagesFailed", Qt::QueuedConnection,
+                Q_ARG(int, roomId), Q_ARG(QString, "Bağlantı yok veya ECDH tamamlanmamış!"));
+            return;
+        }
+        if (jwtToken.isEmpty()) {
+            logError("[QML] sendChatMessage: JWT token boş!");
+            QMetaObject::invokeMethod(this, "chatMessagesFailed", Qt::QueuedConnection,
+                Q_ARG(int, roomId), Q_ARG(QString, "JWT token boş!"));
+            return;
+        }
+
+        QByteArray key = QByteArray::fromHex(roomKey); // Eğer roomKey bir hex string ise
+        
+        if (key.size() != 32) {
+            logError("[QML] sendChatMessage: Oda anahtarı eksik veya hatalı boyutta!");
+            QMetaObject::invokeMethod(this, "chatMessagesFailed", Qt::QueuedConnection,
+                Q_ARG(int, roomId), Q_ARG(QString, "Oda anahtarı eksik veya hatalı boyutta!"));
+            return;
+        }
+        int result = send_chat_message(clientConnection, jwtToken.toUtf8().constData(), roomId, message.toUtf8().constData(), reinterpret_cast<const uint8_t*>(key.constData()));
+        if (result == 0) {
+            QMetaObject::invokeMethod(this, "dataSuccess", Qt::QueuedConnection,
+                Q_ARG(QString, "Mesaj başarıyla gönderildi."));
+        } else {
+            QMetaObject::invokeMethod(this, "chatMessagesFailed", Qt::QueuedConnection,
+                Q_ARG(int, roomId), Q_ARG(QString, "Mesaj gönderilemedi!"));
+        }
     });
     thread->start();
 }

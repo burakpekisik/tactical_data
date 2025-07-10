@@ -912,7 +912,6 @@ Rectangle {
         userPrivilege: 0 // Gerekirse C++'tan veya üst QML'den set edilebilir
         onRoomJoined: function(roomId) {
             console.log("Odaya katılındı, ID:", roomId);
-            // Oda adı bulunup ChatRoomWindow açılır
             var roomInfo = null;
             for (var i = 0; i < roomList.length; ++i) {
                 if (roomList[i].id === roomId) {
@@ -924,7 +923,11 @@ Rectangle {
                 console.log("[QML] ChatRoomWindowLoader bulunamadı!");
                 return;
             }
-            chatRoomWindowLoader.open(roomId, roomInfo ? roomInfo.name : ("Oda " + roomId), []);
+            // Oda anahtarı alınmadan pencere açılmasın, roomKeyReceived ile açılacak
+            chatRoomWindowLoader.roomId = roomId;
+            chatRoomWindowLoader.roomName = roomInfo ? roomInfo.name : ("Oda " + roomId);
+            chatRoomWindowLoader.messages = [];
+            chatRoomWindowLoader.roomKey = null;
         }
     }
 
@@ -944,6 +947,14 @@ Rectangle {
         onChatMessagesReceived: function(roomId, msgArray) {
             if (chatRoomWindowLoader && chatRoomWindowLoader.roomId === roomId) {
                 chatRoomWindowLoader.messages = msgArray;
+            }
+        }
+        onRoomKeyReceived: function(roomId, key) {
+            if (chatRoomWindowLoader && chatRoomWindowLoader.roomId === roomId) {
+                chatRoomWindowLoader.roomKey = key;
+                console.log("[QML] roomKey ChatRoomWindowLoader'a aktarıldı:", key);
+                // Oda anahtarı gelince pencereyi aç
+                chatRoomWindowLoader.open(roomId, chatRoomWindowLoader.roomName, chatRoomWindowLoader.messages, key);
             }
         }
     }

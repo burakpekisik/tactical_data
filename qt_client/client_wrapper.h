@@ -37,7 +37,6 @@ extern "C" {
 class ClientWrapper : public QObject
 {
     Q_OBJECT
-
 public:
     // === CHAT ROOM JOIN ===
     // Odaya katılma isteği gönderir
@@ -46,6 +45,9 @@ public:
     Q_INVOKABLE void fetchRoomKey(int roomId, const QString& jwtToken);
     // Chat mesajlarını getirir (asenkron)
     Q_INVOKABLE void fetchChatMessages(int roomId, const QByteArray& roomKey);
+
+    Q_INVOKABLE void sendChatMessage(int roomId, const QString& message, const QByteArray& roomKey);
+
 
     // --- Admin bildirim dinleme ---
     void listenForAdminNotifications();

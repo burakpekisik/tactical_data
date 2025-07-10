@@ -15,6 +15,8 @@ ApplicationWindow {
 
     property string roomName: "Oda İsmi"
     property var messages: [] // Mesajlar burada tutulacak
+    property int roomId: -1   // Oda ID'si (dışarıdan atanmalı)
+    property var roomKey: null // Oda anahtarı (dışarıdan atanmalı)
 
     // --- C++/backend'den mesajlar geldiğinde güncelle ---
     Connections {
@@ -94,8 +96,8 @@ ApplicationWindow {
                             width: parent.width
                             color: modelData.isOwn ? "#e3f2fd" : "#ffffff"
                             radius: 8
-                            anchors.right: modelData.isOwn ? parent.right : undefined
-                            anchors.left: !modelData.isOwn ? parent.left : undefined
+                            anchors.right: undefined
+                            anchors.left: parent.left
                             anchors.margins: 8
                             height: Math.max(56, msgText.paintedHeight + 32)
                             Column {
@@ -113,7 +115,7 @@ ApplicationWindow {
                                         font.family: chatWindow.chatFont
                                     }
                                     Text {
-                                        text: modelData.sender_id ? ("(Kullanıcı ID: " + modelData.sender_id) : ")"
+                                        text: modelData.sender_id ? ("(Kullanıcı ID: " + modelData.sender_id + ")") : ""
                                         color: "#888"
                                         font.pixelSize: 12
                                         font.family: chatWindow.chatFont
@@ -207,11 +209,32 @@ ApplicationWindow {
     }
 
     // Mesaj gönderme fonksiyonu (QML tarafında override edilebilir)
+    // Mesaj gönderme fonksiyonu (C++/backend'e entegre)
     function sendMessage(text) {
-        // Burada C++/backend'e mesaj gönderme işlemi yapılacak
+        console.log("[QML] sendMessage çağrıldı | text=", text, "roomId=", roomId, "roomKey=", roomKey);
+        if (!text || !clientWrapper || roomId === -1 || !roomKey) {
+            console.log("[QML] sendMessage: Eksik parametre! text=", text, "roomId=", roomId, "roomKey=", roomKey);
+            return;
+        }
+        // UI'ya anında ekle (optimistic update)
         var now = new Date();
         var hh = now.getHours().toString().padStart(2, '0');
         var mm = now.getMinutes().toString().padStart(2, '0');
-        messages.push({ text: text, isOwn: true, time: hh + ":" + mm });
+        var userName = clientWrapper.currentUserName ? clientWrapper.currentUserName : "Ben";
+        var userId = clientWrapper.currentUserId ? clientWrapper.currentUserId : "";
+        console.log("[QML] sendMessage: UI'ya ekleniyor", text, userName, userId, hh + ":" + mm);
+        // messages.push({ ... }) satırını değiştir:
+        var newMessages = messages.slice();
+        newMessages.push({
+            message: text,
+            isOwn: true,
+            sender_name: userName,
+            sender_id: userId,
+            time: hh + ":" + mm
+        });
+        messages = newMessages;
+        // Backend'e gönder
+        console.log("[QML] sendMessage: clientWrapper.sendChatMessage çağrılıyor", roomId, text, roomKey);
+        clientWrapper.sendChatMessage(roomId, text, roomKey);
     }
 }
