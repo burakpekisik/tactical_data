@@ -35,6 +35,7 @@ extern "C" {
  *          Thread-safe şekilde sunucu bağlantısı kurar ve veri gönderir.
  */
 class ClientWrapper : public QObject
+    // Odayı terk etme isteği gönderir
 {
     Q_OBJECT
 public:
@@ -48,6 +49,7 @@ public:
 
     Q_INVOKABLE void sendChatMessage(int roomId, const QString& message, const QByteArray& roomKey);
 
+    Q_INVOKABLE void leaveChatRoom(int roomId);
 
     // --- Admin bildirim dinleme ---
     void listenForAdminNotifications();

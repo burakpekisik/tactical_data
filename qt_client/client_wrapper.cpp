@@ -1994,7 +1994,7 @@ void ClientWrapper::sendLocation(double latitude, double longitude, long timesta
         jsonObj["description"] = description;
     QJsonDocument jsonDoc(jsonObj);
     QString jsonString = jsonDoc.toJson(QJsonDocument::Compact);
-    // Komut adını belirtmek için protokol mesajı oluşturulurken komut adı kullanılacak
+    // Komut adını belirtmak için protokol mesajı oluşturulurken komut adı kullanılacak
     sendLocationJson(jsonString, encrypted);
 }
 
@@ -2320,4 +2320,26 @@ void ClientWrapper::sendChatMessage(int roomId, const QString& message, const QB
         }
     });
     thread->start();
+}
+
+// Odayı terk etme isteği gönderir
+void ClientWrapper::leaveChatRoom(int roomId) {
+    logInfo(QString("[QML] leaveChatRoom çağrıldı | roomId=%1").arg(roomId));
+    if (!clientConnection || !isConnected() || roomId <= 0) {
+        logError("[QML] leaveChatRoom: Bağlantı yok veya geçersiz roomId!");
+        return;
+    }
+    // JWT token'ı al
+    QString jwt = getJwtToken();
+    if (jwt.isEmpty()) {
+        logError("[QML] leaveChatRoom: JWT token boş!");
+        return;
+    }
+    // C fonksiyonunu çağır
+    int result = send_leave_room_request(clientConnection, jwt.toUtf8().constData(), roomId);
+    if (result == 0) {
+        logInfo(QString("[QML] leaveChatRoom: Oda %1'dan çıkış isteği gönderildi.").arg(roomId));
+    } else {
+        logError(QString("[QML] leaveChatRoom: Oda %1'dan çıkış isteği gönderilemedi!").arg(roomId));
+    }
 }

@@ -58,7 +58,13 @@ ApplicationWindow {
                 Item { Layout.fillWidth: true }
                 Button {
                     text: "Kapat"
-                    onClicked: chatWindow.close()
+                    onClicked: {
+                        if (clientWrapper && roomId > 0) {
+                            console.log("[QML] Kapat butonuna basıldı, leaveChatRoom çağrılıyor | roomId=", roomId);
+                            clientWrapper.leaveChatRoom(roomId);
+                        }
+                        chatWindow.close();
+                    }
                     background: Rectangle { color: "#f2f2f2"; radius: 6 }
                     contentItem: Text {
                         text: parent.text
