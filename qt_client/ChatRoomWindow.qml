@@ -23,7 +23,9 @@ ApplicationWindow {
         target: clientWrapper
         onChatMessagesReceived: function(roomId, msgArray) {
             console.log("[QML] onChatMessagesReceived: roomId=", roomId, ", msgArray=", JSON.stringify(msgArray));
+            console.log("[QML] onChatMessagesReceived: roomKey=", roomKey);
             chatWindow.messages = msgArray;
+            clientWrapper.startChatListener(roomId, roomKey); // Dinleyiciyi başlat
         }
         onChatMessagesFailed: function(roomId, error) {
             console.log("[QML] onChatMessagesFailed: roomId=", roomId, ", error=", error);
@@ -213,6 +215,33 @@ ApplicationWindow {
             }
         }
     }
+
+    // Component.onCompleted: {
+    //     console.log("[QML] ChatRoomWindow açıldı | roomId=", roomId, ", roomKey=", roomKey);
+    //     if (clientWrapper && roomId > 0 && roomKey) {
+    //         console.log("[QML] ChatRoomWindow açıldı, startChatListener çağrılıyor | roomId=", roomId);
+    //         clientWrapper.startChatListener(roomId, roomKey);
+    //     }
+    // }
+    onVisibleChanged: {
+        if (!visible && clientWrapper) {
+            console.log("[QML] ChatRoomWindow kapandı, stopChatListener çağrılıyor");
+            clientWrapper.stopChatListener();
+        }
+    }
+    // Oda dinleyicisini property'ler doğru atandıktan sonra başlat
+    // onRoomIdChanged: {
+    //     if (clientWrapper && roomId > 0 && roomKey) {
+    //         console.log("[QML] roomId değişti, startChatListener çağrılıyor | roomId=", roomId);
+    //         clientWrapper.startChatListener(roomId, roomKey);
+    //     }
+    // }
+    // onRoomKeyChanged: {
+    //     if (clientWrapper && roomId > 0 && roomKey) {
+    //         console.log("[QML] roomKey değişti, startChatListener çağrılıyor | roomId=", roomId);
+    //         clientWrapper.startChatListener(roomId, roomKey);
+    //     }
+    // }
 
     // Mesaj gönderme fonksiyonu (QML tarafında override edilebilir)
     // Mesaj gönderme fonksiyonu (C++/backend'e entegre)

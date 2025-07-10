@@ -29,6 +29,8 @@ extern "C" {
     #include "cJSON.h"
 }
 
+extern QMutex clientConnectionMutex;
+
 /**
  * @brief Qt Client wrapper sınıfı
  * @details C client kodları ile Qt GUI arasında köprü görevi görür.
@@ -39,6 +41,7 @@ class ClientWrapper : public QObject
 {
     Q_OBJECT
 public:
+
     // === CHAT ROOM JOIN ===
     // Odaya katılma isteği gönderir
     Q_INVOKABLE void joinChatRoom(int roomId);
@@ -174,6 +177,10 @@ public slots:
     void queryMyReplies();
     void watchReportReplies();
     void sendAllPendingAdminReplies();
+
+    // Chat mesaj dinleyici başlat/durdur
+    Q_INVOKABLE void startChatListener(int roomId, const QByteArray& roomKey);
+    Q_INVOKABLE void stopChatListener();
 
 private:
     // --- Bağlantı türü kontrolü ---

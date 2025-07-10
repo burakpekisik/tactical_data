@@ -21,7 +21,11 @@
 #include <QJsonArray>
 #include <QThread>
 #include <QMetaObject>
-#include <QMetaType>
+//#include <QMetaType>
+#include <QMutex>
+#include <QMutexLocker>
+
+QMutex clientConnectionMutex;
 extern "C" {
     #include "encrypted_client.h"
     #include "crypto_utils.h"
@@ -33,6 +37,19 @@ extern "C" {
     #include "chat_protocol.h"
     #include "chat_manager.h"
 }
+
+#include <thread>
+#include <atomic>
+
+// Mesaj dinleyici thread'i için değişkenler
+typedef struct {
+    std::thread* thread = nullptr;
+    std::atomic<bool> running{false};
+    int roomId = -1;
+    QByteArray roomKey;
+} ChatListenerThreadState;
+
+static ChatListenerThreadState chatListenerState;
 
 QByteArray decryptAes256Cbc(const QByteArray &cipher, const QByteArray &key, const QByteArray &iv);
 
@@ -2216,8 +2233,13 @@ void ClientWrapper::fetchRoomKey(int roomId, const QString& jwtToken)
     QByteArray jwtBytes = jwtToken.toUtf8();
     logInfo("[QML] fetchRoomKey: Thread başlatılıyor...");
     QThread* thread = QThread::create([=]() {
+        qint64 tid = (qint64)QThread::currentThreadId();
+        logInfo(QString("[THREAD][fetchRoomKey] Thread ID: %1").arg(tid));
+        QMutexLocker locker(&clientConnectionMutex);
+        logInfo(QString("[THREAD][fetchRoomKey] LOCK ACQUIRED | Thread ID: %1").arg(tid));
         logInfo("[QML][Thread] fetchRoomKey: receive_room_key çağrılıyor...");
         uint8_t* key = receive_room_key(clientConnection, jwtBytes.constData(), roomId);
+        logInfo(QString("[THREAD][fetchRoomKey] LOCK RELEASE | Thread ID: %1").arg(tid));
         if (key) {
             logInfo("[QML][Thread] fetchRoomKey: receive_room_key başarılı, anahtar alındı.");
             QByteArray keyArray(reinterpret_cast<const char*>(key), ROOM_KEY_SIZE);
@@ -2258,11 +2280,15 @@ void ClientWrapper::fetchChatMessages(int roomId, const QByteArray& roomKey)
     }
     logInfo("[QT] fetchChatMessages: receive_chat_messages C fonksiyonu çağrılıyor...");
     QThread* thread = QThread::create([=]() {
+        qint64 tid = (qint64)QThread::currentThreadId();
+        logInfo(QString("[THREAD][fetchChatMessages] Thread ID: %1").arg(tid));
+        QMutexLocker locker(&clientConnectionMutex);
+        logInfo(QString("[THREAD][fetchChatMessages] LOCK ACQUIRED | Thread ID: %1").arg(tid));
         logDebug(QString("[QT][Thread] Room Key: %1").arg(QString(roomKey.toHex())));
         logDebug(QString("[QT][Thread] JWT Token: %1").arg(QString(jwtToken.toUtf8())));
 
         int result = receive_chat_messages(clientConnection, jwtToken.toUtf8().constData(), roomId, reinterpret_cast<const uint8_t*>(roomKey.constData()));
-        
+        logInfo(QString("[THREAD][fetchChatMessages] LOCK RELEASE | Thread ID: %1").arg(tid));
         // Sadece bağlantı hatası gibi durumlarda hata sinyali gönder
         if (result == -2 /* örn: bağlantı yok */) {
             QMetaObject::invokeMethod(this, [=]() {
@@ -2288,6 +2314,10 @@ void ClientWrapper::sendChatMessage(int roomId, const QString& message, const QB
     logInfo(QString("[QML] sendChatMessage | roomKey(hex)=%1 | roomKey.size()=%2").arg(QString(roomKey.toHex())).arg(roomKey.size()));
     // Üye değişkenlere erişmek için this pointer'ı yakala
     QThread* thread = QThread::create([=]() {
+        qint64 tid = (qint64)QThread::currentThreadId();
+        logInfo(QString("[THREAD][sendChatMessage] Thread ID: %1").arg(tid));
+        QMutexLocker locker(&clientConnectionMutex);
+        logInfo(QString("[THREAD][sendChatMessage] LOCK ACQUIRED | Thread ID: %1").arg(tid));
         logInfo(QString("[QML][THREAD] sendChatMessage | roomKey(hex)=%1 | roomKey.size()=%2").arg(QString(roomKey.toHex())).arg(roomKey.size()));
         if (!clientConnection || !isConnected() || !handshakeCompleted) {
             logError("[QML] sendChatMessage: Bağlantı yok veya ECDH tamamlanmamış!");
@@ -2303,6 +2333,7 @@ void ClientWrapper::sendChatMessage(int roomId, const QString& message, const QB
         }
 
         QByteArray key = QByteArray::fromHex(roomKey); // Eğer roomKey bir hex string ise
+        logDebug(QString("[QML] sendChatMessage: roomKey(hex)=%1 | roomKey.size()=%2").arg(QString(key.toHex())).arg(key.size()));
         
         if (key.size() != 32) {
             logError("[QML] sendChatMessage: Oda anahtarı eksik veya hatalı boyutta!");
@@ -2311,6 +2342,7 @@ void ClientWrapper::sendChatMessage(int roomId, const QString& message, const QB
             return;
         }
         int result = send_chat_message(clientConnection, jwtToken.toUtf8().constData(), roomId, message.toUtf8().constData(), reinterpret_cast<const uint8_t*>(key.constData()));
+        logInfo(QString("[THREAD][sendChatMessage] LOCK RELEASE | Thread ID: %1").arg(tid));
         if (result == 0) {
             QMetaObject::invokeMethod(this, "dataSuccess", Qt::QueuedConnection,
                 Q_ARG(QString, "Mesaj başarıyla gönderildi."));
@@ -2341,5 +2373,77 @@ void ClientWrapper::leaveChatRoom(int roomId) {
         logInfo(QString("[QML] leaveChatRoom: Oda %1'dan çıkış isteği gönderildi.").arg(roomId));
     } else {
         logError(QString("[QML] leaveChatRoom: Oda %1'dan çıkış isteği gönderilemedi!").arg(roomId));
+    }
+}
+
+// Mesaj dinleyici thread'i için fonksiyonlar
+void ClientWrapper::startChatListener(int roomId, const QByteArray& roomKey) {
+    if (chatListenerState.thread && chatListenerState.running) {
+        logInfo("[QML] startChatListener: Zaten bir dinleyici aktif, durduruluyor...");
+        chatListenerState.running = false;
+        if (chatListenerState.thread->joinable())
+            chatListenerState.thread->join();
+        delete chatListenerState.thread;
+        chatListenerState.thread = nullptr;
+    }
+
+    QByteArray key = QByteArray::fromHex(roomKey);
+    logDebug(QString("[QML] startChatListener: roomKey(hex)=%1 | roomKey.size()=%2").arg(QString(roomKey)).arg(roomKey.size()));
+    if (key.size() != 32) {
+        logError("[QML] startChatListener: Oda anahtarı eksik veya hatalı boyutta!");
+        emit chatMessagesFailed(roomId, "Oda anahtarı eksik veya hatalı boyutta!");
+        return;
+    }
+
+    chatListenerState.running = true;
+    chatListenerState.roomId = roomId;
+    chatListenerState.roomKey = key;
+    chatListenerState.thread = new std::thread([this, roomId, key]() {
+        qint64 tid = (qint64)QThread::currentThreadId();
+        logInfo(QString("[THREAD][startChatListener] Thread ID: %1").arg(tid));
+        {
+            QMutexLocker locker(&clientConnectionMutex);
+            logInfo(QString("[THREAD][startChatListener] LOCK ACQUIRED (flush_socket) | Thread ID: %1").arg(tid));
+            flush_socket(clientConnection->socket); // Socket'i temizle
+            logInfo(QString("[THREAD][startChatListener] LOCK RELEASE (flush_socket) | Thread ID: %1").arg(tid));
+        }
+
+        logInfo(QString("[QML] ChatListener thread başlatıldı | roomId=%1").arg(roomId));
+        while (chatListenerState.running) {
+            QMutexLocker locker(&clientConnectionMutex);
+            logInfo(QString("[THREAD][startChatListener] LOCK ACQUIRED (receive) | Thread ID: %1").arg(tid));
+            // C fonksiyonunu çağır: receive_encrypted_response_room_key
+            char* response = receive_encrypted_response_room_key(clientConnection, reinterpret_cast<const uint8_t*>(key.constData()));
+            logInfo(QString("[THREAD][startChatListener] LOCK RELEASE (receive) | Thread ID: %1").arg(tid));
+            if (!response) {
+                locker.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                continue;
+            }
+            // JSON parse
+            QJsonParseError err;
+            QJsonDocument doc = QJsonDocument::fromJson(QByteArray(response), &err);
+            free(response);
+            if (err.error != QJsonParseError::NoError || !doc.isObject()) continue;
+            QJsonObject obj = doc.object();
+            // Mesaj objesi ise QML'e ilet
+            if (obj.contains("message")) {
+                QJsonArray arr;
+                arr.append(obj);
+                emit chatMessagesReceived(roomId, arr);
+            }
+        }
+        logInfo("[QML] ChatListener thread sonlandırıldı.");
+    });
+}
+
+void ClientWrapper::stopChatListener() {
+    if (chatListenerState.thread && chatListenerState.running) {
+        chatListenerState.running = false;
+        if (chatListenerState.thread->joinable())
+            chatListenerState.thread->join();
+        delete chatListenerState.thread;
+        chatListenerState.thread = nullptr;
+        logInfo("[QML] ChatListener thread durduruldu.");
     }
 }

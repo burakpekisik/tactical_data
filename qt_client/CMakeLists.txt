@@ -32,6 +32,7 @@ set(C_SOURCES
     ../src/messaging/chat_manager.c
     ../src/messaging/chat_listener.c
     ../src/jwt/jwt_manager.c
+    ../src/messaging/chat_listener.c
 )
 
 set(SOURCES
