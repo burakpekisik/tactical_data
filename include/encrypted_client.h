@@ -9,7 +9,6 @@
 #include "crypto_utils.h"
 #include "config.h"
 #include "connection_manager.h"
-#include "load_balancer.h"
 
 typedef struct {
     int socket;
@@ -26,27 +25,17 @@ struct report_reply_entry {
     char msg[900];
 };
 
-// Function prototypes
-char* read_file_content(const char* filename, size_t* file_size);
+extern struct report_reply_entry report_replies[MAX_REPORT_REPLIES];
+extern int report_reply_count;
+extern pthread_mutex_t report_reply_mutex;
 
 void handle_server_response(client_connection_t* conn);
 void show_menu(void);
 client_connection_t* connect_to_server(const char* server_host);
-void listen_for_admin_notifications(client_connection_t* conn);
-void* report_reply_listener_thread(void* arg);
-void* admin_reply_input_thread(void* arg);
-void watch_report_replies(client_connection_t* conn);
+
 int send_hello_after_ecdh(client_connection_t* conn, const char* jwt_token);
-void query_my_replies_with_jwt(client_connection_t* conn, const char* jwt_token);
-int admin_reply_to_report(client_connection_t* conn, const char* jwt_token);
-ssize_t recv_full(int sock, char* buf, size_t maxlen);
-int send_json_file(client_connection_t* conn, const char* filename, int encrypt, const char* jwt_token);
-void query_my_replies(client_connection_t* conn, const char* jwt_token);
-void query_replies_to_one_report(client_connection_t* conn, const char* jwt_token);
 
 // Load balancer functions
-client_connection_t* connect_to_server_with_lb(lb_config_t *lb_config);
-char* client_login_to_server_with_lb(lb_config_t *lb_config, const char* username, const char* password);
 void close_connection(client_connection_t* conn);
 
 

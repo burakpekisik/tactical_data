@@ -11,6 +11,8 @@
 #include "json_utils.h"
 #include "jwt.h"
 #include "logger.h"
+#include "fallback_manager.h"
+#include "protocol_manager.h"
 
 static user_socket_map_t user_map[MAX_ACTIVE_USERS];
 static int user_map_count = 0;
@@ -160,3 +162,54 @@ void handle_reply_report(const char* decrypted_json, const char* jwt_token, int 
         if (reply_data) free(reply_data);
     }
 }
+
+int admin_reply_to_report(client_connection_t* conn, const char* jwt_token) {
+    int report_id;
+    char msg[900];
+    printf("Rapor ID girin: ");
+    if (scanf("%d", &report_id) != 1) {
+        printf("Geçersiz rapor ID!\n");
+        while (getchar() != '\n');
+        return -1;
+    }
+    while (getchar() != '\n'); // Temizle
+    printf("Mesajınızı girin: ");
+    if (fgets(msg, sizeof(msg), stdin) == NULL) {
+        printf("Mesaj okunamadı!\n");
+        return -1;
+    }
+    msg[strcspn(msg, "\n")] = 0;
+    if (strlen(msg) == 0) {
+        printf("Mesaj boş olamaz!\n");
+        return -1;
+    }
+    PRINTF_LOG("Sifreleme islemi baslatiliyor...\n");
+    if (!conn->ecdh_initialized) {
+        PRINTF_LOG("ECDH başlatılmamış - şifreleme yapılamaz\n");
+        return -1;
+    }
+    char json_content[1024];
+    snprintf(json_content, sizeof(json_content), "{\"report_id\":%d,\"msg\":\"%s\"}", report_id, msg);
+    char *protocol_message = create_encrypted_protocol_message("REPLY_REPORT", json_content, conn->ecdh_ctx.aes_key, jwt_token);
+    if (!protocol_message) {
+        printf("Şifreli mesaj oluşturulamadı!\n");
+        return -1;
+    }
+    int result = try_send_message_current_connection(conn, protocol_message);
+    if (result < 0) {
+        PRINTF_LOG("Mevcut bağlantı ile gönderim başarısız, UDP fallback deneniyor...\n");
+        result = admin_reply_to_report_udp_fallback(conn, report_id, msg, jwt_token);
+    }
+    if (result < 0) {
+        PRINTF_LOG("UDP fallback başarısız, P2P fallback deneniyor...\n");
+        result = admin_reply_to_report_p2p_fallback(conn, report_id, msg, jwt_token);
+    }
+    free(protocol_message);
+    if (result < 0) {
+        printf("Tüm bağlantı tipleriyle gönderim başarısız!\n");
+        return -1;
+    }
+    printf("Rapor cevabı şifreli olarak gönderildi ve işlem tamamlandı.\n");
+    return 0;
+}
+

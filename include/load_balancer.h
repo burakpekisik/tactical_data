@@ -14,6 +14,7 @@
 #include <time.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "encrypted_client.h"
 
 /**
  * @brief Maksimum sunucu sayısı
@@ -241,5 +242,8 @@ server_info_t* lb_get_assigned_server(lb_config_t *config);
  * @return True: session aktif, False: session yok
  */
 bool lb_is_session_active(lb_config_t *config);
+
+char* client_login_to_server_with_lb(lb_config_t *lb_config, const char* username, const char* password);
+client_connection_t* connect_to_server_with_lb(lb_config_t *lb_config);
 
 #endif // LOAD_BALANCER_H

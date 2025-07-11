@@ -2,7 +2,8 @@
 #define _JSON_UTILS_H_
 
 #include <cjson/cJSON.h>
-#include "database.h"  // Database fonksiyonları için
+#include "database.h"
+
 
 typedef struct {
     int report_id;
@@ -22,5 +23,7 @@ void add_indent(char* result, int depth, size_t max_size);
 char* get_current_time(void);
 void free_tactical_data(tactical_data_t* data);
 cJSON* parse_tactical_data_to_json(const tactical_data_t* data);
+char* read_file_content(const char* filename, size_t* file_size);
+int send_json_file(client_connection_t* conn, const char* filename, int encrypt, const char* jwt_token);
 
 #endif // _JSON_UTILS_H_

@@ -120,7 +120,8 @@ static pthread_cond_t queue_condition = PTHREAD_COND_INITIALIZER;
  * @endcode
  */
 // Thread bilgilerini ekle
-void add_thread_info(pthread_t thread_id, int client_socket, const char* client_ip, int client_port) {
+// creator_func parametresi eklendi
+void add_thread_info(pthread_t thread_id, int client_socket, const char* client_ip, int client_port, const char* creator_func) {
     pthread_mutex_lock(&thread_mutex);
     
     for (int i = 0; i < CONFIG_MAX_CLIENTS; i++) {
@@ -133,6 +134,10 @@ void add_thread_info(pthread_t thread_id, int client_socket, const char* client_
             active_threads[i].is_active = 1;
             snprintf(active_threads[i].thread_name, CONFIG_MAX_THREAD_NAME, 
                     "client_%s_%d", client_ip, client_port);
+            if (creator_func)
+                strncpy(active_threads[i].creator_func, creator_func, sizeof(active_threads[i].creator_func)-1);
+            else
+                active_threads[i].creator_func[0] = '\0';
             thread_count++;
             break;
         }
@@ -440,6 +445,7 @@ void* thread_monitor(void* arg) {
     while (1) {
         sleep(CONFIG_THREAD_LOG_INTERVAL);
         log_thread_stats();
+        log_thread_functions();
     }
     return NULL;
 }
@@ -639,7 +645,7 @@ int process_queue(void) {
     }
     
     // Thread bilgilerini kaydet
-    add_thread_info(thread_id, client_socket, client_ip, ntohs(client_addr.sin_port));
+    add_thread_info(thread_id, client_socket, client_ip, ntohs(client_addr.sin_port), "handle_client");
     pthread_detach(thread_id);
     
     PRINTF_LOG("Queue'dan thread oluşturuldu (Thread ID: %lu)\n", thread_id);
@@ -789,4 +795,53 @@ void terminate_all_tcp_clients(void) {
     PRINTF_LOG("✓ Tüm TCP client bağlantıları sonlandırıldı\n");
     
     pthread_mutex_unlock(&thread_mutex);
+}
+
+/**
+ * @brief Aktif thread'lerin hangi fonksiyon tarafından başlatıldığını gösteren log fonksiyonu
+ * @ingroup thread_management
+ *
+ * Her aktif thread'in thread_name, socket, IP, port ve thread'i başlatan fonksiyonun adını gösterir.
+ * thread_info_t yapısına yeni bir "creator_func" alanı eklenmesi gerekir.
+ *
+ * @note Bu fonksiyon thread-safe'dir, mutex koruması altında çalışır.
+ * @warning creator_func alanı thread eklenirken doldurulmalıdır.
+ *
+ * Örnek çıktı:
+ * @code
+ * Aktif thread fonksiyonları:
+ *   - client_192.168.1.100_12345 (Socket: 8, IP: 192.168.1.100, Port: 12345) -> handle_client
+ *   - client_127.0.0.1_5555 (Socket: 10, IP: 127.0.0.1, Port: 5555) -> control_interface_thread
+ * @endcode
+ */
+void log_thread_functions(void) {
+    pthread_mutex_lock(&thread_mutex);
+    PRINTF_LOG("Aktif thread fonksiyonları:\n");
+    int found = 0;
+    for (int i = 0; i < CONFIG_MAX_CLIENTS; i++) {
+        if (active_threads[i].is_active) {
+            found = 1;
+            PRINTF_LOG("  - %s (Socket: %d, IP: %s, Port: %d) -> %s\n",
+                active_threads[i].thread_name,
+                active_threads[i].client_socket,
+                active_threads[i].client_ip,
+                active_threads[i].client_port,
+                active_threads[i].creator_func[0] ? active_threads[i].creator_func : "(bilinmiyor)");
+        }
+    }
+    if (!found) {
+        PRINTF_LOG("  Aktif thread yok\n");
+    }
+    pthread_mutex_unlock(&thread_mutex);
+}
+
+int is_duplicate_task(int client_socket, const char* creator_func) {
+    for (int i = 0; i < CONFIG_MAX_CLIENTS; i++) {
+        if (active_threads[i].is_active &&
+            active_threads[i].client_socket == client_socket &&
+            strcmp(active_threads[i].creator_func, creator_func) == 0) {
+            return 1;
+        }
+    }
+    return 0;
 }

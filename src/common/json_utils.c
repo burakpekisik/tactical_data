@@ -46,6 +46,8 @@
 #include "encrypted_client.h"
 #include "jwt.h"
 #include "admin_notify_manager.h"
+#include "fallback_manager.h"
+#include "protocol_manager.h"
 
 /**
  * @brief JSON içeriğini parse edip formatlanmış string'e dönüştürür
@@ -712,4 +714,97 @@ void* parse_json_by_type(const char* filename, const char* json_content, const c
         // Varsayılan olarak tactical_data_t parse edilir
         return parse_json_to_tactical_data(json_content, filename, user_id);
     }
+}
+
+/**
+ * @brief Dosya içeriğini belleğe okur
+ * @details Belirtilen dosyayı açar, boyutunu hesaplar ve tüm içeriğini
+ *          belleğe yükler. Bellek tahsisi otomatik olarak yapılır.
+ * @param filename Okunacak dosyanın adı/yolu
+ * @param file_size [OUT] Okunan dosyanın boyutu (byte cinsinden)
+ * @return char* Dosya içeriğini içeren bellek adresi (NULL: hata durumunda)
+ * @note Dönen bellek alanı çağıran tarafından free() ile serbest bırakılmalıdır
+ */
+char* read_file_content(const char* filename, size_t* file_size) {
+    FILE *file = fopen(filename, "r");
+    if (file == NULL) {
+        PRINTF_LOG("Dosya acilamadi: %s\n", filename);
+        return NULL;
+    }
+    
+    // Dosya boyutunu al
+    fseek(file, 0, SEEK_END);
+    *file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    
+    // Bellek tahsis et
+    char *content = malloc(*file_size + 1);
+    if (content == NULL) {
+        PRINTF_LOG("Bellek tahsis hatasi\n");
+        fclose(file);
+        return NULL;
+    }
+    
+    // Dosyayi oku
+    size_t bytes_read = fread(content, 1, *file_size, file);
+    content[bytes_read] = '\0';
+    fclose(file);
+    
+    return content;
+}
+
+/**
+ * @brief JSON dosyasını sunucuya gönderir
+ * @details Belirtilen JSON dosyasını okur ve protokol mesajı formatında
+ *          sunucuya gönderir. Şifreleme seçeneği mevcuttur.
+ * @param conn Aktif sunucu bağlantısı
+ * @param filename Gönderilecek JSON dosyasının adı/yolu
+ * @param encrypt Şifreleme durumu (1: şifreli, 0: normal)
+ * @return int İşlem sonucu (0: başarılı, -1: hata)
+ * @note Şifreli gönderim için ECDH anahtar değişiminin tamamlanmış olması gerekir
+ */
+int send_json_file(client_connection_t* conn, const char* filename, int encrypt, const char* jwt_token) {
+    size_t file_size;
+    char *content = read_file_content(filename, &file_size);
+    if (content == NULL) {
+        return -1;
+    }
+    PRINTF_LOG("Dosya okundu: %s (%zu byte)\n", filename, file_size);
+    char *protocol_message;
+    if (encrypt) {
+        PRINTF_LOG("Sifreleme islemi baslatiliyor...\n");
+        if (!conn->ecdh_initialized) {
+            PRINTF_LOG("ECDH başlatılmamış - şifreleme yapılamaz\n");
+            free(content);
+            return -1;
+        }
+        protocol_message = create_encrypted_protocol_message(filename, content, conn->ecdh_ctx.aes_key, jwt_token);
+    } else {
+        PRINTF_LOG("Normal gonderim hazırlaniyor...\n");
+        protocol_message = create_normal_protocol_message(filename, content, jwt_token);
+    }
+    if (protocol_message == NULL) {
+        free(content);
+        return -1;
+    }
+    PRINTF_LOG("Server'a gonderiliyor...\n");
+    int result = try_send_message_current_connection(conn, protocol_message);
+    if (result < 0 && encrypt) {
+        PRINTF_LOG("Mevcut bağlantı türü (%s) ile gönderim başarısız, UDP fallback deneniyor...\n", get_connection_type_name(conn->type));
+        result = send_json_file_udp_fallback(conn, filename, content, jwt_token);
+    }
+    if (result < 0 && encrypt) {
+        PRINTF_LOG("UDP fallback başarısız, P2P fallback deneniyor...\n");
+        result = send_json_file_p2p_fallback(conn, filename, content, jwt_token);
+    }
+    if (result < 0) {
+        PRINTF_LOG("Tüm fallback metodları başarısız\n");
+        free(content);
+        free(protocol_message);
+        return -1;
+    }
+    PRINTF_LOG("Basariyla gonderildi\n");
+    free(content);
+    free(protocol_message);
+    return 0;
 }

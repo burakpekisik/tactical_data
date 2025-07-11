@@ -13,11 +13,11 @@ LIBS = -lcjson -lsqlite3 -lcrypto -lssl -lpthread -largon2 -ljwt -lgcc_s
 # Source files
 SERVER_SOURCES = $(SRC_DIR)/server/server.c
 JSON_SERVER_SOURCES = $(SRC_DIR)/server/json_server.c $(SRC_DIR)/common/json_utils.c
-ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/server/report_query_handler.c $(SRC_DIR)/server/admin_notify_manager.c $(SRC_DIR)/server/admin_reply_manager.c $(SRC_DIR)/client/fallback_manager.c $(SRC_DIR)/client/protocol_manager.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/thread/thread_monitor.c $(SRC_DIR)/connection/connection_manager.c $(SRC_DIR)/connection/tcp_connection.c $(SRC_DIR)/connection/udp_connection.c $(SRC_DIR)/connection/p2p_connection.c $(SRC_DIR)/control/control_interface.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/db_test_utils.c $(SRC_DIR)/common/logger.c ${SRC_DIR}/argon/argon2.c $(SRC_DIR)/jwt/jwt_database_manager.c ${SRC_DIR}/jwt/jwt_manager.c ${SRC_DIR}/large_response/large_response.c ${SRC_DIR}/backup/backup_manager.c ${SRC_DIR}/queue/queue_manager.c ${SRC_DIR}/common/protocol_parser.c ${SRC_DIR}/handler/handle_manager.c $(SRC_DIR)/messaging/chat_protocol.c $(SRC_DIR)/messaging/chat_utils.c $(SRC_DIR)/messaging/chat_handler.c ${SRC_DIR}/messaging/broadcast_manager.c ${SRC_DIR}/server/tactical_data_handler.c ${SRC_DIR}/location/location_handler.c ${SRC_DIR}/handler/client_notify_threads.c ${SRC_DIR}/user/info_handler.c
+ENCRYPTED_SERVER_SOURCES = $(SRC_DIR)/server/encrypted_server.c $(SRC_DIR)/server/report_query_handler.c $(SRC_DIR)/server/admin_notify_manager.c $(SRC_DIR)/server/admin_reply_manager.c $(SRC_DIR)/client/fallback_manager.c $(SRC_DIR)/client/protocol_manager.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/thread/thread_monitor.c $(SRC_DIR)/connection/connection_manager.c $(SRC_DIR)/connection/tcp_connection.c $(SRC_DIR)/connection/udp_connection.c $(SRC_DIR)/connection/p2p_connection.c $(SRC_DIR)/control/control_interface.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/database/db_test_utils.c $(SRC_DIR)/common/logger.c ${SRC_DIR}/argon/argon2.c $(SRC_DIR)/jwt/jwt_database_manager.c ${SRC_DIR}/jwt/jwt_manager.c ${SRC_DIR}/large_response/large_response.c ${SRC_DIR}/backup/backup_manager.c ${SRC_DIR}/queue/queue_manager.c ${SRC_DIR}/common/protocol_parser.c ${SRC_DIR}/handler/handle_manager.c $(SRC_DIR)/messaging/chat_protocol.c $(SRC_DIR)/messaging/chat_utils.c $(SRC_DIR)/messaging/chat_handler.c ${SRC_DIR}/messaging/broadcast_manager.c ${SRC_DIR}/server/tactical_data_handler.c ${SRC_DIR}/location/location_handler.c ${SRC_DIR}/handler/client_notify_threads.c ${SRC_DIR}/user/info_handler.c ${SRC_DIR}/user/login_handler.c ${SRC_DIR}/handler/pools/chat_pool_manager.c ${SRC_DIR}/handler/pools/query_pool_manager.c
 
 CLIENT_SOURCES = $(SRC_DIR)/client/client.c
 JSON_CLIENT_SOURCES = $(SRC_DIR)/client/json_client.c $(SRC_DIR)/common/json_utils.c
-ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/client/fallback_manager.c $(SRC_DIR)/client/protocol_manager.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/common/logger.c $(SRC_DIR)/argon/argon2.c $(SRC_DIR)/user/login_user_client.c ${SRC_DIR}/reports/get_report_list.c $(SRC_DIR)/common/load_balancer.c $(SRC_DIR)/messaging/chat_manager.c $(SRC_DIR)/messaging/chat_protocol.c $(SRC_DIR)/messaging/chat_utils.c $(SRC_DIR)/messaging/chat_listener.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/jwt/jwt_manager.c $(SRC_DIR)/jwt/jwt_database_manager.c $(SRC_DIR)/common/protocol_parser.c ${SRC_DIR}/location/location_manager.c ${SRC_DIR}/large_response/large_response.c ${SRC_DIR}/user/info_manager.c
+ENCRYPTED_CLIENT_SOURCES = $(SRC_DIR)/client/encrypted_client.c $(SRC_DIR)/client/fallback_manager.c $(SRC_DIR)/client/protocol_manager.c $(SRC_DIR)/common/json_utils.c $(SRC_DIR)/common/crypto_utils.c $(SRC_DIR)/crypto/aes.c $(SRC_DIR)/dynamic_key/ecdh.c $(SRC_DIR)/common/logger.c $(SRC_DIR)/argon/argon2.c $(SRC_DIR)/user/login_user_client.c ${SRC_DIR}/reports/get_report_list.c $(SRC_DIR)/common/load_balancer.c $(SRC_DIR)/messaging/chat_manager.c $(SRC_DIR)/messaging/chat_protocol.c $(SRC_DIR)/messaging/chat_utils.c $(SRC_DIR)/messaging/chat_listener.c $(SRC_DIR)/database/create.c $(SRC_DIR)/database/select.c $(SRC_DIR)/database/insert.c $(SRC_DIR)/database/update.c $(SRC_DIR)/database/delete.c $(SRC_DIR)/jwt/jwt_manager.c $(SRC_DIR)/jwt/jwt_database_manager.c $(SRC_DIR)/common/protocol_parser.c ${SRC_DIR}/location/location_manager.c ${SRC_DIR}/large_response/large_response.c ${SRC_DIR}/user/info_manager.c $(SRC_DIR)/server/admin_reply_manager.c $(SRC_DIR)/server/listen_manager.c $(SRC_DIR)/server/report_query_manager.c $(SRC_DIR)/server/thread_manager.c
 
 PARSER_SOURCES = $(SRC_DIR)/common/json_parser.c
 
@@ -47,6 +47,11 @@ db-test-standalone:
 	$(SRC_DIR)/common/logger.c \
 	$(SRC_DIR)/argon/argon2.c \
 	$(SRC_DIR)/jwt/jwt_manager.c \
+	$(SRC_DIR)/client/fallback_manager.c \
+	$(SRC_DIR)/client/protocol_manager.c \
+	$(SRC_DIR)/common/crypto_utils.c \
+	$(SRC_DIR)/crypto/aes.c \
+	$(SRC_DIR)/dynamic_key/ecdh.c \
 	$(LIBS)
 
 db-test-operations:
@@ -61,6 +66,11 @@ db-test-operations:
 	$(SRC_DIR)/common/logger.c \
 	$(SRC_DIR)/argon/argon2.c \
 	$(SRC_DIR)/jwt/jwt_manager.c \
+	$(SRC_DIR)/client/fallback_manager.c \
+	$(SRC_DIR)/client/protocol_manager.c \
+	$(SRC_DIR)/common/crypto_utils.c \
+	$(SRC_DIR)/crypto/aes.c \
+	$(SRC_DIR)/dynamic_key/ecdh.c \
 	$(LIBS)
 
 db-tools: db-test-standalone db-test-operations
@@ -80,6 +90,11 @@ register-user:
 	$(SRC_DIR)/argon/argon2.c \
 	$(SRC_DIR)/common/json_utils.c \
 	$(SRC_DIR)/jwt/jwt_manager.c \
+	$(SRC_DIR)/client/fallback_manager.c \
+	$(SRC_DIR)/client/protocol_manager.c \
+	$(SRC_DIR)/common/crypto_utils.c \
+	$(SRC_DIR)/crypto/aes.c \
+	$(SRC_DIR)/dynamic_key/ecdh.c \
 	$(LIBS)
 
 # Login user tool
@@ -93,6 +108,11 @@ login-user:
 	$(SRC_DIR)/argon/argon2.c \
 	$(SRC_DIR)/common/json_utils.c \
 	$(SRC_DIR)/jwt/jwt_manager.c \
+	$(SRC_DIR)/client/fallback_manager.c \
+	$(SRC_DIR)/client/protocol_manager.c \
+	$(SRC_DIR)/common/crypto_utils.c \
+	$(SRC_DIR)/crypto/aes.c \
+	$(SRC_DIR)/dynamic_key/ecdh.c \
 	$(LIBS)
 
 # Run targets

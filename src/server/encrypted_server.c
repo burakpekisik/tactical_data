@@ -62,6 +62,7 @@
 #include "queue_manager.h"
 #include "protocol_parser.h"
 #include "handle_manager.h"
+#include "pool_manager.h"
 
 // Backup kontrol değişkenleri
 volatile int backup_enabled = 1;
@@ -114,6 +115,9 @@ volatile int backup_period_seconds = 7200; // Varsayılan: 2 saat
 int main() {
     PRINTF_SERVER("Encrypted JSON Server - Sifreli dosya parse sunucusu\n");
     PRINTF_SERVER("===================================================\n");
+
+    init_chat_pools();
+    init_query_pools();
     
     // Logger'ı başlat (önce logger başlatılmalı)
     if (logger_init(LOGGER_SERVER, LOG_DEBUG) != 0) {
@@ -336,8 +340,13 @@ int main() {
             PRINTF_LOG("=== SERVER STATUS ===\n");
             list_active_connections();
             log_thread_stats();
-            PRINTF_LOG("Server aktif, bağlantı bekleniyor... (PID: %d)\n", getpid());
+            PRINTF_LOG("Server aktif, bağlantı bekleniyor... (PID: %d)\n\n", getpid());
+
+            PRINTF_LOG("=== THREAD FUNCTIONS ===\n");
+            log_thread_functions();
+
             fflush(stdout);
+
         }
     }
     

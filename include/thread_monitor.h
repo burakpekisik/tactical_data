@@ -15,6 +15,7 @@ typedef struct {
     int client_port;
     int is_active;
     char thread_name[CONFIG_MAX_THREAD_NAME];
+    char creator_func[64]; // Thread'i başlatan fonksiyonun adı
 } thread_info_t;
 
 // Queue için client bilgileri
@@ -26,7 +27,8 @@ typedef struct queue_client {
 } queue_client_t;
 
 void log_thread_stats(void);
-void add_thread_info(pthread_t thread_id, int client_socket, const char* client_ip, int client_port);
+void log_thread_functions(void);
+void add_thread_info(pthread_t thread_id, int client_socket, const char* client_ip, int client_port, const char* creator_func);
 void remove_thread_info(pthread_t thread_id);
 void terminate_all_tcp_clients(void);
 void* thread_monitor(void* arg);
@@ -37,7 +39,7 @@ int get_healthcheck_count(void);
 void increment_udp_connection(void);
 void increment_total_connections(void);
 void init_thread_monitoring(void);
-void log_thread_stats(void);
+int is_duplicate_task(int client_socket, const char* creator_func);
 
 // Queue fonksiyonları
 void add_to_queue(int client_socket, struct sockaddr_in client_addr);

@@ -22,6 +22,8 @@
 #include <pthread.h>
 #include <math.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include "encrypted_client.h"
 
 // Hash fonksiyonu için basit string hash
 static uint32_t hash_string(const char *str) {
@@ -773,4 +775,226 @@ bool lb_is_session_active(lb_config_t *config) {
     
     return config->sticky_sessions && config->session_established && 
            config->assigned_server_index >= 0 && config->assigned_server_index < config->server_count;
+}
+
+/**
+ * @brief Load balancer kullanarak login işlemi yapar
+ * @details En iyi sunucuyu seçerek login isteği gönderir.
+ * @param lb_config Load balancer konfigürasyonu
+ * @param username Kullanıcı adı
+ * @param password Şifre
+ * @return char* JWT token (NULL: başarısız)
+ */
+char* client_login_to_server_with_lb(lb_config_t *lb_config, const char* username, const char* password) {
+    if (!lb_config || lb_config->server_count == 0) {
+        LOG_CLIENT_ERROR("Load balancer not configured for login");
+        return NULL;
+    }
+    
+    // En iyi sunucuyu seç
+    server_selection_result_t selection = lb_select_server(lb_config, "127.0.0.1");
+    if (!selection.server) {
+        LOG_CLIENT_ERROR("No server available for login");
+        return NULL;
+    }
+    
+    LOG_CLIENT_INFO("Login attempt to server: %s:%d", 
+                    selection.server->host, selection.server->tcp_port);
+    
+    struct timeval start_time, end_time;
+    gettimeofday(&start_time, NULL);
+    
+    // Geçici bağlantı kur (sadece login için)
+    int login_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (login_socket < 0) {
+        LOG_CLIENT_ERROR("Failed to create login socket");
+        return NULL;
+    }
+    
+    struct sockaddr_in server_addr = {0};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(selection.server->tcp_port);
+    
+    if (inet_pton(AF_INET, selection.server->host, &server_addr.sin_addr) <= 0) {
+        struct hostent *host_entry = gethostbyname(selection.server->host);
+        if (host_entry != NULL) {
+            server_addr.sin_addr = *((struct in_addr*)host_entry->h_addr_list[0]);
+        } else {
+            close(login_socket);
+            return NULL;
+        }
+    }
+    
+    if (connect(login_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        close(login_socket);
+        lb_update_server_stats(selection.server, 0, false);
+        LOG_CLIENT_ERROR("Failed to connect for login to %s:%d", 
+                        selection.server->host, selection.server->tcp_port);
+        return NULL;
+    }
+    
+    // Login mesajı gönder
+    char login_message[512];
+    snprintf(login_message, sizeof(login_message), "LOGIN:%s:%s", username, password);
+    
+    ssize_t sent = send(login_socket, login_message, strlen(login_message), 0);
+    if (sent <= 0) {
+        close(login_socket);
+        lb_update_server_stats(selection.server, 0, false);
+        LOG_CLIENT_ERROR("Failed to send login message to %s:%d", 
+                        selection.server->host, selection.server->tcp_port);
+        return NULL;
+    }
+    
+    // Recv timeout ayarla (5 saniye)
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    setsockopt(login_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    
+    // JWT yanıtını al
+    char response[2048] = {0};
+    ssize_t received = recv(login_socket, response, sizeof(response) - 1, 0);
+    close(login_socket);
+    
+    LOG_CLIENT_DEBUG("Login response received: %zd bytes, content: %.100s", received, received > 0 ? response : "");
+    
+    gettimeofday(&end_time, NULL);
+    double response_time = (end_time.tv_sec - start_time.tv_sec) * 1000.0 + 
+                          (end_time.tv_usec - start_time.tv_usec) / 1000.0;
+    
+    if (received > 0 && strncmp(response, "JWT:", 4) == 0) {
+        lb_update_server_stats(selection.server, response_time, true);
+        char *jwt_token = strdup(response + 4); // "JWT:" prefix'ini atla
+        LOG_CLIENT_INFO("Login successful to %s:%d (%.2f ms)", 
+                       selection.server->host, selection.server->tcp_port, response_time);
+        return jwt_token;
+    } else {
+        lb_update_server_stats(selection.server, response_time, false);
+        LOG_CLIENT_ERROR("Login failed to %s:%d", 
+                        selection.server->host, selection.server->tcp_port);
+        
+        // Failover login denemesi
+        for (int i = 0; i < lb_config->server_count; i++) {
+            if (i == selection.server_index) continue;
+            
+            server_info_t *fallback_server = &lb_config->servers[i];
+            if (fallback_server->status == SERVER_UNHEALTHY) continue;
+            
+            LOG_CLIENT_INFO("Trying login failover to: %s:%d", 
+                           fallback_server->host, fallback_server->tcp_port);
+            
+            // Failover login denemesi (basitleştirilmiş)
+            login_socket = socket(AF_INET, SOCK_STREAM, 0);
+            if (login_socket < 0) continue;
+            
+            server_addr.sin_port = htons(fallback_server->tcp_port);
+            if (inet_pton(AF_INET, fallback_server->host, &server_addr.sin_addr) <= 0) {
+                close(login_socket);
+                continue;
+            }
+            
+            if (connect(login_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+                close(login_socket);
+                continue;
+            }
+            
+            sent = send(login_socket, login_message, strlen(login_message), 0);
+            if (sent <= 0) {
+                close(login_socket);
+                continue;
+            }
+            
+            received = recv(login_socket, response, sizeof(response) - 1, 0);
+            close(login_socket);
+            
+            if (received > 0 && strncmp(response, "JWT:", 4) == 0) {
+                lb_update_server_stats(fallback_server, 0, true);
+                char *jwt_token = strdup(response + 4);
+                LOG_CLIENT_INFO("Failover login successful to %s:%d", 
+                               fallback_server->host, fallback_server->tcp_port);
+                return jwt_token;
+            }
+        }
+        
+        LOG_CLIENT_ERROR("All login attempts failed");
+        return NULL;
+    }
+}
+
+/**
+ * @brief Load balancer kullanarak en iyi sunucuya bağlantı kurar
+ * @details Load balancer algoritması ile en uygun sunucuyu seçer ve
+ *          bağlantı kurar. Başarısız olursa diğer sunucuları dener.
+ * @param lb_config Load balancer konfigürasyonu
+ * @return client_connection_t* Bağlantı yapısı (NULL: başarısız)
+ */
+client_connection_t* connect_to_server_with_lb(lb_config_t *lb_config) {
+    if (!lb_config || lb_config->server_count == 0) {
+        LOG_CLIENT_ERROR("Load balancer not configured");
+        return NULL;
+    }
+    
+    // En iyi sunucuyu seç
+    server_selection_result_t selection = lb_select_server(lb_config, "127.0.0.1");
+    if (!selection.server) {
+        LOG_CLIENT_ERROR("No server available from load balancer");
+        return NULL;
+    }
+    
+    LOG_CLIENT_INFO("Selected server: %s:%d (%s)", 
+                    selection.server->host, selection.server->tcp_port, selection.reason);
+    
+    struct timeval start_time, end_time;
+    gettimeofday(&start_time, NULL);
+    
+    // Seçilen sunucuya bağlan
+    client_connection_t* conn = connect_to_server(selection.server->host);
+    
+    gettimeofday(&end_time, NULL);
+    double response_time = (end_time.tv_sec - start_time.tv_sec) * 1000.0 + 
+                          (end_time.tv_usec - start_time.tv_usec) / 1000.0;
+    
+    if (conn) {
+        // Başarılı bağlantı istatistiklerini güncelle
+        lb_update_server_stats(selection.server, response_time, true);
+        LOG_CLIENT_INFO("Successfully connected to %s:%d (%.2f ms)", 
+                        selection.server->host, selection.server->tcp_port, response_time);
+        return conn;
+    } else {
+        // Başarısız bağlantı istatistiklerini güncelle
+        lb_update_server_stats(selection.server, response_time, false);
+        LOG_CLIENT_WARN("Failed to connect to %s:%d", 
+                          selection.server->host, selection.server->tcp_port);
+        
+        // Diğer sunucuları dene (failover)
+        for (int i = 0; i < lb_config->server_count; i++) {
+            if (i == selection.server_index) continue; // Zaten denendi
+            
+            server_info_t *fallback_server = &lb_config->servers[i];
+            if (fallback_server->status == SERVER_UNHEALTHY) continue;
+            
+            LOG_CLIENT_INFO("Trying failover server: %s:%d", 
+                           fallback_server->host, fallback_server->tcp_port);
+            
+            gettimeofday(&start_time, NULL);
+            conn = connect_to_server(fallback_server->host);
+            gettimeofday(&end_time, NULL);
+            
+            response_time = (end_time.tv_sec - start_time.tv_sec) * 1000.0 + 
+                           (end_time.tv_usec - start_time.tv_usec) / 1000.0;
+            
+            if (conn) {
+                lb_update_server_stats(fallback_server, response_time, true);
+                LOG_CLIENT_INFO("Failover successful to %s:%d (%.2f ms)", 
+                               fallback_server->host, fallback_server->tcp_port, response_time);
+                return conn;
+            } else {
+                lb_update_server_stats(fallback_server, response_time, false);
+            }
+        }
+        
+        LOG_CLIENT_ERROR("All servers failed, connection not possible");
+        return NULL;
+    }
 }

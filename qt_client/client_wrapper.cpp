@@ -1422,8 +1422,8 @@ void ClientWrapper::processEncryptedParts()
         // Hex veriyi al
         QByteArray hexData = incomingBuffer.mid(hexStart, plen);
         
-        qDebug() << "[DEBUG] ENCRYPTED_PART" << idx << "/" << total << "plen=" << plen << "alındı";
-        qDebug() << "[DEBUG] Hex data (ilk 32):" << hexData.left(32);
+        // qDebug() << "[DEBUG] ENCRYPTED_PART" << idx << "/" << total << "plen=" << plen << "alındı";
+        // qDebug() << "[DEBUG] Hex data (ilk 32):" << hexData.left(32);
         
         // İlk parça mı?
         if (!isProcessingParts) {
@@ -1508,7 +1508,7 @@ void ClientWrapper::processEncryptedResponse()
                 QByteArray plainJson = decryptAes256Cbc(enc, QByteArray(reinterpret_cast<const char*>(aesKey), 32), iv);
                 if (!plainJson.isEmpty()) {
                     qDebug() << "[DEBUG] Decrypt başarılı, JSON size:" << plainJson.size();
-                    qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
+                    // qDebug() << "[DEBUG] Full JSON:" << QString(plainJson);
                     QJsonDocument doc = QJsonDocument::fromJson(plainJson);
                     if (doc.isObject()) {
                         QJsonObject obj = doc.object();

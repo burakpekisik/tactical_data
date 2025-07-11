@@ -66,8 +66,14 @@ void send_large_encrypted_response(int client_socket, const char* hex_data) {
 // Tek parça veya parça parça ENCRYPTED yanıt gönderici
 char* send_or_format_large_encrypted_response(int client_socket, const char* plain_result, const uint8_t* session_key, const char* filename) {
     PRINTF_LOG("[SERVER][ENCRYPTED_RESP] send_or_format_large_encrypted_response çağrıldı");
-    PRINTF_LOG("[SERVER][ENCRYPTED_RESP] client_socket=%d, filename=%s", client_socket, filename);
-    PRINTF_LOG("[SERVER][ENCRYPTED_RESP] plain_result (ilk 256): %.256s", plain_result);
+    // PRINTF_LOG("[SERVER][ENCRYPTED_RESP] client_socket=%d, filename=%s", client_socket, filename);
+    // PRINTF_LOG("[SERVER][ENCRYPTED_RESP] plain_result (ilk 256): %.256s", plain_result);
+
+    if (!plain_result || !session_key || !filename) {
+        PRINTF_LOG("[SERVER][ENCRYPTED_RESP] HATA: plain_result, session_key veya filename NULL");
+        return strdup("HATA: Yanıt verisi eksik");
+    }
+
     uint8_t iv[CRYPTO_IV_SIZE];
     generate_random_iv(iv);
     PRINTF_LOG("[SERVER][ENCRYPTED_RESP] IV oluşturuldu");
@@ -102,7 +108,10 @@ char* send_or_format_large_encrypted_response(int client_socket, const char* pla
         PRINTF_LOG("[SERVER] ENCRYPTED yanıtı kısa, tek parça gönderilecek. Uzunluk: %zu\n", strlen(hex_data));
         char* result = malloc(total_size);
         snprintf(result, total_size, "ENCRYPTED:%s:%s", filename, hex_data);
-        PRINTF_LOG("[SERVER] ENCRYPTED yanıt: %s\n", result);
+        // PRINTF_LOG("[SERVER] ENCRYPTED yanıt: %s\n", result);
+
+        PRINTF_LOG("[SERVER] ENCRYPTED yanıtı tek parça olarak gönderiliyor, uzunluk: %zu", strlen(result));
+
         if (client_socket >= 0) {
             send(client_socket, result, strlen(result), 0);
             PRINTF_LOG("[SERVER] ENCRYPTED yanıtı tek parça olarak gönderildi (send)\n");

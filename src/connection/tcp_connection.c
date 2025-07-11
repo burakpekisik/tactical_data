@@ -196,7 +196,7 @@ void* tcp_server_thread(void* arg) {
             tcp_update_stats(manager, false);
         } else {
             // Thread bilgisini monitor sistemine ekle
-            add_thread_info(client_thread, client_socket, client_ip, client_port);
+            add_thread_info(client_thread, client_socket, client_ip, client_port, "handle_client");
             pthread_detach(client_thread);
             PRINTF_LOG("TCP Thread added to monitor (ID: %lu, Socket: %d)\n", 
                    (unsigned long)client_thread, client_socket);

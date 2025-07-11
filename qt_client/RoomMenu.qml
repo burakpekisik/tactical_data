@@ -194,7 +194,7 @@ Popup {
                             Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: "#eee" }
                             Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: "#eee" }
                             Text {
-                                text: roomMenu.roomList[index].privilege == 1 ? "👑 Sadece Adminler" : "🌍 Herkes"
+                                text: roomMenu.roomList[index].privilege == 1 ? "Sadece Adminler" : "🌍 Herkes"
                                 color: roomMenu.roomList[index].privilege == 1 ? "#e67e22" : "#2980b9"
                                 font.pointSize: 13
                                 anchors.centerIn: parent
@@ -238,7 +238,10 @@ Popup {
                                 }
                                 hoverEnabled: true
                                 opacity: enabled ? 1.0 : 0.5
-                                enabled: (roomMenu.roomList[index].current !== undefined && roomMenu.roomList[index].max !== undefined && roomMenu.roomList[index].current < roomMenu.roomList[index].max) && (roomMenu.roomList[index].privilege === 0 || roomMenu.userPrivilege === 1)
+                                enabled: (function() {
+                                    console.log('[QML][RoomMenu] userPrivilege:', roomMenu.userPrivilege, 'room privilege:', roomMenu.roomList[index].privilege, 'current:', roomMenu.roomList[index].current, 'max:', roomMenu.roomList[index].max);
+                                    return (roomMenu.roomList[index].current !== undefined && roomMenu.roomList[index].max !== undefined && roomMenu.roomList[index].current < roomMenu.roomList[index].max) && (roomMenu.roomList[index].privilege === 0 || roomMenu.userPrivilege === 1 || roomMenu.roomList[index].privilege === roomMenu.userPrivilege);
+                                })()
                                 onClicked: roomMenu.joinRoom(roomMenu.roomList[index].id)
                             }
                         }

@@ -49,6 +49,8 @@
 #include "config.h"
 #include "crypto_utils.h"
 #include "logger.h"
+#include "thread_monitor.h"
+
 
 /// @brief TCP bağlantı yöneticisi - global context
 static connection_manager_t tcp_manager;
@@ -669,4 +671,69 @@ void cleanup_ecdh_for_connection(connection_manager_t* manager) {
         manager->ecdh_initialized = false;
         PRINTF_LOG("ECDH %s için temizlendi\n", manager->name);
     }
+}
+
+// ECDH anahtar değişimi ve AES anahtarı oluşturma handler'ı
+// Başarıda 0, hata durumunda -1 döner
+int handle_ecdh_key_exchange(int client_socket, pthread_t current_thread, connection_manager_t* client_manager, uint8_t* client_public_key, char* buffer, ssize_t bytes_received) {
+    memset(client_manager, 0, sizeof(connection_manager_t));
+    snprintf(client_manager->name, sizeof(client_manager->name), "Client-%d", client_socket);
+    if (!init_ecdh_for_connection(client_manager)) {
+        PRINTF_LOG("ECDH başlatılamadı (Thread: %lu)\n", current_thread);
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return -1;
+    }
+    PRINTF_LOG("Client public key bekleniyor...\n");
+    ssize_t received = 0;
+    if (bytes_received > 0) {
+        size_t to_copy = (bytes_received > ECC_PUB_KEY_SIZE) ? ECC_PUB_KEY_SIZE : bytes_received;
+        memcpy(client_public_key, buffer, to_copy);
+        received = to_copy;
+        while (received < ECC_PUB_KEY_SIZE) {
+            ssize_t r = recv(client_socket, client_public_key + received, ECC_PUB_KEY_SIZE - received, 0);
+            if (r <= 0) break;
+            received += r;
+        }
+    } else {
+        received = recv(client_socket, client_public_key, ECC_PUB_KEY_SIZE, 0);
+    }
+    PRINTF_LOG("Client public key alındı, received=%zd\n", received);
+    if (received != ECC_PUB_KEY_SIZE) {
+        perror("Server public key recv hatası");
+        PRINTF_LOG("Client public key alınamadı, received=%zd\n", received);
+        cleanup_ecdh_for_connection(client_manager);
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return -1;
+    }
+    PRINTF_LOG("Server public key gönderiliyor...\n");
+    ssize_t sent = send(client_socket, client_manager->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
+    PRINTF_LOG("Server public key gönderildi, sent=%zd\n", sent);
+    if (sent != ECC_PUB_KEY_SIZE) {
+        PRINTF_LOG("Public key gönderilemedi (Thread: %lu)\n", current_thread);
+        cleanup_ecdh_for_connection(client_manager);
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return -1;
+    }
+    // Shared secret hesapla
+    if (!ecdh_compute_shared_secret(&client_manager->ecdh_ctx, client_public_key)) {
+        PRINTF_LOG("Shared secret hesaplanamadı (Thread: %lu)\n", current_thread);
+        cleanup_ecdh_for_connection(client_manager);
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return -1;
+    }
+    // AES anahtarını türet
+    if (!ecdh_derive_aes_key(&client_manager->ecdh_ctx)) {
+        PRINTF_LOG("AES anahtarı türetilemedi (Thread: %lu)\n", current_thread);
+        cleanup_ecdh_for_connection(client_manager);
+        close(client_socket);
+        remove_thread_info(current_thread);
+        return -1;
+    }
+    PRINTF_LOG("✓ ECDH anahtar değişimi tamamlandı (Thread: %lu)\n", current_thread);
+    PRINTF_LOG("✓ AES256 oturum anahtarı hazır\n", current_thread);
+    return 0;
 }

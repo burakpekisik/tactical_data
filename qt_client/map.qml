@@ -891,9 +891,31 @@ Rectangle {
         text: "Odalar"
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.topMargin: 12
-        anchors.rightMargin: 12
+        anchors.topMargin: 16
+        anchors.rightMargin: 80 // Zoom kontrolleriyle çakışmasın diye sağdan daha fazla boşluk
         z: 100
+        width: 100
+        height: 38
+        font.pixelSize: 15
+        font.bold: true
+        background: Rectangle {
+            color: "#1976D2"
+            radius: 7
+            border.color: "#0D47A1"
+            border.width: 2
+        }
+        contentItem: Text {
+            text: openRoomMenuButton.text
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenterOffset: -2 // Hafif yukarı kaydır
+            color: "white"
+            font.pixelSize: 15
+            font.bold: true
+        }
+        hoverEnabled: true
+        opacity: 0.96
+        layer.enabled: false
         onClicked: {
             if (!roomMenu) {
                 console.log("[QML] RoomMenu component bulunamadı!");
@@ -909,7 +931,7 @@ Rectangle {
         id: roomMenu
         anchors.centerIn: parent
         roomList: mainWindow.roomList
-        userPrivilege: 0 // Gerekirse C++'tan veya üst QML'den set edilebilir
+        userPrivilege: mainWindow.userPrivilege
         onRoomJoined: function(roomId) {
             console.log("Odaya katılındı, ID:", roomId);
             var roomInfo = null;

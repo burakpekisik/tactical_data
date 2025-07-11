@@ -84,7 +84,7 @@ int parse_protocol_message(const char* message, char** command, char** filename,
 
 // ENCRYPTED mesajı için 4 alanı ayır
 int parse_encrypted_protocol_message(const char* message, char** command, char** filename, char** hex_data, char** jwt_token) {
-    printf("[PROTOCOL][DEBUG] parse_encrypted_protocol_message: raw message: '%s'\n", message);
+    // printf("[PROTOCOL][DEBUG] parse_encrypted_protocol_message: raw message: '%s'\n", message);
     // Trim baştaki ve sondaki boşluk, \n, \r karakterlerini kaldır
     size_t msglen = strlen(message);
     while (msglen > 0 && (message[msglen-1] == '\n' || message[msglen-1] == '\r' || message[msglen-1] == ' ')) msglen--;

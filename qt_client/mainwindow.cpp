@@ -1047,6 +1047,7 @@ void MainWindow::onReportsReceived(const QJsonArray& reports, int privilege)
 {
     qDebug() << "[DEBUG] onReportsReceived called, privilege:" << privilege << ", reports size:" << reports.size();
     userPrivilege = privilege;
+    emit userPrivilegeChanged();
     // Admin ise periyodik tüm kullanıcı konum sorgusunu başlat
     if (userPrivilege == 1) {
         startAllUsersLocationUpdates();
@@ -1313,15 +1314,58 @@ void MainWindow::onTestConnections()
 {
     fallbackLogEdit->clear();
     fallbackLogEdit->append("<b>[TEST]</b> Bağlantı testleri başlatılıyor...");
+    startConnectionTestThread();
+}
 
-    // Sadece host ve port ile thread başlat
-    auto* thread = new FallbackTestThread(serverAddressEdit->text(), serverPortSpin->value(), this);
-    connect(thread, &FallbackTestThread::fallbackTestResult, this, &MainWindow::onFallbackTestResult);
-    connect(thread, &FallbackTestThread::allTestsFinished, this, [this, thread]() {
+void MainWindow::startConnectionTestThread()
+{
+    // Önce eski thread'i temizle
+    cleanupConnectionTestThread();
+    // Yeni thread başlat
+    connectionTestThread = new FallbackTestThread(serverAddressEdit->text(), serverPortSpin->value(), this);
+    connect(connectionTestThread, &FallbackTestThread::fallbackTestResult, this, &MainWindow::onConnectionTestFinished);
+    connect(connectionTestThread, &FallbackTestThread::allTestsFinished, this, [this]() {
         fallbackLogEdit->append("<b>[TEST]</b> Tüm bağlantı testleri tamamlandı.");
-        thread->deleteLater();
+        cleanupConnectionTestThread();
     });
-    thread->start();
+    connectionTestThread->start();
+}
+
+void MainWindow::onConnectionTestFinished(const QString& connectionType, bool success, const QString& message)
+{
+    // Eski onFallbackTestResult ile aynı davranış
+    QString colorStyle;
+    QString prefix;
+    if (connectionType == "INFO") {
+        colorStyle = "color: blue; font-weight: bold;";
+        prefix = "[BİLGİ]";
+    } else if (success) {
+        colorStyle = "color: green; font-weight: bold;";
+        prefix = QString("[%1 ✓]").arg(connectionType);
+        updateConnectionStatus(connectionType, true, "Test başarılı");
+    } else {
+        colorStyle = "color: red; font-weight: bold;";
+        prefix = QString("[%1 ✗]").arg(connectionType);
+        updateConnectionStatus(connectionType, false, "Test başarısız");
+    }
+    QString logEntry = QString("<span style='%1'>%2</span> %3")
+                       .arg(colorStyle)
+                       .arg(prefix)
+                       .arg(message);
+    fallbackLogEdit->append(logEntry);
+    QTextCursor cursor = fallbackLogEdit->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    fallbackLogEdit->setTextCursor(cursor);
+}
+
+void MainWindow::cleanupConnectionTestThread()
+{
+    if (connectionTestThread) {
+        connectionTestThread->quit();
+        connectionTestThread->wait();
+        connectionTestThread->deleteLater();
+        connectionTestThread = nullptr;
+    }
 }
 
 /**
@@ -1431,12 +1475,9 @@ void MainWindow::onPeriodicConnectionCheck()
     if (!periodicCheckBox->isChecked()) {
         return; // Checkbox kapalıysa çalışma
     }
-    
     fallbackLogEdit->append("[AUTO] Otomatik bağlantı kontrolü başlatılıyor...");
-    
-    // PING komutu ile bağlantı testi yap
-    QString pingMessage = "PING";
-    clientWrapper->testAllConnectionTypes(pingMessage, false);
+    // Thread ile bağlantı testi başlat
+    startConnectionTestThread();
 }
 
 /**

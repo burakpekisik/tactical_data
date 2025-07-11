@@ -37,6 +37,9 @@
 #include "location_handler.h"
 #include "client_notify_threads.h"
 #include "info_handler.h"
+#include "login_user.h"
+#include "queue_manager.h"
+#include "pool_manager.h"
 
 // Global chat room state (only defined here)
 server_chat_room_t server_rooms[MAX_CHAT_ROOMS];
@@ -88,9 +91,21 @@ void handle_signal(int sig) {
 }
 
 char* handle_encrypted_request(const char* filename, const char* encrypted_content, const uint8_t* session_key, const char* jwt_token, int client_socket, const char* client_ip, int client_port) {
-    PRINTF_LOG("[DEBUG] handle_encrypted_request: filename=%s, client_socket=%d, client_ip=%s, client_port=%d, jwt_token=%s\n", filename, client_socket, client_ip ? client_ip : "(null)", client_port, jwt_token ? jwt_token : "(null)");
+    PRINTF_LOG("[DEBUG] handle_encrypted_request: filename=%s, client_socket=%d, client_ip=%s, client_port=%d\n", filename, client_socket, client_ip ? client_ip : "(null)", client_port);
+
+    if (!jwt_token) {
+        PRINTF_LOG("[ERROR] handle_encrypted_request: jwt_token NULL\n");
+        return strdup("{\"error\":\"JWT token NULL\"}");
+    }
+
     PRINTF_LOG("handle_encrypted_request çağrıldı\n");
-    PRINTF_LOG("ENCRYPTED content: %s\n", encrypted_content);
+    // PRINTF_LOG("ENCRYPTED content: %s\n", encrypted_content);
+
+    if (session_key == NULL || encrypted_content == NULL) {
+        PRINTF_LOG("[ERROR] handle_encrypted_request: session_key veya encrypted_content NULL\n");
+        return strdup("{\"error\":\"Session key veya encrypted content NULL\"}");
+    }
+
     char* error_msg = NULL;
     char* decrypted_json = decrypt_protocol_payload(encrypted_content, session_key, &error_msg);
     if (decrypted_json == NULL) {
@@ -102,7 +117,7 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
             return fallback;
         }
     }
-    PRINTF_LOG("[DEBUG] Decrypted JSON: %s\n", decrypted_json);
+    // PRINTF_LOG("[DEBUG] Decrypted JSON: %s\n", decrypted_json);
 
     // --- CHAT ACTION ŞİFRELİ YANIT ---
     cJSON* root = cJSON_Parse(decrypted_json);
@@ -112,54 +127,102 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
     if (action_item && cJSON_IsString(action_item)) {
         const char* action = action_item->valuestring;
         PRINTF_LOG("[CHAT] handle_encrypted_request: action=%s\n", action);
+        pool_result_t result;
+        pthread_mutex_init(&result.mutex, NULL);
+        pthread_cond_init(&result.cond, NULL);
+        result.result = NULL;
+        result.ready = 0;
         if (strcmp(action, "chat_create_room") == 0) {
             PRINTF_LOG("[CHAT] handle_encrypted_request: chat_create_room çağrılıyor\n");
-            char* result = handle_chat_create_room(decrypted_json, jwt_token);
-            free(decrypted_json);
-            cJSON_Delete(root);
-            char* encrypted_result = encrypt_and_format_response(result, session_key, "chat_create_room");
-            free(result);
-            return encrypted_result;
+            struct { char* decrypted_json; const char* jwt_token; pool_result_t* result; const uint8_t* session_key; } *params = malloc(sizeof(*params));
+            params->decrypted_json = strdup(decrypted_json);
+            params->jwt_token = jwt_token;
+            params->result = &result;
+            params->session_key = session_key;
+            thread_pool_submit(&chat_create_room_pool, chat_create_room_task, params);
+            pthread_mutex_lock(&result.mutex);
+            while (!result.ready) pthread_cond_wait(&result.cond, &result.mutex);
+            pthread_mutex_unlock(&result.mutex);
+            pthread_mutex_destroy(&result.mutex);
+            pthread_cond_destroy(&result.cond);
+            free(decrypted_json); cJSON_Delete(root);
+            return result.result;
         } else if (strcmp(action, "chat_list_rooms") == 0) {
             PRINTF_LOG("[CHAT] handle_encrypted_request: chat_list_rooms çağrılıyor\n");
-            char* result = handle_chat_list_rooms(decrypted_json, jwt_token);
-            free(decrypted_json);
-            cJSON_Delete(root);
-            char* encrypted_result = encrypt_and_format_response(result, session_key, "chat_list_rooms");
-            free(result);
-            return encrypted_result;
+            struct { char* decrypted_json; const char* jwt_token; pool_result_t* result; const uint8_t* session_key; } *params = malloc(sizeof(*params));
+            params->decrypted_json = strdup(decrypted_json);
+            params->jwt_token = jwt_token;
+            params->result = &result;
+            params->session_key = session_key;
+            thread_pool_submit(&chat_list_rooms_pool, chat_list_rooms_task, params);
+            pthread_mutex_lock(&result.mutex);
+            while (!result.ready) pthread_cond_wait(&result.cond, &result.mutex);
+            pthread_mutex_unlock(&result.mutex);
+            pthread_mutex_destroy(&result.mutex);
+            pthread_cond_destroy(&result.cond);
+            free(decrypted_json); cJSON_Delete(root);
+            return result.result;
         } else if (strcmp(action, "chat_join_room") == 0) {
             PRINTF_LOG("[CHAT] handle_encrypted_request: chat_join_room çağrılıyor\n");
-            char* result = handle_chat_join_room(decrypted_json, jwt_token, client_socket);
-            free(decrypted_json);
-            cJSON_Delete(root);
-            char* encrypted_result = encrypt_and_format_response(result, session_key, "chat_join_room");
-            free(result);
-            return encrypted_result;
+            struct { char* decrypted_json; const char* jwt_token; int client_socket; pool_result_t* result; const uint8_t* session_key; } *params = malloc(sizeof(*params));
+            params->decrypted_json = strdup(decrypted_json);
+            params->jwt_token = jwt_token;
+            params->client_socket = client_socket;
+            params->result = &result;
+            params->session_key = session_key;
+            thread_pool_submit(&chat_join_room_pool, chat_join_room_task, params);
+            pthread_mutex_lock(&result.mutex);
+            while (!result.ready) pthread_cond_wait(&result.cond, &result.mutex);
+            pthread_mutex_unlock(&result.mutex);
+            pthread_mutex_destroy(&result.mutex);
+            pthread_cond_destroy(&result.cond);
+            free(decrypted_json); cJSON_Delete(root);
+            return result.result;
         } else if (strcmp(action, "chat_get_messages") == 0) {
             PRINTF_LOG("[CHAT] handle_encrypted_request: chat_get_messages çağrılıyor\n");
-            char* result = handle_chat_get_messages(decrypted_json);
-            free(decrypted_json);
-            cJSON_Delete(root);
-            char* encrypted_result = encrypt_and_format_response(result, session_key, "chat_get_messages");
-            free(result);
-            return encrypted_result;
+            struct { char* decrypted_json; pool_result_t* result; const uint8_t* session_key; } *params = malloc(sizeof(*params));
+            params->decrypted_json = strdup(decrypted_json);
+            params->result = &result;
+            params->session_key = session_key;
+            thread_pool_submit(&chat_get_messages_pool, chat_get_messages_task, params);
+            pthread_mutex_lock(&result.mutex);
+            while (!result.ready) pthread_cond_wait(&result.cond, &result.mutex);
+            pthread_mutex_unlock(&result.mutex);
+            pthread_mutex_destroy(&result.mutex);
+            pthread_cond_destroy(&result.cond);
+            free(decrypted_json); cJSON_Delete(root);
+            return result.result;
         } else if (strcmp(action, "chat_send_message") == 0) {
             PRINTF_LOG("[CHAT] handle_encrypted_request: chat_send_message çağrılıyor\n");
-            char* result = handle_chat_send_message(decrypted_json, jwt_token, client_socket);
-            free(decrypted_json);
-            cJSON_Delete(root);
-            char* encrypted_result = encrypt_and_format_response(result, session_key, "chat_send_message");
-            free(result);
-            return encrypted_result;
+            struct { char* decrypted_json; const char* jwt_token; int client_socket; pool_result_t* result; const uint8_t* session_key; } *params = malloc(sizeof(*params));
+            params->decrypted_json = strdup(decrypted_json);
+            params->jwt_token = jwt_token;
+            params->client_socket = client_socket;
+            params->result = &result;
+            params->session_key = session_key;
+            thread_pool_submit(&chat_send_message_pool, chat_send_message_task, params);
+            pthread_mutex_lock(&result.mutex);
+            while (!result.ready) pthread_cond_wait(&result.cond, &result.mutex);
+            pthread_mutex_unlock(&result.mutex);
+            pthread_mutex_destroy(&result.mutex);
+            pthread_cond_destroy(&result.cond);
+            free(decrypted_json); cJSON_Delete(root);
+            return result.result;
         } else if (strcmp(action, "chat_leave_room") == 0) {
             PRINTF_LOG("[CHAT] handle_encrypted_request: chat_leave_room çağrılıyor\n");
-            char* result = handle_chat_leave_room(decrypted_json, client_socket);
-            free(decrypted_json);
-            cJSON_Delete(root);
-            char* encrypted_result = encrypt_and_format_response(result, session_key, "chat_leave_room");
-            free(result);
-            return encrypted_result;
+            struct { char* decrypted_json; int client_socket; pool_result_t* result; const uint8_t* session_key; } *params = malloc(sizeof(*params));
+            params->decrypted_json = strdup(decrypted_json);
+            params->client_socket = client_socket;
+            params->result = &result;
+            params->session_key = session_key;
+            thread_pool_submit(&chat_leave_room_pool, chat_leave_room_task, params);
+            pthread_mutex_lock(&result.mutex);
+            while (!result.ready) pthread_cond_wait(&result.cond, &result.mutex);
+            pthread_mutex_unlock(&result.mutex);
+            pthread_mutex_destroy(&result.mutex);
+            pthread_cond_destroy(&result.cond);
+            free(decrypted_json); cJSON_Delete(root);
+            return result.result;
         } else {
             PRINTF_LOG("[CHAT] handle_encrypted_request: Bilinmeyen action: %s\n", action);
             // Bilinmeyen action için hata dön
@@ -200,7 +263,12 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
 
     // Eğer dosya adı REPORT_QUERY, REPLY_QUERY veya QUERY_MY_REPLIES ise, rapor sorgulama işlemi yap
     if (strcmp(filename, "REPORT_QUERY") == 0 || strcmp(filename, "REPLY_QUERY") == 0 || strcmp(filename, "QUERY_MY_REPLIES") == 0 || strcmp(filename, "QUERY_REPLIES_ONE_REPORT") == 0) {
-        // cJSON* root = cJSON_Parse(decrypted_json);
+        pool_result_t result;
+        pthread_mutex_init(&result.mutex, NULL);
+        pthread_cond_init(&result.cond, NULL);
+        result.result = NULL;
+        result.ready = 0;
+
         char* jwt_from_json = NULL;
         if (root) {
             cJSON* jwt_item = cJSON_GetObjectItem(root, "jwt");
@@ -208,44 +276,55 @@ char* handle_encrypted_request(const char* filename, const char* encrypted_conte
                 jwt_from_json = jwt_item->valuestring;
             }
         }
-        char* plain_result = malloc(65536);
+
         if (strcmp(filename, "REPORT_QUERY") == 0) {
-            if (jwt_from_json) {
-                handle_report_query(jwt_from_json, plain_result, 65536);
-                PRINTF_LOG("[SERVER][ENCRYPTED] REPORT_QUERY işlendi, yanıt uzunluğu: %zu\n", strlen(plain_result));
-            } else {
-                snprintf(plain_result, 65536, "{\"error\":\"JWT bulunamadı\"}");
-            }
+            struct { char* jwt_token; char* plain_result; size_t result_size; pool_result_t* result; const uint8_t* session_key; int client_socket; } *params = malloc(sizeof(*params));
+            params->jwt_token = jwt_from_json ? strdup(jwt_from_json) : NULL;
+            params->plain_result = malloc(65536);
+            params->result_size = 65536;
+            params->result = &result;
+            params->session_key = session_key;
+            params->client_socket = client_socket;
+            thread_pool_submit(&report_query_pool, report_query_task, params);
         } else if (strcmp(filename, "REPLY_QUERY") == 0) {
-            if (jwt_from_json) {
-                handle_reply_query(jwt_from_json, plain_result, 65536);
-                PRINTF_LOG("[SERVER][ENCRYPTED] REPLY_QUERY işlendi, yanıt uzunluğu: %zu\n", strlen(plain_result));
-                PRINTF_LOG("[SERVER][ENCRYPTED] REPLY_QUERY sonucu: %s\n", plain_result);
-            } else {
-                snprintf(plain_result, 65536, "{\"error\":\"JWT bulunamadı\"}");
-            }
+            struct { char* jwt_token; char* plain_result; size_t result_size; pool_result_t* result; const uint8_t* session_key; int client_socket; } *params = malloc(sizeof(*params));
+            params->jwt_token = jwt_from_json ? strdup(jwt_from_json) : NULL;
+            params->plain_result = malloc(65536);
+            params->result_size = 65536;
+            params->result = &result;
+            params->session_key = session_key;
+            params->client_socket = client_socket;
+            thread_pool_submit(&reply_query_pool, reply_query_task, params);
         } else if (strcmp(filename, "QUERY_MY_REPLIES") == 0) {
-            if (jwt_from_json) {
-                handle_query_my_replies(jwt_from_json, plain_result, 65536);
-                PRINTF_LOG("[SERVER][ENCRYPTED] QUERY_MY_REPLIES işlendi, yanıt uzunluğu: %zu\n", strlen(plain_result));
-            } else {
-                snprintf(plain_result, 65536, "{\"error\":\"JWT bulunamadı\"}");
-            }
+            struct { char* jwt_token; char* plain_result; size_t result_size; pool_result_t* result; const uint8_t* session_key; int client_socket; } *params = malloc(sizeof(*params));
+            params->jwt_token = jwt_from_json ? strdup(jwt_from_json) : NULL;
+            params->plain_result = malloc(65536);
+            params->result_size = 65536;
+            params->result = &result;
+            params->session_key = session_key;
+            params->client_socket = client_socket;
+            thread_pool_submit(&query_my_replies_pool, query_my_replies_task, params);
         } else if (strcmp(filename, "QUERY_REPLIES_ONE_REPORT") == 0) {
-            if (jwt_from_json) {
-                handle_query_replies_to_one_report(jwt_from_json, root, plain_result, 65536);
-                PRINTF_LOG("[SERVER][ENCRYPTED] QUERY_REPLIES_ONE_REPORT işlendi, yanıt uzunluğu: %zu\n", strlen(plain_result));
-            } else {
-                snprintf(plain_result, 65536, "{\"error\":\"JWT bulunamadı\"}");
-            }
-        } else {
-            snprintf(plain_result, 65536, "{\"error\":\"Geçersiz işlem adı\"}");
+            struct { char* jwt_token; cJSON* root; char* plain_result; size_t result_size; pool_result_t* result; const uint8_t* session_key; int client_socket; } *params = malloc(sizeof(*params));
+            params->jwt_token = jwt_from_json ? strdup(jwt_from_json) : NULL;
+            params->root = root ? cJSON_Duplicate(root, 1) : NULL;
+            params->plain_result = malloc(65536);
+            params->result_size = 65536;
+            params->result = &result;
+            params->session_key = session_key;
+            params->client_socket = client_socket;
+            thread_pool_submit(&query_replies_one_report_pool, query_replies_one_report_task, params);
         }
+
+        pthread_mutex_lock(&result.mutex);
+        while (!result.ready) pthread_cond_wait(&result.cond, &result.mutex);
+        pthread_mutex_unlock(&result.mutex);
+        pthread_mutex_destroy(&result.mutex);
+        pthread_cond_destroy(&result.cond);
         if (root) cJSON_Delete(root);
-        send_or_format_large_encrypted_response(client_socket, plain_result, session_key, filename);
-        free(plain_result);
         free(decrypted_json);
-        return NULL; 
+        // result.result is already encrypted and sent in the task, or NULL if error
+        return result.result;
     }
 
     if(strcmp(filename, "INSERT_LOCATION") == 0 || strcmp(filename, "SELECT_LOCATION_OF_USER") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_BY_UNIT") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_ALL_USERS_BY_RADIUS") == 0 || strcmp(filename, "SELECT_LATEST_LOCATIONS_MY_UNIT") == 0) {
@@ -411,7 +490,7 @@ void* handle_client(void* arg) {
         PRINTF_LOG("İstek alındı (Thread: %lu, İstek #%d, Boyut: %zd bytes)\n", 
                current_thread, request_count, bytes_received);
         buffer[bytes_received] = '\0';
-        PRINTF_LOG("[DEBUG] handle_client: gelen mesaj: %s\n", buffer);
+        // PRINTF_LOG("[DEBUG] handle_client: gelen mesaj: %s\n", buffer);
 
         char* bufptr = buffer;
         while (*bufptr == '\n' || *bufptr == ' ' || *bufptr == '\t') bufptr++;
@@ -567,11 +646,11 @@ void* handle_client(void* arg) {
                 parse_error = 1;
             }
         }
-        PRINTF_LOG("[DEBUG] Protokol mesajı parse edildi: command=%s, filename=%s, content=%s, jwt_token=%s\n", 
-               command ? command : "(null)", 
-               filename ? filename : "(null)", 
-               content ? content : "(null)", 
-               jwt_token ? jwt_token : "(null)");
+        // PRINTF_LOG("[DEBUG] Protokol mesajı parse edildi: command=%s, filename=%s, content=%s, jwt_token=%s\n", 
+            //    command ? command : "(null)", 
+            //    filename ? filename : "(null)", 
+            //    content ? content : "(null)", 
+            //    jwt_token ? jwt_token : "(null)");
 
         // Eğer parse hatası olduysa veya command NULL ise güvenli şekilde devam etme
         if (parse_error || command == NULL || filename == NULL || content == NULL) {
@@ -670,8 +749,12 @@ void* handle_client(void* arg) {
                 if (tactical_data) free_tactical_data(tactical_data);
             }
         } else if (strcmp(command, "ENCRYPTED") == 0 && is_encrypted) {
-            PRINTF_LOG("Sifreli JSON parse ediliyor (Tactical Data format)...\n");
-            PRINTF_LOG("[DEBUG] ENCRYPTED content: %s\n", content);
+            PRINTF_LOG("Sifreli JSON parse ediliyor...\n");
+            // PRINTF_LOG("[DEBUG] ENCRYPTED content: %s\n", content);
+
+            PRINTF_LOG("[DEBUG] ENCRYPTED content uzunluğu: %zu\n", strlen(content));
+
+
             fflush(stdout);
             parsed_result = handle_encrypted_request(filename, content, get_session_key(&client_manager), jwt_token, client_socket, client_ip, 0);        
         } else {
@@ -739,101 +822,3 @@ char* encrypt_and_format_response(const char* plain_json, const uint8_t* session
     free(hex_data);
     return formatted;
 }
-
-// LOGIN isteği handler'ı
-void handle_login_request(const char* buffer, int client_socket, pthread_t current_thread) {
-    char username[128] = "", password[128] = "";
-    sscanf(buffer + 6, "%127[^:]:%127s", username, password);
-    char* jwt = login_user_with_argon2(username, password);
-    if (jwt) {
-        char response[2048];
-        snprintf(response, sizeof(response), "JWT:%s", jwt);
-        send(client_socket, response, strlen(response), 0);
-        // JWT'den privilege ve user_id çek
-        int privilege = 0;
-        int user_id = -1;
-        jwt_t *jwt_ptr = NULL;
-        if (jwt_decode(&jwt_ptr, jwt, (const unsigned char*)CONFIG_JWT_SECRET, strlen(CONFIG_JWT_SECRET)) == 0 && jwt_ptr) {
-            privilege = jwt_get_grant_int(jwt_ptr, "privilege");
-            const char* sub = jwt_get_grant(jwt_ptr, "sub");
-            if (sub) user_id = atoi(sub);
-            jwt_free(jwt_ptr);
-        }
-        admin_notify_manager_add_client(client_socket, privilege, username);
-        if (user_id > 0) {
-            admin_reply_manager_register_user(user_id, client_socket);
-        }
-        free(jwt);
-    } else {
-        char* fail = "FAIL";
-        send(client_socket, fail, strlen(fail), 0);
-    }
-    close(client_socket);
-    remove_thread_info(current_thread);
-}
-
-// ECDH anahtar değişimi ve AES anahtarı oluşturma handler'ı
-// Başarıda 0, hata durumunda -1 döner
-int handle_ecdh_key_exchange(int client_socket, pthread_t current_thread, connection_manager_t* client_manager, uint8_t* client_public_key, char* buffer, ssize_t bytes_received) {
-    memset(client_manager, 0, sizeof(connection_manager_t));
-    snprintf(client_manager->name, sizeof(client_manager->name), "Client-%d", client_socket);
-    if (!init_ecdh_for_connection(client_manager)) {
-        PRINTF_LOG("ECDH başlatılamadı (Thread: %lu)\n", current_thread);
-        close(client_socket);
-        remove_thread_info(current_thread);
-        return -1;
-    }
-    PRINTF_LOG("Client public key bekleniyor...\n");
-    ssize_t received = 0;
-    if (bytes_received > 0) {
-        size_t to_copy = (bytes_received > ECC_PUB_KEY_SIZE) ? ECC_PUB_KEY_SIZE : bytes_received;
-        memcpy(client_public_key, buffer, to_copy);
-        received = to_copy;
-        while (received < ECC_PUB_KEY_SIZE) {
-            ssize_t r = recv(client_socket, client_public_key + received, ECC_PUB_KEY_SIZE - received, 0);
-            if (r <= 0) break;
-            received += r;
-        }
-    } else {
-        received = recv(client_socket, client_public_key, ECC_PUB_KEY_SIZE, 0);
-    }
-    PRINTF_LOG("Client public key alındı, received=%zd\n", received);
-    if (received != ECC_PUB_KEY_SIZE) {
-        perror("Server public key recv hatası");
-        PRINTF_LOG("Client public key alınamadı, received=%zd\n", received);
-        cleanup_ecdh_for_connection(client_manager);
-        close(client_socket);
-        remove_thread_info(current_thread);
-        return -1;
-    }
-    PRINTF_LOG("Server public key gönderiliyor...\n");
-    ssize_t sent = send(client_socket, client_manager->ecdh_ctx.public_key, ECC_PUB_KEY_SIZE, 0);
-    PRINTF_LOG("Server public key gönderildi, sent=%zd\n", sent);
-    if (sent != ECC_PUB_KEY_SIZE) {
-        PRINTF_LOG("Public key gönderilemedi (Thread: %lu)\n", current_thread);
-        cleanup_ecdh_for_connection(client_manager);
-        close(client_socket);
-        remove_thread_info(current_thread);
-        return -1;
-    }
-    // Shared secret hesapla
-    if (!ecdh_compute_shared_secret(&client_manager->ecdh_ctx, client_public_key)) {
-        PRINTF_LOG("Shared secret hesaplanamadı (Thread: %lu)\n", current_thread);
-        cleanup_ecdh_for_connection(client_manager);
-        close(client_socket);
-        remove_thread_info(current_thread);
-        return -1;
-    }
-    // AES anahtarını türet
-    if (!ecdh_derive_aes_key(&client_manager->ecdh_ctx)) {
-        PRINTF_LOG("AES anahtarı türetilemedi (Thread: %lu)\n", current_thread);
-        cleanup_ecdh_for_connection(client_manager);
-        close(client_socket);
-        remove_thread_info(current_thread);
-        return -1;
-    }
-    PRINTF_LOG("✓ ECDH anahtar değişimi tamamlandı (Thread: %lu)\n", current_thread);
-    PRINTF_LOG("✓ AES256 oturum anahtarı hazır\n", current_thread);
-    return 0;
-}
-

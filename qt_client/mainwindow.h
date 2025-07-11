@@ -34,11 +34,13 @@ class MainWindow : public QMainWindow
 {
     Q_OBJECT
     Q_PROPERTY(QVariantList roomList READ roomList NOTIFY roomListChanged)
+    Q_PROPERTY(int userPrivilege READ getUserPrivilege NOTIFY userPrivilegeChanged)
 
 public:
     Q_INVOKABLE void createChatRoom(const QString& name, int accessType, int maxUsers, const QString& userIds);
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+    int getUserPrivilege() const { return userPrivilege; }
 
     ClientWrapper* getClientWrapper() { return clientWrapper; }
     Q_INVOKABLE void fetchChatRoomList();
@@ -46,6 +48,7 @@ public:
 
 signals:
     void roomListChanged();
+    void userPrivilegeChanged();
 
 private slots:
     void onMapClicked(double latitude, double longitude);
@@ -73,7 +76,9 @@ private slots:
     void onReportsReceived(const QJsonArray& reports, int privilege); // <-- RAPOR SLOTU
     void onAdminReplyToReport();
     void onqueryMyReplies();
-    void onTestConnections();
+    void onTestConnections(); // Manuel bağlantı testi başlatır
+    void startConnectionTestThread(); // Thread ile bağlantı testi başlatır
+    void onConnectionTestFinished(const QString& connectionType, bool success, const QString& message); // Thread sonucu slotu
     void onReplyQueryResultReceived(const QJsonArray& replies);
     void onNewReportReplyReceived(int reportId, const QString& message);
     void onWatchReportReplies();
@@ -175,9 +180,12 @@ private:
     QLabel *udpStatusLabel;
     QLabel *p2pStatusLabel;
     QCheckBox *periodicCheckBox;
-    
     // Periyodik kontrol durumu
     bool autoCheckEnabled = true;  // Default olarak açık
+    // Bağlantı testi thread'i
+    class FallbackTestThread* connectionTestThread = nullptr;
+    // Thread başlatma ve temizleme yardımcıları
+    void cleanupConnectionTestThread();
     
     // Admin bildirim dinleyicisi otomatik çalışma kontrolü
     static const int MAX_ADMIN_NOTIFICATION_RETRY = 5;

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <unistd.h> // for ssize_t
 #include "crypto_utils.h"
 
 // Bağlantı türleri
@@ -63,22 +64,14 @@ void list_active_connections(void);
 connection_status_t get_connection_status(connection_type_t type);
 void show_connection_menu(void);
 int process_connection_command(const char* command);
-int stop_udp_server(void);
-int start_p2p_node(int port);
-int stop_p2p_node(void);
 
-void list_active_connections(void);
-connection_status_t get_connection_status(connection_type_t type);
 int switch_connection_type(connection_type_t from_type, connection_type_t to_type);
-
-// Kontrol arayüzü
-void show_connection_menu(void);
-int process_connection_command(const char* command);
 
 // ECDH anahtar yönetimi
 int init_ecdh_for_connection(connection_manager_t* manager);
 int exchange_keys_with_peer(connection_manager_t* manager, int socket);
 const uint8_t* get_session_key(connection_manager_t* manager);
 void cleanup_ecdh_for_connection(connection_manager_t* manager);
+int handle_ecdh_key_exchange(int client_socket, pthread_t current_thread, connection_manager_t* client_manager, uint8_t* client_public_key, char* buffer, ssize_t bytes_received);
 
 #endif // _CONNECTION_MANAGER_H_
