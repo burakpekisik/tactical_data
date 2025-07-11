@@ -53,7 +53,36 @@ int main(int argc, char *argv[])
                 }
                 return result;
             } else {
-                QMessageBox::warning(nullptr, "Giriş Hatası", loginError);
+                // Modern notification dialog ile göster
+                QString notifType, notifIcon, notifColor, notifTitle, notifDetail;
+                if (loginError.contains("bağlanılamadı", Qt::CaseInsensitive)) {
+                    notifType = "connection";
+                    notifIcon = "🌐";
+                    notifColor = "#dc3545";
+                    notifTitle = "Sunucuya Bağlanılamadı";
+                    notifDetail = "Sunucuya ulaşılamadı. Lütfen ağ bağlantınızı ve sunucu adresini kontrol edin.";
+                } else if (loginError.contains("kullanıcı adı") || loginError.contains("şifre") || loginError.contains("hatalı")) {
+                    notifType = "login";
+                    notifIcon = "🔒";
+                    notifColor = "#ffc107";
+                    notifTitle = "Giriş Bilgileri Hatalı";
+                    notifDetail = "Kullanıcı adı veya şifre yanlış. Lütfen tekrar deneyin.";
+                } else {
+                    notifType = "error";
+                    notifIcon = "❗";
+                    notifColor = "#6c757d";
+                    notifTitle = "Giriş Hatası";
+                    notifDetail = loginError;
+                }
+                NotificationDialog* notif = new NotificationDialog("", nullptr);
+                notif->setWindowTitle(notifTitle);
+                notif->setCustomNotification(notifTitle, notifIcon, notifDetail);
+                notif->showWithAnimation();
+                // Modal gibi davran, kullanıcı kapatana kadar bekle
+                while (notif->isVisible()) {
+                    app.processEvents(QEventLoop::AllEvents, 100);
+                }
+                delete notif;
             }
         } else {
             return 0; // Kullanıcı iptal etti

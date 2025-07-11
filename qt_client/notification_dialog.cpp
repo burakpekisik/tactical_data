@@ -152,11 +152,18 @@ void NotificationDialog::setupUI()
     // Başlık ve ikon satırı
     QHBoxLayout *headerLayout = new QHBoxLayout();
     
-    // Bildirim ikonu
+    // Bildirim ikonu (JSON'dan override edilebilir)
     iconLabel = new QLabel();
     iconLabel->setFixedSize(48, 48);
     iconLabel->setAlignment(Qt::AlignCenter);
-    iconLabel->setText(getNotificationIcon(reportType));
+    QString customIcon, customColor;
+    if (notificationData.contains("icon")) customIcon = notificationData["icon"].toString();
+    if (notificationData.contains("color")) customColor = notificationData["color"].toString();
+    if (!customIcon.isEmpty()) {
+        iconLabel->setText(customIcon);
+    } else {
+        iconLabel->setText(getNotificationIcon(reportType));
+    }
     iconLabel->setStyleSheet(QString(
         "QLabel {"
         "    font-size: 32px;"
@@ -164,12 +171,20 @@ void NotificationDialog::setupUI()
         "    background: transparent;"
         "    border: none;"
         "}"
-    ).arg(getNotificationColor(reportType)));
+    ).arg(!customColor.isEmpty() ? customColor : getNotificationColor(reportType)));
     
     // Başlık metni
     titleLabel = new QLabel();
     titleLabel->setWordWrap(true);
-    titleLabel->setText(QString("🚨 <b>YENİ BİLDİRİM</b> - %1").arg(reportType.isEmpty() ? "Bilinmeyen" : reportType));
+    QString customTitle;
+    if (notificationData.contains("title")) {
+        customTitle = notificationData["title"].toString();
+    }
+    if (!customTitle.isEmpty()) {
+        titleLabel->setText(QString("<b>%1</b>").arg(customTitle.toHtmlEscaped()));
+    } else {
+        titleLabel->setText(QString("🚨 <b>YENİ BİLDİRİM</b> - %1").arg(reportType.isEmpty() ? "Bilinmeyen" : reportType));
+    }
     
     headerLayout->addWidget(iconLabel);
     headerLayout->addWidget(titleLabel, 1);
@@ -195,7 +210,13 @@ void NotificationDialog::setupUI()
     }
     
     // Mesaj/açıklama varsa göster
-    if (!reportMessage.isEmpty()) {
+    QString customMsg;
+    if (notificationData.contains("message")) {
+        customMsg = notificationData["message"].toString();
+    }
+    if (!customMsg.isEmpty()) {
+        detailsHtml += QString("<p style='font-size:15px;'><b>%1</b></p>").arg(customMsg.toHtmlEscaped());
+    } else if (!reportMessage.isEmpty()) {
         detailsHtml += QString("<p><b>📄 Açıklama:</b><br>%1</p>").arg(reportMessage.toHtmlEscaped());
     }
     
@@ -268,7 +289,7 @@ void NotificationDialog::setupUI()
     mainLayout->addWidget(buttonFrame);
     
     // Dialog boyutunu ayarla
-    setFixedSize(480, 400);
+    setFixedSize(420, 260);
 }
 
 /**

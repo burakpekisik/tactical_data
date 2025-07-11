@@ -538,11 +538,64 @@ void MainWindow::onMarkerClicked(int id, double latitude, double longitude, cons
     if (markerType == "user") {
         return;
     }
-    // Report marker ise eski davranış
+    // Report marker ise detayları ve cevapları göster
     if (currentMode == ReplyMode) {
         showAdminReplyDialog(id, latitude, longitude);
     } else {
-        showMarkerRepliesDialog(id, latitude, longitude);
+        // Detayları ve cevapları birlikte göster
+        QDialog dialog(this);
+        dialog.setWindowTitle(QString("Rapor Detayı - Marker %1").arg(id));
+        dialog.setModal(true);
+        dialog.resize(600, 420);
+
+        QVBoxLayout* layout = new QVBoxLayout(&dialog);
+
+        // Marker detayları
+        QString formattedTime = timestamp;
+        bool ok = false;
+        qint64 ts = timestamp.toLongLong(&ok);
+        if (ok && ts > 1000000000) {
+            QDateTime dt = QDateTime::fromSecsSinceEpoch(ts);
+            formattedTime = dt.toString("dd.MM.yyyy HH:mm:ss");
+        }
+        QLabel* info = new QLabel(QString("<b>ID:</b> %1<br><b>Durum:</b> %2<br><b>Açıklama:</b> %3<br><b>Zaman:</b> %4<br><b>Koordinat:</b> %5, %6")
+            .arg(id)
+            .arg(status)
+            .arg(description)
+            .arg(formattedTime)
+            .arg(latitude, 0, 'f', 6)
+            .arg(longitude, 0, 'f', 6));
+        info->setStyleSheet("font-weight: normal; color: #2c3e50; padding: 10px; background-color: #ecf0f1; border-radius: 4px; margin-bottom: 10px;");
+        info->setTextFormat(Qt::RichText);
+        layout->addWidget(info);
+
+        // Cevaplar için scroll area
+        QScrollArea* scrollArea = new QScrollArea();
+        QWidget* repliesWidget = new QWidget();
+        QVBoxLayout* repliesLayout = new QVBoxLayout(repliesWidget);
+        this->displayRepliesForMarker(id, repliesLayout);
+        scrollArea->setWidget(repliesWidget);
+        scrollArea->setWidgetResizable(true);
+        scrollArea->setStyleSheet("QScrollArea { border: 1px solid #bdc3c7; border-radius: 4px; }");
+        layout->addWidget(scrollArea);
+
+        // Yenile ve Kapat butonları
+        QHBoxLayout* buttonLayout = new QHBoxLayout();
+        QPushButton* refreshBtn = new QPushButton("Yenile");
+        refreshBtn->setStyleSheet("QPushButton { background-color: #3498db; color: white; border: none; padding: 8px 16px; border-radius: 4px; } QPushButton:hover { background-color: #2980b9; }");
+        QPushButton* closeBtn = new QPushButton("Kapat");
+        closeBtn->setStyleSheet("QPushButton { background-color: #95a5a6; color: white; border: none; padding: 8px 16px; border-radius: 4px; } QPushButton:hover { background-color: #7f8c8d; }");
+        buttonLayout->addWidget(refreshBtn);
+        buttonLayout->addStretch();
+        buttonLayout->addWidget(closeBtn);
+        layout->addLayout(buttonLayout);
+
+        connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+        connect(refreshBtn, &QPushButton::clicked, [this, id, repliesLayout]() {
+            this->displayRepliesForMarker(id, repliesLayout);
+        });
+
+        dialog.exec();
     }
 }
 

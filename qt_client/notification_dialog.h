@@ -51,6 +51,19 @@ public:
      */
     void showWithAnimation();
 
+public:
+    QLabel *titleLabel;
+    QLabel *iconLabel;
+    QTextEdit *detailsTextEdit;
+    void setupUI();
+
+    // Modern notification dialog için özel başlık, ikon ve detay ayarlama fonksiyonu
+    void setCustomNotification(const QString& title, const QString& icon, const QString& detail) {
+        if (titleLabel) titleLabel->setText(QString("<b>%1</b>").arg(title));
+        if (iconLabel) iconLabel->setText(icon);
+        if (detailsTextEdit) detailsTextEdit->setHtml(QString("<p style='font-size:15px;'><b>%1</b></p>").arg(detail));
+    }
+
 signals:
     /**
      * @brief Konuma zoom yapma isteği signal'ı
@@ -89,11 +102,6 @@ private slots:
 
 private:
     /**
-     * @brief UI bileşenlerini kurar
-     */
-    void setupUI();
-    
-    /**
      * @brief Dialog stilini ayarlar
      */
     void setupStyling();
@@ -127,9 +135,6 @@ private:
 private:
     // UI bileşenleri
     QVBoxLayout *mainLayout;
-    QLabel *titleLabel;
-    QLabel *iconLabel;
-    QTextEdit *detailsTextEdit;
     QFrame *buttonFrame;
     QHBoxLayout *buttonLayout;
     QPushButton *goToLocationButton;

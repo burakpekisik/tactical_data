@@ -383,8 +383,8 @@ Rectangle {
                                 }
                             }
                         } else if (marker.id !== -1) {
+                            // Sadece C++ tarafında detay gösterilecek, QML popup kaldırıldı
                             Qt.callLater(function() {
-                                marker.showDetails();
                                 mapContainer.emitMarkerClicked(marker.id, marker.coordinate.latitude, marker.coordinate.longitude, "report", marker.description, marker.status, marker.timestamp);
                             });
                         }
@@ -417,30 +417,6 @@ Rectangle {
                 var minutes = ("0" + date.getMinutes()).slice(-2);
                 var seconds = ("0" + date.getSeconds()).slice(-2);
                 return day + "." + month + "." + year + " " + hours + ":" + minutes + ":" + seconds;
-            }
-            function showDetails() {
-                var formattedTime = timestamp ? formatTimestamp(timestamp) : "Bilinmiyor";
-                var details = "";
-                if (typeof status === "string" && status.length > 0) {
-                    // Report marker
-                    details =
-                        "<b>ID:</b> " + id + "<br>" +
-                        "<b>Durum:</b> " + status + "<br>" +
-                        "<b>Açıklama:</b> " + description + "<br>" +
-                        "<b>Zaman:</b> " + formattedTime;
-                } else {
-                    // User marker (status boş veya yok)
-                    details =
-                        "<b>Kullanıcı ID:</b> " + id + "<br>" +
-                        "<b>Enlem:</b> " + coordinate.latitude.toFixed(6) + "<br>" +
-                        "<b>Boylam:</b> " + coordinate.longitude.toFixed(6) + "<br>" +
-                        "<b>Zaman:</b> " + formattedTime;
-                }
-                Qt.createQmlObject(
-                    'import QtQuick 2.15; import QtQuick.Controls 2.15; Popup { width: 320; height: 120; modal: false; focus: true; contentItem: Text { text: "' + details.replace(/"/g, '\\"') + '"; wrapMode: Text.Wrap; anchors.centerIn: parent; font.pixelSize: 13; textFormat: Text.RichText; } }',
-                    map,
-                    "dynamicPopup"
-                ).open();
             }
         }
     }
