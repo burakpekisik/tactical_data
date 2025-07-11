@@ -961,4 +961,3 @@ int send_hello_after_ecdh(client_connection_t* conn, const char* jwt_token) {
     PRINTF_LOG("HELLO mesajı gönderildi (sent=%zd)\n", sent);
     return 0;
 }
-

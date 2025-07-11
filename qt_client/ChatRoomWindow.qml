@@ -160,6 +160,20 @@ ApplicationWindow {
                         }
                     }
                 }
+                // --- Otomatik scroll en alta ---
+                property int lastMessageCount: 0
+                onContentHeightChanged: {
+                    if (chatWindow.messages.length > lastMessageCount || flick.contentY + flick.height >= flick.contentHeight - 100) {
+                        // Yeni mesaj eklendi veya kullanıcı zaten en altta
+                        flick.contentY = flick.contentHeight - flick.height;
+                    }
+                    lastMessageCount = chatWindow.messages.length;
+                }
+                Component.onCompleted: {
+                    // İlk açılışta da en alta kaydır
+                    flick.contentY = flick.contentHeight - flick.height;
+                    lastMessageCount = chatWindow.messages.length;
+                }
             }
         }
 
@@ -216,13 +230,19 @@ ApplicationWindow {
         }
     }
 
-    // Component.onCompleted: {
-    //     console.log("[QML] ChatRoomWindow açıldı | roomId=", roomId, ", roomKey=", roomKey);
-    //     if (clientWrapper && roomId > 0 && roomKey) {
-    //         console.log("[QML] ChatRoomWindow açıldı, startChatListener çağrılıyor | roomId=", roomId);
-    //         clientWrapper.startChatListener(roomId, roomKey);
-    //     }
-    // }
+    // Scroll'u en alta kaydıran fonksiyon
+    function scrollToBottom() {
+        // Bir sonraki event loop'ta çalıştır ki, mesajlar eklenmiş olsun
+        Qt.callLater(function() {
+            flick.contentY = flick.contentHeight - flick.height;
+        });
+    }
+
+    // Mesajlar değiştiğinde otomatik scroll
+    onMessagesChanged: scrollToBottom()
+
+    // İlk açılışta da scroll'u en alta çek
+    Component.onCompleted: scrollToBottom()
     onVisibleChanged: {
         if (!visible && clientWrapper) {
             console.log("[QML] ChatRoomWindow kapandı, stopChatListener çağrılıyor");
@@ -258,7 +278,6 @@ ApplicationWindow {
         var userName = clientWrapper.currentUserName ? clientWrapper.currentUserName : "Ben";
         var userId = clientWrapper.currentUserId ? clientWrapper.currentUserId : "";
         console.log("[QML] sendMessage: UI'ya ekleniyor", text, userName, userId, hh + ":" + mm);
-        // messages.push({ ... }) satırını değiştir:
         var newMessages = messages.slice();
         newMessages.push({
             message: text,
@@ -271,5 +290,11 @@ ApplicationWindow {
         // Backend'e gönder
         console.log("[QML] sendMessage: clientWrapper.sendChatMessage çağrılıyor", roomId, text, roomKey);
         clientWrapper.sendChatMessage(roomId, text, roomKey);
+        // Mesaj gönderince otomatik en alta kaydır
+        Qt.callLater(function() {
+            if (flick) {
+                flick.contentY = flick.contentHeight - flick.height;
+            }
+        });
     }
 }

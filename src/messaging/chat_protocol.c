@@ -565,50 +565,50 @@ int receive_chat_messages(client_connection_t* conn, const char* jwt_token,
         return 0;
     }
     
-    // int message_count = cJSON_GetArraySize(messages_json);
-    // PRINTF_CLIENT("\n📜 Son %d mesaj:\n", message_count);
-    // PRINTF_CLIENT("─────────────────────────────────────────────────────\n");
+    int message_count = cJSON_GetArraySize(messages_json);
+    PRINTF_CLIENT("\n📜 Son %d mesaj:\n", message_count);
+    PRINTF_CLIENT("─────────────────────────────────────────────────────\n");
     
-    // // Mesajları göster
-    // for (int i = 0; i < message_count; i++) {
-    //     cJSON* msg_json = cJSON_GetArrayItem(messages_json, i);
-    //     if (!msg_json) continue;
+    // Mesajları göster
+    for (int i = 0; i < message_count; i++) {
+        cJSON* msg_json = cJSON_GetArrayItem(messages_json, i);
+        if (!msg_json) continue;
 
-    //     cJSON* sender_name_json = cJSON_GetObjectItem(msg_json, "sender_name");
-    //     cJSON* message_json = cJSON_GetObjectItem(msg_json, "message");
-    //     cJSON* timestamp_json = cJSON_GetObjectItem(msg_json, "timestamp");
+        cJSON* sender_name_json = cJSON_GetObjectItem(msg_json, "sender_name");
+        cJSON* message_json = cJSON_GetObjectItem(msg_json, "message");
+        cJSON* timestamp_json = cJSON_GetObjectItem(msg_json, "timestamp");
 
-    //     if (!cJSON_IsString(sender_name_json) || !cJSON_IsString(message_json) ||
-    //         !cJSON_IsNumber(timestamp_json)) {
-    //         continue;
-    //     }
+        if (!cJSON_IsString(sender_name_json) || !cJSON_IsString(message_json) ||
+            !cJSON_IsNumber(timestamp_json)) {
+            continue;
+        }
 
-    //     // Önce decrypt etmeyi dene, başarısızsa olduğu gibi kullan
-    //     char* decrypted_message = NULL;
-    //     int decrypt_ok = decrypt_chat_message(message_json->valuestring,
-    //                                          strlen(message_json->valuestring),
-    //                                          room_key, &decrypted_message);
-    //     const char* final_message = NULL;
-    //     if (decrypt_ok == 0 && decrypted_message && strlen(decrypted_message) > 0) {
-    //         final_message = decrypted_message;
-    //     } else {
-    //         final_message = message_json->valuestring;
-    //     }
+        // Önce decrypt etmeyi dene, başarısızsa olduğu gibi kullan
+        char* decrypted_message = NULL;
+        int decrypt_ok = decrypt_chat_message(message_json->valuestring,
+                                             strlen(message_json->valuestring),
+                                             room_key, &decrypted_message);
+        const char* final_message = NULL;
+        if (decrypt_ok == 0 && decrypted_message && strlen(decrypted_message) > 0) {
+            final_message = decrypted_message;
+        } else {
+            final_message = message_json->valuestring;
+        }
 
-    //     char* formatted_msg = format_chat_message_display(
-    //         sender_name_json->valuestring,
-    //         final_message,
-    //         (time_t)timestamp_json->valueint
-    //     );
+        char* formatted_msg = format_chat_message_display(
+            sender_name_json->valuestring,
+            final_message,
+            (time_t)timestamp_json->valueint
+        );
 
-    //     if (formatted_msg) {
-    //         PRINTF_CLIENT("%s\n", formatted_msg);
-    //         free(formatted_msg);
-    //     }
-    //     if (decrypted_message) free(decrypted_message);
-    // }
+        if (formatted_msg) {
+            PRINTF_CLIENT("%s\n", formatted_msg);
+            free(formatted_msg);
+        }
+        if (decrypted_message) free(decrypted_message);
+    }
     
-    // PRINTF_CLIENT("─────────────────────────────────────────────────────\n");
+    PRINTF_CLIENT("─────────────────────────────────────────────────────\n");
     
     cJSON_Delete(response_json);
     return 0;

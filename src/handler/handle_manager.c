@@ -794,8 +794,8 @@ void* handle_client(void* arg) {
 
 // --- Yardımcı: AES ile şifrele ve hex formatla ---
 char* encrypt_and_format_response(const char* plain_json, const uint8_t* session_key, const char* action_name) {
-    PRINTF_LOG("[CHAT] encrypt_and_format_response çağrıldı\n");
-    PRINTF_LOG("[CHAT] plain_json: %s\n", plain_json);
+    PRINTF_LOG("encrypt_and_format_response çağrıldı\n");
+    // PRINTF_LOG("plain_json: %s\n", plain_json);
     uint8_t iv[CRYPTO_IV_SIZE];
     generate_random_iv(iv);
     crypto_result_t* encrypted = encrypt_data(plain_json, session_key, iv);
@@ -809,16 +809,16 @@ char* encrypt_and_format_response(const char* plain_json, const uint8_t* session
     memcpy(combined_data, iv, CRYPTO_IV_SIZE);
     memcpy(combined_data + CRYPTO_IV_SIZE, encrypted->data, encrypted->length);
     char* hex_data = bytes_to_hex(combined_data, combined_length);
-    PRINTF_LOG("[CHAT] IV (hex): ");
+    PRINTF_LOG("IV (hex): ");
     for (int i = 0; i < CRYPTO_IV_SIZE; i++) PRINTF_LOG("%02X", iv[i]);
-    PRINTF_LOG("\n[CHAT] Ciphertext uzunluğu: %zu\n", encrypted->length);
-    PRINTF_LOG("[CHAT] Hex data uzunluğu: %zu\n", strlen(hex_data));
+    PRINTF_LOG("\nCiphertext uzunluğu: %zu\n", encrypted->length);
+    PRINTF_LOG("Hex data uzunluğu: %zu\n", strlen(hex_data));
     free(combined_data);
     free_crypto_result(encrypted);
     size_t total_size = strlen("ENCRYPTED:") + strlen(action_name) + 1 + strlen(hex_data) + 1;
     char* formatted = malloc(total_size);
     snprintf(formatted, total_size, "ENCRYPTED:%s:%s", action_name, hex_data);
-    PRINTF_LOG("[CHAT] ENCRYPTED yanıt: %s\n", formatted);
+    // PRINTF_LOG("ENCRYPTED yanıt: %s\n", formatted);
     free(hex_data);
     return formatted;
 }

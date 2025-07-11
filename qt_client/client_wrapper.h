@@ -41,6 +41,18 @@ class ClientWrapper : public QObject
 {
     Q_OBJECT
 public:
+    // Kullanıcı bilgileri (login sonrası doldurulacak)
+    struct UserInfo {
+        QString userId;
+        QString name;
+        QString surname;
+        int privilege = 0;
+    };
+    const UserInfo& getUserInfo() const { return userInfo; }
+    Q_INVOKABLE int getUserPrivilege() const { return userInfo.privilege; }
+
+    // Login sonrası info mesajı isteği atar ve parse eder
+    void requestAndParseUserInfo();
 
     // === CHAT ROOM JOIN ===
     // Odaya katılma isteği gönderir
@@ -183,6 +195,8 @@ public slots:
     Q_INVOKABLE void stopChatListener();
 
 private:
+    // Kullanıcı bilgisi
+    UserInfo userInfo;
     // --- Bağlantı türü kontrolü ---
     void switchConnectionType(ConnectionType type);
     QString getConnectionTypeString() const;
@@ -205,6 +219,8 @@ private:
     // void queryRepliesForReport(int reportId); // Artık public
 
 signals:
+    // Kullanıcı yetkisi veya info değiştiğinde
+    void userPrivilegeChanged();
     // Odaya katılım başarılı/başarısız olduğunda
     void joinRoomSuccess(int roomId);
     void joinRoomFailed(int roomId, const QString& error);

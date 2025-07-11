@@ -33,6 +33,8 @@ set(C_SOURCES
     ../src/messaging/chat_listener.c
     ../src/jwt/jwt_manager.c
     ../src/messaging/chat_listener.c
+    ../src/user/info_manager.c
+    ../src/large_response/large_response.c
 )
 
 set(SOURCES

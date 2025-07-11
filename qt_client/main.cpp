@@ -28,15 +28,30 @@ int main(int argc, char *argv[])
     QString serverHost = "127.0.0.1";
     int serverPort = 8080;
 
-    LoginDialog loginDialog;
     while (true) {
+        LoginDialog loginDialog;
         if (loginDialog.exec() == QDialog::Accepted) {
             QString username = loginDialog.getUsername();
             QString password = loginDialog.getPassword();
             // Sunucuya bağlanıp login doğrulaması yap
             jwtToken = LoginClient::login(serverHost, serverPort, username, password, loginError);
             if (!jwtToken.isEmpty()) {
-                break;
+                MainWindow* window = new MainWindow();
+                window->getClientWrapper()->setJwtToken(jwtToken);
+                window->getClientWrapper()->connectToServer(serverHost, serverPort);
+                window->show();
+
+                QQmlApplicationEngine engine;
+                engine.rootContext()->setContextProperty("mainWindow", window);
+                engine.rootContext()->setContextProperty("clientWrapper", window->getClientWrapper());
+
+                int result = app.exec();
+                delete window;
+                if (result == 12345) {
+                    // Logout için özel kod, tekrar login ekranı göster
+                    continue;
+                }
+                return result;
             } else {
                 QMessageBox::warning(nullptr, "Giriş Hatası", loginError);
             }
@@ -44,16 +59,5 @@ int main(int argc, char *argv[])
             return 0; // Kullanıcı iptal etti
         }
     }
-
-    MainWindow window;
-    // Ana pencere açılırken otomatik olarak veri bağlantısı kur
-    window.getClientWrapper()->setJwtToken(jwtToken);
-    window.getClientWrapper()->connectToServer(serverHost, serverPort);
-    window.show();
-
-    QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty("mainWindow", &window);
-    engine.rootContext()->setContextProperty("clientWrapper", window.getClientWrapper());
-
-    return app.exec();
+    return 0;
 }

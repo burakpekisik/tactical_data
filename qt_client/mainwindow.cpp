@@ -297,19 +297,60 @@ void MainWindow::setupControlPanel()
     controlPanel = new QWidget();
     controlPanel->setMaximumWidth(400);
     controlPanel->setMinimumWidth(350);
-    
+
     QVBoxLayout *controlLayout = new QVBoxLayout(controlPanel);
-    
+
+    // --- Kullanıcı Bilgi Paneli ---
+    QWidget *userInfoWidget = new QWidget(controlPanel);
+    QHBoxLayout *userInfoLayout = new QHBoxLayout(userInfoWidget);
+    userInfoLayout->setContentsMargins(0,0,0,0);
+    userInfoLayout->setSpacing(8);
+    // Ad Soyad ve ID
+    QLabel *userLabel = new QLabel(userInfoWidget);
+    // Yetki
+    QLabel *privilegeLabel = new QLabel(userInfoWidget);
+    // Logout butonu
+    QPushButton *logoutButton = new QPushButton("Çıkış Yap", userInfoWidget);
+    logoutButton->setStyleSheet("QPushButton { background-color: #e74c3c; color: white; font-weight: bold; padding: 4px 12px; border-radius: 6px; } QPushButton:hover { background-color: #c0392b; }");
+    userInfoLayout->addWidget(userLabel);
+    userInfoLayout->addWidget(privilegeLabel);
+    userInfoLayout->addStretch();
+    userInfoLayout->addWidget(logoutButton);
+    controlLayout->addWidget(userInfoWidget);
+
+    // Bilgileri güncelleyen fonksiyon
+    auto updateUserInfoPanel = [this, userLabel, privilegeLabel]() {
+        const auto& info = clientWrapper->getUserInfo();
+        QString nameSurname = QString("%1 %2 (Kullanıcı ID: %3)").arg(info.name).arg(info.surname).arg(info.userId);
+        userLabel->setText(nameSurname);
+        userLabel->setStyleSheet("font-weight: bold; font-size: 15px;");
+        if (info.privilege == 1) {
+            privilegeLabel->setText("Admin");
+            privilegeLabel->setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 15px; margin-left: 8px;");
+        } else {
+            privilegeLabel->setText("Kullanıcı");
+            privilegeLabel->setStyleSheet("color: #2d3436; font-weight: bold; font-size: 15px; margin-left: 8px;");
+        }
+    };
+    updateUserInfoPanel();
+    // Kullanıcı info değiştiğinde güncelle
+    connect(clientWrapper, &ClientWrapper::userPrivilegeChanged, this, updateUserInfoPanel);
+
+    // Logout butonu: login ekranına dön
+    connect(logoutButton, &QPushButton::clicked, this, [this]() {
+        qApp->quit();
+    });
+
     setupConnectionPanel();
     setupDataPanel();
     setupFilterPanel();     // Filtreleme paneli oluştur
     setupAdminPanel();      // Admin paneli oluştur
     setupFallbackPanel();   // Fallback paneli oluştur  
     setupLogPanel();
-    
+
     // Panel toggle butonları için yardımcı fonksiyon
     setupPanelToggles();
-    
+
     controlLayout->addWidget(connectionGroup);
     controlLayout->addWidget(dataGroup);
     controlLayout->addWidget(filterGroup);     // Filtreleme paneli
@@ -2175,18 +2216,22 @@ void MainWindow::onAllUsersLatestLocationsReceived(const QJsonArray& locations)
 {
     if (!mapWidget) return;
     mapWidget->clearMapItems("user");
+    int myUserId = clientWrapper ? clientWrapper->getUserInfo().userId.toInt() : -1;
+    int shownCount = 0;
     for (const QJsonValue& val : locations) {
         if (!val.isObject()) continue;
         QJsonObject obj = val.toObject();
+        int id = obj.value("user_id").toInt();
+        if (id == myUserId) continue; // Kendi konumunu haritada tekrar gösterme
         double lat = obj.value("latitude").toDouble();
         double lon = obj.value("longitude").toDouble();
         QString desc = obj.value("description").toString();
         QString status = obj.value("status").toString();
-        int id = obj.value("user_id").toInt();
         qint64 timestamp = obj.value("timestamp").toVariant().toLongLong();
         mapWidget->addMarker(lat, lon, desc, status, id, timestamp, false, "user");
+        ++shownCount;
     }
-    logTextEdit->append(QString("<b>[ADMIN]</b> %1 kullanıcının son konumu haritaya işlendi.").arg(locations.size()));
+    logTextEdit->append(QString("<b>[ADMIN]</b> %1 kullanıcının son konumu haritaya işlendi.").arg(shownCount));
 }
 
 // --- Normal kullanıcılar (privilege==0) için birimin son konumlarını periyodik çekme ---
@@ -2222,13 +2267,15 @@ void MainWindow::onMyUnitLatestLocationsReceived(const QJsonArray& locations)
 {
     if (!mapWidget) return;
     mapWidget->clearMapItems("user");
+    int myUserId = clientWrapper ? clientWrapper->getUserInfo().userId.toInt() : -1;
     for (const QJsonValue& val : locations) {
         if (!val.isObject()) continue;
         QJsonObject obj = val.toObject();
+        int id = obj.value("user_id").toInt();
+        if (id == myUserId) continue; // Kendi konumunu tekrar gösterme
         double lat = obj.value("latitude").toDouble();
         double lon = obj.value("longitude").toDouble();
         QString desc = obj.value("description").toString();
-        int id = obj.value("user_id").toInt();
         qint64 timestamp = 0;
         if (obj.contains("timestamp")) {
             timestamp = obj.value("timestamp").toVariant().toLongLong();

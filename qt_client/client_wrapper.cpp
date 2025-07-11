@@ -1,3 +1,4 @@
+
 /**
  * @file client_wrapper.cpp
  * @brief Qt Client wrapper sınıfının implementasyonu
@@ -24,6 +25,8 @@
 //#include <QMetaType>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QRegularExpression>
+#include <QString>
 
 QMutex clientConnectionMutex;
 extern "C" {
@@ -35,7 +38,9 @@ extern "C" {
     #include "logger.h"
     #include "cJSON.h"
     #include "chat_protocol.h"
+    #include "info_manager.h"
     #include "chat_manager.h"
+    #include "info_manager.h"
 }
 
 #include <thread>
@@ -302,8 +307,21 @@ void ClientWrapper::onConnectionTimeout()
 /**
  * @brief Sunucudan veri alındığında çağrılır
  */
-void ClientWrapper::onDataReceived()
-{
+void ClientWrapper::onDataReceived() {
+    // Kullanıcı info mesajı parse
+    QString infoStr = QString::fromUtf8(incomingBuffer);
+    QRegularExpression infoRegex(R"(User ID: (\S+), Name: (\S+), Surname: (\S+), Privilege: (\d+))");
+    QRegularExpressionMatch match = infoRegex.match(infoStr);
+    if (match.hasMatch()) {
+        userInfo.userId = match.captured(1);
+        userInfo.name = match.captured(2);
+        userInfo.surname = match.captured(3);
+        userInfo.privilege = match.captured(4).toInt();
+        qDebug() << "[INFO] User info parsed:" << userInfo.userId << userInfo.name << userInfo.surname << userInfo.privilege;
+        // İlgili signal veya callback ile UI'ya iletebilirsin
+        // emit userInfoChanged(); // (isteğe bağlı)
+    }
+
     QByteArray data = tcpSocket->readAll();
     incomingBuffer.append(data);
     PRINTF_LOG("Raw data received (%d bytes)\n", data.size());
@@ -1516,6 +1534,7 @@ void ClientWrapper::processEncryptedResponse()
                         if (obj.contains("reports") && obj["reports"].isArray()) {
                             int privilege = obj.contains("privilege") ? obj["privilege"].toInt() : 0;
                             emit reportsReceived(obj["reports"].toArray(), privilege);
+                            requestAndParseUserInfo();
                         }
                         // QUERY_MY_REPLIES yanıtı
                         else if (obj.contains("replies") && obj["replies"].isArray()) {
@@ -2446,4 +2465,96 @@ void ClientWrapper::stopChatListener() {
         chatListenerState.thread = nullptr;
         logInfo("[QML] ChatListener thread durduruldu.");
     }
+}
+
+// Kullanıcı bilgisi isteği ve parse işlemi (C fonksiyonu ile)
+void ClientWrapper::requestAndParseUserInfo()
+{
+    logInfo("[ClientWrapper] jwtToken: " + jwtToken);
+    if (!isConnected() || !handshakeCompleted) {
+        logError("[ClientWrapper] Bağlantı yok veya ECDH tamamlanmamış!");
+        return;
+    }
+    if (jwtToken.isEmpty()) {
+        qWarning() << "[ClientWrapper] jwtToken eksik!";
+        return;
+    }
+
+    // 1. INFO isteğini ve yanıtını ana thread'de gönder/al
+    QJsonObject infoObj;
+    infoObj["command"] = "INFO";
+    infoObj["jwt"] = jwtToken;
+    QJsonDocument doc(infoObj);
+    QByteArray plain = doc.toJson(QJsonDocument::Compact);
+    char* encryptedMsg = create_encrypted_protocol_message("INFO", plain.constData(), aesKey, jwtToken.toUtf8().constData());
+    if (!encryptedMsg) {
+        qWarning() << "[ClientWrapper] create_encrypted_protocol_message başarısız!";
+        return;
+    }
+    QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
+    free(encryptedMsg);
+
+    qint64 written = tcpSocket->write(msgData);
+    tcpSocket->flush();
+    if (written != msgData.size()) {
+        qWarning() << "[ClientWrapper] INFO isteği tam gönderilemedi!";
+        return;
+    }
+    if (!tcpSocket->waitForReadyRead(3000)) {
+        qWarning() << "[ClientWrapper] INFO yanıtı gelmedi (timeout)!";
+        return;
+    }
+    QByteArray encryptedResponse = tcpSocket->readAll();
+    if (encryptedResponse.isEmpty()) {
+        qWarning() << "[ClientWrapper] INFO yanıtı boş!";
+        return;
+    }
+    QByteArray encryptedHex = encryptedResponse.toHex();
+    qDebug() << "[ClientWrapper] INFO yanıtı (hex):" << encryptedHex;
+
+    // Yanıtı ASCII'ye çevir
+    QByteArray asciiResponse = QByteArray::fromHex(encryptedHex);
+    QString asciiStr = QString::fromUtf8(asciiResponse);
+    qDebug() << "[ClientWrapper] INFO yanıtı (ascii):" << asciiStr;
+
+    // ENCRYPTED:INFO: prefixini ayıkla
+    QString prefix = "ENCRYPTED:INFO:";
+    QString onlyHex;
+    if (asciiStr.startsWith(prefix)) {
+        onlyHex = asciiStr.mid(prefix.length());
+    } else {
+        qWarning() << "[ClientWrapper] INFO yanıtı beklenen formatta değil!";
+        return;
+    }
+
+    // Şifreli hex veriyi binary olarak hazırla
+    QByteArray encryptedBinary = QByteArray::fromHex(onlyHex.toUtf8());
+    qDebug() << "[ClientWrapper] send_info_message_qt input (binary):" << encryptedBinary.toHex();
+
+    // 2. Şifreli yanıtı arka planda çöz
+    QThread* thread = QThread::create([this, encryptedBinary]() {
+        char* infoStr = nullptr;
+        int result = send_info_message_qt(encryptedBinary.constData(), aesKey, &infoStr, encryptedBinary.size());
+        if (result != 0 || !infoStr) {
+            qWarning() << "[ClientWrapper] send_info_message_qt başarısız!";
+            qDebug() << "[ClientWrapper] send_info_message_qt input (binary):" << encryptedBinary.toHex();
+            return;
+        }
+        QString info = QString::fromUtf8(infoStr);
+        QRegularExpression infoRegex(R"(User ID: (\d+), Name: ([^,]+), Surname: ([^,]+), Privilege: (\d+))");
+        QRegularExpressionMatch match = infoRegex.match(info);
+        if (match.hasMatch()) {
+            userInfo.userId = match.captured(1);
+            userInfo.name = match.captured(2);
+            userInfo.surname = match.captured(3);
+            userInfo.privilege = match.captured(4).toInt();
+            qDebug() << "[INFO] User info parsed:" << userInfo.userId << userInfo.name << userInfo.surname << userInfo.privilege;
+            emit userPrivilegeChanged();
+        } else {
+            qWarning() << "[ClientWrapper] User info string parse edilemedi:" << info;
+        }
+        free(infoStr);
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
 }
