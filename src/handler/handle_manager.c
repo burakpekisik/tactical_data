@@ -542,12 +542,12 @@ void* handle_client(void* arg) {
                 admin_reply_manager_register_user(user_id, client_socket);
                 PRINTF_LOG("[REPORT_REPLY_WATCH] REPORT_REPLY_WATCH kaydı: user_id=%d, socket=%d\n", user_id, client_socket);
                 send(client_socket, "REPORT_REPLY_WATCH_OK\n", 23, 0);
-                // Yeni thread başlat
-                int* arg = malloc(sizeof(int));
-                *arg = client_socket;
-                pthread_t t;
-                pthread_create(&t, NULL, report_reply_watch_thread, arg);
-                pthread_detach(t);
+                // Yeni thread pool task başlat
+                struct { int client_socket; int user_id; } *params = malloc(sizeof(*params));
+                params->client_socket = client_socket;
+                params->user_id = user_id;
+                thread_pool_submit(&reply_watch_pool, reply_watch_task, params);
+                remove_thread_info(current_thread);
                 return NULL;
             } else {
                 send(client_socket, "HATA: Gecersiz veya eksik JWT token\n", 34, 0);

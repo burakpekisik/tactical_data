@@ -13,6 +13,7 @@ ApplicationWindow {
     title: roomName ? roomName : "Sohbet Odası"
     color: "#f8f8f8"
 
+    signal closed()
     property string roomName: "Oda İsmi"
     property var messages: [] // Mesajlar burada tutulacak
     property int roomId: -1   // Oda ID'si (dışarıdan atanmalı)
@@ -21,13 +22,17 @@ ApplicationWindow {
     // --- C++/backend'den mesajlar geldiğinde güncelle ---
     Connections {
         target: clientWrapper
-        onChatMessagesReceived: function(roomId, msgArray) {
-            console.log("[QML] onChatMessagesReceived: roomId=", roomId, ", msgArray=", JSON.stringify(msgArray));
+        function onChatMessagesReceived(roomId, msgArray) {
             console.log("[QML] onChatMessagesReceived: roomKey=", roomKey);
-            chatWindow.messages = msgArray;
+            // Mevcut mesajları koru ve yeni gelenleri ekle
+            var newMessages = chatWindow.messages ? chatWindow.messages.slice() : [];
+            for (var i = 0; i < msgArray.length; ++i) {
+                newMessages.push(msgArray[i]);
+            }
+            chatWindow.messages = newMessages;
             clientWrapper.startChatListener(roomId, roomKey); // Dinleyiciyi başlat
         }
-        onChatMessagesFailed: function(roomId, error) {
+        function onChatMessagesFailed(roomId, error) {
             console.log("[QML] onChatMessagesFailed: roomId=", roomId, ", error=", error);
         }
     }
@@ -249,19 +254,6 @@ ApplicationWindow {
             clientWrapper.stopChatListener();
         }
     }
-    // Oda dinleyicisini property'ler doğru atandıktan sonra başlat
-    // onRoomIdChanged: {
-    //     if (clientWrapper && roomId > 0 && roomKey) {
-    //         console.log("[QML] roomId değişti, startChatListener çağrılıyor | roomId=", roomId);
-    //         clientWrapper.startChatListener(roomId, roomKey);
-    //     }
-    // }
-    // onRoomKeyChanged: {
-    //     if (clientWrapper && roomId > 0 && roomKey) {
-    //         console.log("[QML] roomKey değişti, startChatListener çağrılıyor | roomId=", roomId);
-    //         clientWrapper.startChatListener(roomId, roomKey);
-    //     }
-    // }
 
     // Mesaj gönderme fonksiyonu (QML tarafında override edilebilir)
     // Mesaj gönderme fonksiyonu (C++/backend'e entegre)

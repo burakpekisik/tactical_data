@@ -195,6 +195,8 @@ public slots:
     Q_INVOKABLE void stopChatListener();
 
 private:
+    // Her oda için alınan mesajları sakla
+    QMap<int, QJsonArray> roomMessages;
     // Kullanıcı bilgisi
     UserInfo userInfo;
     // --- Bağlantı türü kontrolü ---

@@ -21,6 +21,7 @@
 #include <QDebug>
 #include <QJsonArray>
 #include <QThread>
+#include <QtConcurrent>
 #include <QMetaObject>
 //#include <QMetaType>
 #include <QMutex>
@@ -58,6 +59,7 @@ static ChatListenerThreadState chatListenerState;
 
 QByteArray decryptAes256Cbc(const QByteArray &cipher, const QByteArray &key, const QByteArray &iv);
 
+static QByteArray lastFetchedRoomKey;
 
 ClientWrapper::ClientWrapper(QObject *parent)
     : QObject(parent)
@@ -450,30 +452,27 @@ void ClientWrapper::onDataReceived() {
                 QString notification = msgStr.mid(13);
                 emit adminNotificationReceived(notification);
                 continue;
-            } else if (replyPos > 0) {
-                QString normalMsg = msgStr.left(replyPos);
-                emit dataReceived(normalMsg);
-                QString replyMsg = msgStr.mid(replyPos);
-                if (replyMsg.startsWith("REPORT_REPLY:")) {
-                    qDebug() << "[DEBUG] Report reply extracted from combined message:" << replyMsg;
-                    QString content = replyMsg.mid(13);
-                    int reportId = content.section(':', 0, 0).toInt();
-                    QString message = content.section(':', 1);
-                    qDebug() << "[DEBUG] Extracted reportId:" << reportId << ", message:" << message;
-                    emit newReportReplyReceived(reportId, message);
-                }
-                continue;
-            } else if (msgStr.startsWith("REPORT_REPLY:")) {
-                qDebug() << "[DEBUG] Report reply detected:" << msgStr;
-                QString content = msgStr.mid(13);
-                int reportId = content.section(':', 0, 0).toInt();
-                QString message = content.section(':', 1);
-                emit newReportReplyReceived(reportId, message);
-                continue;
-            } else if (msgStr.startsWith("REPORT_REPLY_PONG")) {
-                qDebug() << "[DEBUG] Report reply keepalive response received";
-                continue;
             }
+            // } else if (replyPos > 0) {
+            //     QString normalMsg = msgStr.left(replyPos);
+            //     emit dataReceived(normalMsg);
+            //     QString replyMsg = msgStr.mid(replyPos);
+            //     if (replyMsg.startsWith("REPORT_REPLY:")) {
+            //         qDebug() << "[DEBUG] Report reply extracted from combined message:" << replyMsg;
+            //         QString content = replyMsg.mid(13);
+            //         int reportId = content.section(':', 0, 0).toInt();
+            //         QString message = content.section(':', 1);
+            //         qDebug() << "[DEBUG] Extracted reportId:" << reportId << ", message:" << message;
+            //         emit newReportReplyReceived(reportId, message);
+            //     }
+            //     continue;
+            // } else if (msgStr.startsWith("REPORT_REPLY:")) {
+            //     qDebug() << "[DEBUG] Report reply detected:" << msgStr;
+            //     QString content = msgStr.mid(13);
+            //     int reportId = content.section(':', 0, 0).toInt();
+            //     QString message = content.section(':', 1);
+            //     emit newReportReplyReceived(reportId, message);
+            //     continue;
 
             // JSON notification biriktirme
             if (msgStr.startsWith("{") || !notificationBuffer.isEmpty()) {
@@ -1045,40 +1044,141 @@ QByteArray ClientWrapper::decryptAes256Cbc(const QByteArray &cipher, const QByte
  * @param reportId Rapor ID'si
  * @param message Cevap mesajı
  */
+
+// Asenkron admin reply gönderimi için state struct'ı
+struct AdminReplyAsyncState {
+    int reportId;
+    QString message;
+    int attempt;
+    int maxAttempts;
+    QTimer* timer;
+    ClientWrapper* wrapper;
+    QMetaObject::Connection readyConn;
+    bool finished;
+};
+
 void ClientWrapper::adminReplyToReport(int reportId, const QString& message) {
-    // Mesaj boş olamaz kontrolü
     if (message.trimmed().isEmpty()) {
         emit dataError("Admin reply mesajı boş olamaz!");
         return;
     }
-    
-    // 5 kez deneme ile gönder
-    bool success = false;
-    for (int attempt = 1; attempt <= 5; attempt++) {
-        emit dataInfo(QString("[DENEME %1/5] Admin reply gönderiliyor... Rapor ID: %2").arg(attempt).arg(reportId));
-        
-        if (trySendAdminReplyInternal(reportId, message.trimmed())) {
-            emit dataSuccess(QString("Admin reply başarıyla gönderildi! Rapor ID: %1").arg(reportId));
-            success = true;
-            break;
-        } else {
-            emit dataError(QString("Admin reply gönderim hatası (Deneme %1/5)").arg(attempt));
-            
-            if (attempt < 5) {
-                // Kısa bir bekleme
-                QThread::msleep(500);
+
+
+    AdminReplyAsyncState* state = new AdminReplyAsyncState{
+        reportId,
+        message.trimmed(),
+        1,
+        5,
+        new QTimer(this),
+        this,
+        QMetaObject::Connection(),
+        false
+    };
+
+
+    auto cleanup = [state]() {
+        if (state->finished) return;
+        state->finished = true;
+        if (state->timer) {
+            state->timer->stop();
+            state->timer->deleteLater();
+        }
+        QObject::disconnect(state->readyConn);
+        delete state;
+    };
+
+    auto trySend = [state, cleanup]() {
+        if (state->finished) return;
+        qDebug() << "[ADMIN_REPLY] Deneme" << state->attempt << "/" << state->maxAttempts << "- Rapor ID:" << state->reportId;
+        state->wrapper->emit dataInfo(QString("[DENEME %1/%2] Admin reply gönderiliyor... Rapor ID: %3")
+            .arg(state->attempt).arg(state->maxAttempts).arg(state->reportId));
+
+        // Bağlantı kontrolü ve otomatik yeniden bağlanma
+        if (!state->wrapper->tcpSocket || state->wrapper->tcpSocket->state() != QAbstractSocket::ConnectedState) {
+            qDebug() << "[ADMIN_REPLY] Bağlantı yok veya kopmuş. Yeniden bağlanıyor...";
+            state->wrapper->emit dataError("Bağlantı yok veya kopmuş. Yeniden bağlanıyor...");
+            state->wrapper->connectToServer(state->wrapper->serverHost, state->wrapper->serverPort);
+            QEventLoop loop;
+            QObject::connect(state->wrapper->tcpSocket, &QTcpSocket::connected, &loop, &QEventLoop::quit);
+            QTimer::singleShot(2000, &loop, &QEventLoop::quit); // 2 saniye timeout
+            loop.exec();
+            qDebug() << "[ADMIN_REPLY] Yeniden bağlanma sonrası socket state:" << (state->wrapper->tcpSocket ? state->wrapper->tcpSocket->state() : -1);
+            if (!state->wrapper->tcpSocket || state->wrapper->tcpSocket->state() != QAbstractSocket::ConnectedState) {
+                qDebug() << "[ADMIN_REPLY] Yeniden bağlantı başarısız!";
+                state->wrapper->emit dataError("Yeniden bağlantı başarısız, admin reply gönderilemedi!");
+                cleanup();
+                return;
             }
         }
-    }
-    
-    // 5 deneme de başarısızsa dosyaya kaydet
-    if (!success) {
-        saveAdminReplyToPending(reportId, message.trimmed());
-        emit dataError(QString("Admin reply 5 denemede gönderilemedi, dosyaya kaydedildi. Rapor ID: %1").arg(reportId));
-        
-        // Eski dosyaları öncelikli göndermeyi dene
-        sendAllPendingAdminReplies();
-    }
+
+        // Mesajı hazırla ve gönder
+        QJsonObject replyObj;
+        replyObj["report_id"] = state->reportId;
+        replyObj["msg"] = state->message;
+        QJsonDocument doc(replyObj);
+        QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
+        char* encryptedMsg = create_encrypted_protocol_message("REPLY_REPORT",
+                                                              jsonData.constData(),
+                                                              state->wrapper->aesKey,
+                                                              state->wrapper->jwtToken.toUtf8().constData());
+        if (!encryptedMsg) {
+            qDebug() << "[ADMIN_REPLY] Şifreli mesaj oluşturulamadı!";
+            state->wrapper->emit dataError("Şifreli mesaj oluşturulamadı!");
+            cleanup();
+            return;
+        }
+        QByteArray msgData(encryptedMsg, strlen(encryptedMsg));
+        free(encryptedMsg);
+        qDebug() << "[ADMIN_REPLY] Mesaj uzunluğu:" << msgData.size() << "İlk 32 byte:" << msgData.left(32).toHex();
+        qint64 written = state->wrapper->tcpSocket->write(msgData);
+        state->wrapper->tcpSocket->flush();
+        qDebug() << "[ADMIN_REPLY] write() dönen değer:" << written << ", socket error:" << state->wrapper->tcpSocket->error() << state->wrapper->tcpSocket->errorString();
+        if (written != msgData.size()) {
+            qDebug() << "[ADMIN_REPLY] Veri socket'e tam olarak yazılamadı!";
+            state->wrapper->emit dataError("Veri socket'e tam olarak yazılamadı!");
+            cleanup();
+            return;
+        }
+        if (state->wrapper->tcpSocket->error() != QAbstractSocket::UnknownSocketError) {
+            qDebug() << "[ADMIN_REPLY] Socket error oluştu:" << state->wrapper->tcpSocket->errorString();
+            state->wrapper->emit dataError(QString("Socket error: %1").arg(state->wrapper->tcpSocket->errorString()));
+            cleanup();
+            return;
+        }
+        // Timeout başlat
+        state->timer->start(3000);
+    };
+
+    // readyRead sinyalini sadece bu işlem için dinle
+    state->readyConn = QObject::connect(tcpSocket, &QTcpSocket::readyRead, this, [state, cleanup]() {
+        if (state->finished) return;
+        QByteArray response = state->wrapper->tcpSocket->readAll();
+        if (response.contains("SUCCESS") || response.contains("OK")) {
+            state->wrapper->emit dataSuccess(QString("Admin reply başarıyla gönderildi! Rapor ID: %1").arg(state->reportId));
+            cleanup();
+        } else {
+            // Yanıt beklenenden farklıysa yine de başarılı say
+            state->wrapper->emit dataSuccess(QString("Admin reply gönderildi (yanıt: %1)").arg(QString::fromUtf8(response)));
+            cleanup();
+        }
+    });
+
+    // Timeout olursa tekrar dene veya pes et
+    QObject::connect(state->timer, &QTimer::timeout, this, [state, trySend, cleanup]() {
+        if (state->finished) return;
+        state->timer->stop();
+        state->attempt++;
+        if (state->attempt > state->maxAttempts) {
+            state->wrapper->saveAdminReplyToPending(state->reportId, state->message);
+            state->wrapper->emit dataError(QString("Admin reply 5 denemede gönderilemedi, dosyaya kaydedildi. Rapor ID: %1").arg(state->reportId));
+            state->wrapper->sendAllPendingAdminReplies();
+            cleanup();
+        } else {
+            trySend();
+        }
+    });
+
+    trySend();
 }
 
 /**
@@ -1565,7 +1665,12 @@ void ClientWrapper::processEncryptedResponse()
                             int roomId = obj["room_id"].toInt();
                             QJsonArray messages = obj["messages"].toArray();
                             logInfo(QString("[CHAT][ENCRYPTED] Geçmiş mesajlar alındı | room_id=%1, mesaj sayısı=%2").arg(roomId).arg(messages.size()));
-                            emit chatMessagesReceived(roomId, messages);
+                            // Mevcut mesajları koru ve yeni gelenleri ekle
+                            QJsonArray &stored = roomMessages[roomId];
+                            for (const QJsonValue &msg : messages) {
+                                stored.append(msg);
+                            }
+                            emit chatMessagesReceived(roomId, stored);
                         }
                         // Tüm kullanıcıların son konumları yanıtı (admin) veya birim son konumları (normal kullanıcı)
                         else if (obj.contains("locations") && obj["locations"].isArray()) {
@@ -1826,15 +1931,15 @@ void ClientWrapper::handleConnectionFailure(ConnectionType failedType, const QSt
  * @brief Admin reply'ı internal olarak gönderir
  */
 bool ClientWrapper::trySendAdminReplyInternal(int reportId, const QString& message) {
-    if (!isConnected() || !handshakeCompleted) {
-        // Bağlantı yoksa yeniden bağlanmayı dene
-        connectToServer(serverHost, serverPort);
+    // if (!isConnected() || !handshakeCompleted) {
+    //     // Bağlantı yoksa yeniden bağlanmayı dene
+    //     connectToServer(serverHost, serverPort);
         
-        // Bağlantı kontrolü yap
-        if (!isConnected() || !handshakeCompleted) {
-            return false;
-        }
-    }
+    //     // Bağlantı kontrolü yap
+    //     if (!isConnected() || !handshakeCompleted) {
+    //         return false;
+    //     }
+    // }
     
     try {
         // JSON formatında admin reply mesajı oluştur
@@ -2284,6 +2389,8 @@ void ClientWrapper::fetchRoomKey(int roomId, const QString& jwtToken)
 // --- Chat mesajlarını getirir (asenkron) ---
 void ClientWrapper::fetchChatMessages(int roomId, const QByteArray& roomKey)
 {
+    lastFetchedRoomKey = roomKey;
+
     logInfo(QString("[QML] fetchChatMessages çağrıldı | roomId=%1").arg(roomId));
     logInfo(QString("[QML] fetchChatMessages | roomKey(hex)=%1 | roomKey.size()=%2").arg(QString(roomKey.toHex())).arg(roomKey.size()));
 
@@ -2398,12 +2505,7 @@ void ClientWrapper::leaveChatRoom(int roomId) {
 // Mesaj dinleyici thread'i için fonksiyonlar
 void ClientWrapper::startChatListener(int roomId, const QByteArray& roomKey) {
     if (chatListenerState.thread && chatListenerState.running) {
-        logInfo("[QML] startChatListener: Zaten bir dinleyici aktif, durduruluyor...");
-        chatListenerState.running = false;
-        if (chatListenerState.thread->joinable())
-            chatListenerState.thread->join();
-        delete chatListenerState.thread;
-        chatListenerState.thread = nullptr;
+        return;
     }
 
     QByteArray key = QByteArray::fromHex(roomKey);
@@ -2420,32 +2522,107 @@ void ClientWrapper::startChatListener(int roomId, const QByteArray& roomKey) {
     chatListenerState.thread = new std::thread([this, roomId, key]() {
         qint64 tid = (qint64)QThread::currentThreadId();
         logInfo(QString("[THREAD][startChatListener] Thread ID: %1").arg(tid));
-        {
-            QMutexLocker locker(&clientConnectionMutex);
-            logInfo(QString("[THREAD][startChatListener] LOCK ACQUIRED (flush_socket) | Thread ID: %1").arg(tid));
-            flush_socket(clientConnection->socket); // Socket'i temizle
-            logInfo(QString("[THREAD][startChatListener] LOCK RELEASE (flush_socket) | Thread ID: %1").arg(tid));
+
+        // --- YENİ POSIX SOCKET VE CLIENT CONNECTION OLUŞTUR ---
+        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd < 0) {
+            logError("[ChatListener] POSIX socket açılamadı!");
+            emit chatMessagesFailed(roomId, "ChatListener: POSIX socket açılamadı!");
+            return;
         }
+        struct sockaddr_in serv_addr;
+        memset(&serv_addr, 0, sizeof(serv_addr));
+        serv_addr.sin_family = AF_INET;
+        serv_addr.sin_port = htons(serverPort);
+        if (inet_pton(AF_INET, serverHost.toUtf8().constData(), &serv_addr.sin_addr) <= 0) {
+            logError("[ChatListener] Sunucu adresi çözülemedi!");
+            close(sockfd);
+            emit chatMessagesFailed(roomId, "ChatListener: Sunucu adresi çözülemedi!");
+            return;
+        }
+        if (::connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+            logError("[ChatListener] Sunucuya bağlanılamadı (POSIX)!");
+            close(sockfd);
+            emit chatMessagesFailed(roomId, "ChatListener: Sunucuya bağlanılamadı (POSIX)!");
+            return;
+        }
+
+        // ECDH handshake (C fonksiyonları ile)
+        ecdh_context_t listenerEcdhCtx;
+        memset(&listenerEcdhCtx, 0, sizeof(ecdh_context_t));
+        if (ecdh_init_context(&listenerEcdhCtx) == 0 || ecdh_generate_keypair(&listenerEcdhCtx) == 0) {
+            logError("[ChatListener] ECDH context/init hatası!");
+            close(sockfd);
+            emit chatMessagesFailed(roomId, "ChatListener: ECDH context/init hatası!");
+            return;
+        }
+        // Public key gönder
+        ssize_t sent = send(sockfd, listenerEcdhCtx.public_key, ECC_PUB_KEY_SIZE, 0);
+        if (sent != ECC_PUB_KEY_SIZE) {
+            logError("[ChatListener] Public key gönderilemedi!");
+            close(sockfd);
+            emit chatMessagesFailed(roomId, "ChatListener: Public key gönderilemedi!");
+            return;
+        }
+        uint8_t serverPubKey[ECC_PUB_KEY_SIZE];
+        ssize_t recvd = recv(sockfd, serverPubKey, ECC_PUB_KEY_SIZE, MSG_WAITALL);
+        if (recvd != ECC_PUB_KEY_SIZE) {
+            logError("[ChatListener] Sunucu public key alınamadı!");
+            close(sockfd);
+            emit chatMessagesFailed(roomId, "ChatListener: Sunucu public key alınamadı!");
+            return;
+        }
+        if (ecdh_compute_shared_secret(&listenerEcdhCtx, serverPubKey) == 0 || ecdh_derive_aes_key(&listenerEcdhCtx) == 0) {
+            logError("[ChatListener] ECDH shared secret/anahtar türetme hatası!");
+            close(sockfd);
+            emit chatMessagesFailed(roomId, "ChatListener: ECDH shared secret/anahtar türetme hatası!");
+            return;
+        }
+
+        // C client_connection_t oluştur
+        client_connection_t* listenerConn = (client_connection_t*)calloc(1, sizeof(client_connection_t));
+        listenerConn->socket = sockfd;
+        listenerConn->ecdh_ctx = listenerEcdhCtx;
+        listenerConn->ecdh_initialized = true;
+        listenerConn->type = CONN_TYPE_TCP;
+        listenerConn->port = serverPort;
+        listenerConn->server_addr = serv_addr;
+
+        // HELLO mesajı gönder (JWT ile)
+        QString helloMsg = QString("HELLO:%1").arg(jwtToken);
+        QByteArray helloBytes = helloMsg.toUtf8();
+        send(sockfd, helloBytes.constData(), helloBytes.size(), 0);
+
+        // Odaya katılma isteği gönder
+        send_join_room_request(listenerConn, jwtToken.toUtf8().constData(), roomId);
+
+        // Oda anahtarını al (gerekirse fetchRoomKey fonksiyonundaki gibi alınabilir)
+        // Burada doğrudan parametre olarak verilen key kullanılacak
 
         logInfo(QString("[QML] ChatListener thread başlatıldı | roomId=%1").arg(roomId));
         while (chatListenerState.running) {
-            QMutexLocker locker(&clientConnectionMutex);
-            logInfo(QString("[THREAD][startChatListener] LOCK ACQUIRED (receive) | Thread ID: %1").arg(tid));
-            // C fonksiyonunu çağır: receive_encrypted_response_room_key
-            char* response = receive_encrypted_response_room_key(clientConnection, reinterpret_cast<const uint8_t*>(key.constData()));
-            logInfo(QString("[THREAD][startChatListener] LOCK RELEASE (receive) | Thread ID: %1").arg(tid));
+            // Sadece bu bağlantıdan oku
+            char* response = receive_encrypted_response_room_key(listenerConn, reinterpret_cast<const uint8_t*>(key.constData()));
             if (!response) {
-                locker.unlock();
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
             }
-            // JSON parse
-            QJsonParseError err;
-            QJsonDocument doc = QJsonDocument::fromJson(QByteArray(response), &err);
+            // --- Chat mesajı ana thread'e aktarılacak ---
+            QByteArray responseBytes(response);
             free(response);
+            if (responseBytes.startsWith("ENCRYPTED:chat_receive_message:") || responseBytes.startsWith("ENCRYPTED:chat_get_messages:")) {
+                // Ana thread'in buffer'ına ekle
+                QMetaObject::invokeMethod(this, [this, responseBytes]() {
+                    incomingBuffer.append(responseBytes + "\n");
+                    processEncryptedResponse();
+                }, Qt::QueuedConnection);
+                continue;
+            }
+            // Diğer mesajlar için eski yol
+            QJsonParseError err;
+            QJsonDocument doc = QJsonDocument::fromJson(responseBytes, &err);
             if (err.error != QJsonParseError::NoError || !doc.isObject()) continue;
             QJsonObject obj = doc.object();
-            // Mesaj objesi ise QML'e ilet
             if (obj.contains("message")) {
                 QJsonArray arr;
                 arr.append(obj);
@@ -2453,6 +2630,9 @@ void ClientWrapper::startChatListener(int roomId, const QByteArray& roomKey) {
             }
         }
         logInfo("[QML] ChatListener thread sonlandırıldı.");
+        // Bağlantıyı kapat
+        close(sockfd);
+        free(listenerConn);
     });
 }
 
@@ -2465,6 +2645,8 @@ void ClientWrapper::stopChatListener() {
         chatListenerState.thread = nullptr;
         logInfo("[QML] ChatListener thread durduruldu.");
     }
+    // --- Ana thread'in readyRead sinyalini tekrar bağla ---
+    connect(tcpSocket, &QTcpSocket::readyRead, this, &ClientWrapper::onDataReceived);
 }
 
 // Kullanıcı bilgisi isteği ve parse işlemi (C fonksiyonu ile)

@@ -21,10 +21,12 @@ Item {
                 item.messages = chatRoomWindowLoader.messages;
                 item.roomKey = chatRoomWindowLoader.roomKey;
                 item.visible = true;
-                item.closed.connect(function() {
-                    chatRoomWindowLoader.roomId = -1;
-                    chatRoomWindowLoader.closed();
-                });
+                if (item.closed) {
+                    item.closed.connect(function() {
+                        chatRoomWindowLoader.roomId = -1;
+                        chatRoomWindowLoader.closed();
+                    });
+                }
                 console.log("[QML] ChatRoomWindowLoader.onLoaded: roomId=", chatRoomWindowLoader.roomId, ", roomKey=", chatRoomWindowLoader.roomKey);
             }
         }

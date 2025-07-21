@@ -15,6 +15,8 @@ extern thread_pool_t report_query_pool;
 extern thread_pool_t reply_query_pool;
 extern thread_pool_t query_my_replies_pool;
 extern thread_pool_t query_replies_one_report_pool;
+extern thread_pool_t reply_watch_pool;
+
 
 // Sonuç beklemek için yapı
 typedef struct {
@@ -37,5 +39,8 @@ void reply_query_task(void* arg);
 void query_my_replies_task(void* arg);
 void query_replies_one_report_task(void* arg);
 void init_query_pools();
+
+void reply_watch_task(void* arg);
+void init_reply_watch_pool();
 
 #endif // POOL_MANAGER_H

@@ -93,6 +93,18 @@ bool admin_reply_manager_send_reply(int report_id, const char* message, int admi
             break;
         }
     }
+    // Eğer admin kendi raporuna cevap veriyorsa, kullanıcıya mesaj gönderme
+    if (admin_user_id == report_owner_user_id) {
+        printf("[ADMIN_REPLY][send_reply] UYARI: Admin (user_id=%d) kendi raporuna cevap veriyor, kullanıcıya mesaj gönderilmeyecek.\n", admin_user_id);
+        reply_t reply;
+        memset(&reply, 0, sizeof(reply));
+        reply.user_id = admin_user_id;  // Reply'ı gönderen admin'in user_id'si
+        reply.report_id = report_id;
+        strncpy(reply.message, message, sizeof(reply.message) - 1);
+        reply.timestamp = time(NULL);
+        db_insert_reply(&reply);
+        return true;
+    }
     if (user_socket == -1) {
         printf("[ADMIN_REPLY][send_reply] report_owner_user_id %d için aktif bağlantı yok, veri tabanına kaydedildi (offline)\n", report_owner_user_id);
         reply_t reply;
@@ -142,23 +154,20 @@ void handle_reply_report(const char* decrypted_json, const char* jwt_token, int 
             }
         }
         if (admin_user_id <= 0) {
-            snprintf(out, out_size, "HATA: Admin kullanıcı kimliği belirlenemedi");
+            snprintf(out, out_size, "{\"status\":\"error\",\"message\":\"Admin kullanıcı kimliği belirlenemedi\"}");
             free(reply_data);
             return;
         }
-        // admin_reply_t'yi reply_t'ye dönüştür
-        reply_t db_reply;
-        db_reply.user_id = admin_user_id;  // ÖNEMLİ: Admin'in user_id'si kullanılıyor
-        db_reply.report_id = reply_data->report_id;
-        strncpy(db_reply.message, reply_data->msg, sizeof(db_reply.message) - 1);
-        db_reply.message[sizeof(db_reply.message) - 1] = '\0';
-        db_reply.timestamp = time(NULL);
-        // Reply sahibine bildirim gönder (admin_reply_manager kullanarak)
-        admin_reply_manager_send_reply(reply_data->report_id, reply_data->msg, client_socket);
-
+        // Yanıtı ilet
+        bool result = admin_reply_manager_send_reply(reply_data->report_id, reply_data->msg, client_socket);
+        if (result) {
+            snprintf(out, out_size, "{\"status\":\"ok\",\"message\":\"Yanıt başarıyla iletildi\"}");
+        } else {
+            snprintf(out, out_size, "{\"status\":\"warning\",\"message\":\"Yanıt veritabanına kaydedildi, kullanıcıya iletilemedi (offline veya kendi raporu)\"}");
+        }
         free(reply_data);
     } else {
-        snprintf(out, out_size, "HATA: Admin reply verisi geçersiz format");
+        snprintf(out, out_size, "{\"status\":\"error\",\"message\":\"Admin reply verisi geçersiz format\"}");
         if (reply_data) free(reply_data);
     }
 }

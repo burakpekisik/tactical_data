@@ -72,6 +72,7 @@ target_link_libraries(TacticalMapClient
     Qt6::Location
     Qt6::Positioning
     Qt6::Network
+    Qt6::Concurrent
     m  # Math library for crypto operations
     jwt
 )
@@ -88,7 +89,6 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/ChatRoomWindow.qml
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/ChatRoomWindowLoader.qml 
                ${CMAKE_CURRENT_BINARY_DIR}/ChatRoomWindowLoader.qml COPYONLY)
-
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/CreateRoomPopup.qml 
                ${CMAKE_CURRENT_BINARY_DIR}/CreateRoomPopup.qml COPYONLY)
