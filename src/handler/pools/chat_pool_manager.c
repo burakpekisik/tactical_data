@@ -186,10 +186,10 @@ void chat_leave_room_task(void* arg) {
 
 // Thread pool init fonksiyonu (main'de çağrılmalı)
 void init_chat_pools() {
-    thread_pool_init(&chat_create_room_pool, 2, 32);
-    thread_pool_init(&chat_list_rooms_pool, 2, 32);
-    thread_pool_init(&chat_join_room_pool, 2, 32);
-    thread_pool_init(&chat_get_messages_pool, 2, 32);
-    thread_pool_init(&chat_send_message_pool, 2, 32);
-    thread_pool_init(&chat_leave_room_pool, 2, 32);
+    thread_pool_init(&chat_create_room_pool, 4, 32);
+    thread_pool_init(&chat_list_rooms_pool, 4, 32);
+    thread_pool_init(&chat_join_room_pool, 4, 32);
+    thread_pool_init(&chat_get_messages_pool, 4, 32);
+    thread_pool_init(&chat_send_message_pool, 4, 32);
+    thread_pool_init(&chat_leave_room_pool, 4, 32);
 }

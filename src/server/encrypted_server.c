@@ -118,6 +118,7 @@ int main() {
 
     init_chat_pools();
     init_query_pools();
+    init_reply_watch_pool();
     
     // Logger'ı başlat (önce logger başlatılmalı)
     if (logger_init(LOGGER_SERVER, LOG_DEBUG) != 0) {

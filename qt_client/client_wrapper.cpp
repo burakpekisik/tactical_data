@@ -1,4 +1,3 @@
-
 /**
  * @file client_wrapper.cpp
  * @brief Qt Client wrapper sınıfının implementasyonu
@@ -1223,19 +1222,124 @@ void ClientWrapper::queryMyReplies() {
  *          Hem normal kullanıcı hem de admin için çalışır
  */
 void ClientWrapper::watchReportReplies() {
-    if (!isConnected()) {
-        logError("Bağlantı yok, rapor cevapları izlenemez");
+    static std::thread* reportReplyListenerThread = nullptr;
+    static std::atomic<bool> reportReplyListenerRunning{false};
+    if (reportReplyListenerThread && reportReplyListenerRunning) {
+        logInfo("ReportReplyListener zaten çalışıyor.");
         return;
     }
-    
-    // Rapor cevabı izleme mesajı gönder
-    QString watchCmd = QString("REPORT_REPLY_WATCH:%1").arg(jwtToken);
-    QByteArray cmdData = watchCmd.toUtf8();
-    
-    tcpSocket->write(cmdData);
-    tcpSocket->flush();
-    
-    logInfo("Rapor cevabı izleme başlatıldı");
+    if (jwtToken.isEmpty()) {
+        logError("JWT token yok, rapor cevapları izlenemez");
+        return;
+    }
+    reportReplyListenerRunning = true;
+    reportReplyListenerThread = new std::thread([this]() {
+        qint64 tid = (qint64)QThread::currentThreadId();
+        logInfo(QString("[THREAD][ReportReplyListener] Thread ID: %1").arg(tid));
+        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd < 0) {
+            logError("[ReportReplyListener] POSIX socket açılamadı!");
+            reportReplyListenerRunning = false;
+            return;
+        }
+        struct sockaddr_in serv_addr;
+        memset(&serv_addr, 0, sizeof(serv_addr));
+        serv_addr.sin_family = AF_INET;
+        serv_addr.sin_port = htons(serverPort);
+        if (inet_pton(AF_INET, serverHost.toUtf8().constData(), &serv_addr.sin_addr) <= 0) {
+            logError("[ReportReplyListener] Sunucu adresi çözülemedi!");
+            close(sockfd);
+            reportReplyListenerRunning = false;
+            return;
+        }
+        if (::connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+            logError("[ReportReplyListener] Sunucuya bağlanılamadı (POSIX)!");
+            close(sockfd);
+            reportReplyListenerRunning = false;
+            return;
+        }
+        // ECDH handshake
+        ecdh_context_t replyEcdhCtx;
+        memset(&replyEcdhCtx, 0, sizeof(ecdh_context_t));
+        if (ecdh_init_context(&replyEcdhCtx) == 0 || ecdh_generate_keypair(&replyEcdhCtx) == 0) {
+            logError("[ReportReplyListener] ECDH context/init hatası!");
+            close(sockfd);
+            reportReplyListenerRunning = false;
+            return;
+        }
+        ssize_t sent = send(sockfd, replyEcdhCtx.public_key, ECC_PUB_KEY_SIZE, 0);
+        if (sent != ECC_PUB_KEY_SIZE) {
+            logError("[ReportReplyListener] Public key gönderilemedi!");
+            close(sockfd);
+            reportReplyListenerRunning = false;
+            return;
+        }
+        uint8_t serverPubKey[ECC_PUB_KEY_SIZE];
+        ssize_t recvd = recv(sockfd, serverPubKey, ECC_PUB_KEY_SIZE, MSG_WAITALL);
+        if (recvd != ECC_PUB_KEY_SIZE) {
+            logError("[ReportReplyListener] Sunucu public key alınamadı!");
+            close(sockfd);
+            reportReplyListenerRunning = false;
+            return;
+        }
+        if (ecdh_compute_shared_secret(&replyEcdhCtx, serverPubKey) == 0 || ecdh_derive_aes_key(&replyEcdhCtx) == 0) {
+            logError("[ReportReplyListener] ECDH shared secret/anahtar türetme hatası!");
+            close(sockfd);
+            reportReplyListenerRunning = false;
+            return;
+        }
+        client_connection_t* replyConn = (client_connection_t*)calloc(1, sizeof(client_connection_t));
+        replyConn->socket = sockfd;
+        replyConn->ecdh_ctx = replyEcdhCtx;
+        replyConn->ecdh_initialized = true;
+        replyConn->type = CONN_TYPE_TCP;
+        replyConn->port = serverPort;
+        replyConn->server_addr = serv_addr;
+        // REPORT_REPLY_WATCH komutu gönder
+        QString cmd = QString("REPORT_REPLY_WATCH:%1").arg(jwtToken);
+        QByteArray cmdData = cmd.toUtf8();
+        send(sockfd, cmdData.constData(), cmdData.size(), 0);
+        logInfo("[ReportReplyListener] Dinleme komutu gönderildi.");
+        // Sonsuz döngü ile rapor cevaplarını dinle
+        while (reportReplyListenerRunning) {
+            uint8_t recvBuf[4096];
+            ssize_t n = recv(sockfd, recvBuf, sizeof(recvBuf), 0);
+            if (n <= 0) {
+                if (n == 0) {
+                    logInfo("[ReportReplyListener] Sunucu bağlantıyı kapattı.");
+                } else {
+                    logError("[ReportReplyListener] recv hatası veya bağlantı koptu!");
+                }
+                break;
+            }
+            QByteArray rawData(reinterpret_cast<const char*>(recvBuf), n);
+            // ENCRYPTED rapor cevabı ise çöz
+            if (rawData.startsWith("ENCRYPTED:")) {
+                int dataStart = 10;
+                QByteArray hexData = rawData.mid(dataStart).trimmed();
+                QByteArray binData = QByteArray::fromHex(hexData);
+                if (binData.size() >= 16) {
+                    QByteArray iv = binData.left(16);
+                    QByteArray enc = binData.mid(16);
+                    QByteArray plainJson = decryptAes256Cbc(enc, QByteArray(reinterpret_cast<const char*>(replyEcdhCtx.aes_key), 32), iv);
+                    if (!plainJson.isEmpty()) {
+                        logInfo(QString("[ReportReplyListener] Rapor cevabı alındı: %1").arg(QString::fromUtf8(plainJson)));
+                        emit reportReplyReceived(QString::fromUtf8(plainJson));
+                    } else {
+                        logError("[ReportReplyListener] Rapor cevabı çözümlemesi başarısız!");
+                    }
+                } else {
+                    logError("[ReportReplyListener] ENCRYPTED rapor cevabında veri eksik!");
+                }
+            } else {
+                logInfo(QString("[ReportReplyListener] Rapor cevabı alındı (plain): %1").arg(QString::fromUtf8(rawData)));
+                emit reportReplyReceived(QString::fromUtf8(rawData));
+            }
+        }
+        close(sockfd);
+        free(replyConn);
+        reportReplyListenerRunning = false;
+    });
 }
 
 /**
@@ -1482,19 +1586,129 @@ void ClientWrapper::handleAdvancedError(const QString& error, bool canFallback) 
  */
 void ClientWrapper::listenForAdminNotifications()
 {
-    if (!isConnected()) {
-        logError("Bağlantı yok, admin bildirimleri dinlenemez");
+    static std::thread* adminListenerThread = nullptr;
+    static std::atomic<bool> adminListenerRunning{false};
+    if (adminListenerThread && adminListenerRunning) {
+        logInfo("AdminListener zaten çalışıyor.");
         return;
     }
     if (jwtToken.isEmpty()) {
         logError("JWT token yok, admin bildirimleri dinlenemez");
         return;
     }
-    QString cmd = QString("ADMIN_NOTIFY_LISTEN:%1").arg(jwtToken);
-    QByteArray cmdData = cmd.toUtf8();
-    tcpSocket->write(cmdData);
-    tcpSocket->flush();
-    logInfo("Admin bildirim dinleme başlatıldı");
+    adminListenerRunning = true;
+    adminListenerThread = new std::thread([this]() {
+        qint64 tid = (qint64)QThread::currentThreadId();
+        logInfo(QString("[THREAD][AdminListener] Thread ID: %1").arg(tid));
+        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd < 0) {
+            logError("[AdminListener] POSIX socket açılamadı!");
+            adminListenerRunning = false;
+            return;
+        }
+        struct sockaddr_in serv_addr;
+        memset(&serv_addr, 0, sizeof(serv_addr));
+        serv_addr.sin_family = AF_INET;
+        serv_addr.sin_port = htons(serverPort);
+        if (inet_pton(AF_INET, serverHost.toUtf8().constData(), &serv_addr.sin_addr) <= 0) {
+            logError("[AdminListener] Sunucu adresi çözülemedi!");
+            close(sockfd);
+            adminListenerRunning = false;
+            return;
+        }
+        if (::connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+            logError("[AdminListener] Sunucuya bağlanılamadı (POSIX)!");
+            close(sockfd);
+            adminListenerRunning = false;
+            return;
+        }
+        // ECDH handshake
+        ecdh_context_t listenerEcdhCtx;
+        memset(&listenerEcdhCtx, 0, sizeof(ecdh_context_t));
+        if (ecdh_init_context(&listenerEcdhCtx) == 0 || ecdh_generate_keypair(&listenerEcdhCtx) == 0) {
+            logError("[AdminListener] ECDH context/init hatası!");
+            close(sockfd);
+            adminListenerRunning = false;
+            return;
+        }
+        ssize_t sent = send(sockfd, listenerEcdhCtx.public_key, ECC_PUB_KEY_SIZE, 0);
+        if (sent != ECC_PUB_KEY_SIZE) {
+            logError("[AdminListener] Public key gönderilemedi!");
+            close(sockfd);
+            adminListenerRunning = false;
+            return;
+        }
+        uint8_t serverPubKey[ECC_PUB_KEY_SIZE];
+        ssize_t recvd = recv(sockfd, serverPubKey, ECC_PUB_KEY_SIZE, MSG_WAITALL);
+        if (recvd != ECC_PUB_KEY_SIZE) {
+            logError("[AdminListener] Sunucu public key alınamadı!");
+            close(sockfd);
+            adminListenerRunning = false;
+            return;
+        }
+        if (ecdh_compute_shared_secret(&listenerEcdhCtx, serverPubKey) == 0 || ecdh_derive_aes_key(&listenerEcdhCtx) == 0) {
+            logError("[AdminListener] ECDH shared secret/anahtar türetme hatası!");
+            close(sockfd);
+            adminListenerRunning = false;
+            return;
+        }
+        client_connection_t* listenerConn = (client_connection_t*)calloc(1, sizeof(client_connection_t));
+        listenerConn->socket = sockfd;
+        listenerConn->ecdh_ctx = listenerEcdhCtx;
+        listenerConn->ecdh_initialized = true;
+        listenerConn->type = CONN_TYPE_TCP;
+        listenerConn->port = serverPort;
+        listenerConn->server_addr = serv_addr;
+        // ADMIN_NOTIFY dinleme komutu gönder
+        QString cmd = QString("ADMIN_NOTIFY_LISTEN:%1").arg(jwtToken);
+        QByteArray cmdData = cmd.toUtf8();
+        send(sockfd, cmdData.constData(), cmdData.size(), 0);
+        logInfo("[AdminListener] Dinleme komutu gönderildi.");
+
+        // Sonsuz döngü ile admin bildirimlerini dinle
+        while (adminListenerRunning) {
+            // Bildirim verisi için buffer
+            uint8_t recvBuf[4096];
+            ssize_t n = recv(sockfd, recvBuf, sizeof(recvBuf), 0);
+            if (n <= 0) {
+                if (n == 0) {
+                    logInfo("[AdminListener] Sunucu bağlantıyı kapattı.");
+                } else {
+                    logError("[AdminListener] recv hatası veya bağlantı koptu!");
+                }
+                break;
+            }
+            // Gelen veriyi işle
+            QByteArray rawData(reinterpret_cast<const char*>(recvBuf), n);
+            // ENCRYPTED admin bildirimi ise çöz
+            if (rawData.startsWith("ENCRYPTED:")) {
+                int dataStart = 10; // "ENCRYPTED:" uzunluğu
+                QByteArray hexData = rawData.mid(dataStart).trimmed();
+                QByteArray binData = QByteArray::fromHex(hexData);
+                if (binData.size() >= 16) {
+                    QByteArray iv = binData.left(16);
+                    QByteArray enc = binData.mid(16);
+                    QByteArray plainJson = decryptAes256Cbc(enc, QByteArray(reinterpret_cast<const char*>(listenerEcdhCtx.aes_key), 32), iv);
+                    if (!plainJson.isEmpty()) {
+                        logInfo(QString("[AdminListener] Bildirim alındı: %1").arg(QString::fromUtf8(plainJson)));
+                        emit adminNotificationReceived(QString::fromUtf8(plainJson));
+                    } else {
+                        logError("[AdminListener] Bildirim çözümlemesi başarısız!");
+                    }
+                } else {
+                    logError("[AdminListener] ENCRYPTED bildirimde veri eksik!");
+                }
+            } else {
+                // Düz metin bildirim
+                logInfo(QString("[AdminListener] Bildirim alındı (plain): %1").arg(QString::fromUtf8(rawData)));
+                emit adminNotificationReceived(QString::fromUtf8(rawData));
+            }
+        }
+        // Temizlik
+        close(sockfd);
+        free(listenerConn);
+        adminListenerRunning = false;
+    });
 }
 
 // --- Parçalı ENCRYPTED_PART yanıtlarını işler ---

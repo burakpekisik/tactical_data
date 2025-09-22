@@ -221,6 +221,11 @@ private:
     // void queryRepliesForReport(int reportId); // Artık public
 
 signals:
+    /**
+     * @brief Rapor cevabı alındığında emit edilir
+     * @param reply Rapor cevabı (JSON veya düz metin)
+     */
+    void reportReplyReceived(const QString& reply);
     // Kullanıcı yetkisi veya info değiştiğinde
     void userPrivilegeChanged();
     // Odaya katılım başarılı/başarısız olduğunda

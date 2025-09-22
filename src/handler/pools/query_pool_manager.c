@@ -116,8 +116,8 @@ void query_replies_one_report_task(void* arg) {
 }
 
 void init_query_pools() {
-    thread_pool_init(&report_query_pool, 2, 32);
-    thread_pool_init(&reply_query_pool, 2, 32);
-    thread_pool_init(&query_my_replies_pool, 2, 32);
-    thread_pool_init(&query_replies_one_report_pool, 2, 32);
+    thread_pool_init(&report_query_pool, 4, 32);
+    thread_pool_init(&reply_query_pool, 4, 32);
+    thread_pool_init(&query_my_replies_pool, 4, 32);
+    thread_pool_init(&query_replies_one_report_pool, 4, 32);
 }

@@ -97,10 +97,14 @@ MainWindow::MainWindow(QWidget *parent)
             logTextEdit->append("<b>[INFO]</b> Login sonrası bağlantı durumu kontrol ediliyor...");
             onPeriodicConnectionCheck();
         });
-        // QTimer::singleShot(3000, this, [this]() {
-        //     logTextEdit->append("<b>[INFO]</b> Admin notify watch başlatılıyor...");
-        //     clientWrapper->listenForAdminNotifications();
-        // });
+        QTimer::singleShot(3000, this, [this]() {
+            logTextEdit->append("<b>[INFO]</b> Admin notify watch başlatılıyor...");
+            clientWrapper->listenForAdminNotifications();
+        });
+        QTimer::singleShot(4000, this, [this]() {
+            logTextEdit->append("<b>[INFO]</b> Report reply watch başlatılıyor...");
+            clientWrapper->watchReportReplies();
+        });
     });
     
     // Periyodik bağlantı kontrolü timer'ı
@@ -1095,8 +1099,13 @@ void MainWindow::onDataReceived(const QString& data)
 {
     logTextEdit->append(QString("Sunucudan veri: %1").arg(data));
     showStatusMessage("Sunucudan veri alındı");
-    // Sadece notification JSON'u için buffer'da biriktir
     QString trimmed = data.trimmed();
+    // Eğer gelen veri REPORT_REPLY ile başlıyorsa doğrudan notification dialog göster
+    if (trimmed.startsWith("REPORT_REPLY:")) {
+        onReportReplyReceived(trimmed);
+        return;
+    }
+    // Sadece notification JSON'u için buffer'da biriktir
     if (!trimmed.isEmpty()) {
         // Eğer satır bir JSON parçası ise buffer'a ekle
         if (trimmed.startsWith("{") || !notificationBuffer.isEmpty()) {
@@ -1294,6 +1303,9 @@ void MainWindow::setupAdminPanel()
     connect(queryRepliesButton, &QPushButton::clicked, this, &MainWindow::onqueryMyReplies);
     connect(listenNotificationsButton, &QPushButton::clicked, this, &MainWindow::onListenForNotifications);
     connect(watchReplyButton, &QPushButton::clicked, this, &MainWindow::onWatchReportReplies);
+
+    // POSIX thread'den gelen reportReplyReceived sinyalini bağla
+    connect(clientWrapper, &ClientWrapper::reportReplyReceived, this, &MainWindow::onReportReplyReceived);
 }
 
 /**
@@ -2160,7 +2172,7 @@ void MainWindow::onWatchReportReplies()
     }
     
     // Sunucuya izleme isteği gönder
-    // clientWrapper->watchReportReplies();
+    clientWrapper->watchReportReplies();
     
     // Kullanıcıya bilgilendirme mesajı
     QString logMessage = "<span style='color: #3498db;'><b>[BİLGİ]</b></span> Rapor cevapları izleme başlatıldı. Yeni cevaplar otomatik olarak gösterilecek.";
@@ -2350,5 +2362,48 @@ void MainWindow::createChatRoom(const QString& name, int accessType, int maxUser
 {
     if (clientWrapper) {
         clientWrapper->createChatRoom(name, accessType, maxUsers, userIds);
+    }
+}
+
+/**
+ * @brief POSIX thread'den gelen rapor cevabını ekranda gösterir
+ * @param replyString Sunucudan gelen cevap (ör: "REPORT_REPLY:196:deneme")
+ */
+void MainWindow::onReportReplyReceived(const QString& replyString)
+{
+    // Log'a ekle
+    logTextEdit->append(QString("<span style='color: #e67e22;'><b>[POSIX CEVAP]</b></span> %1").arg(replyString));
+    adminLogEdit->append(QString("<span style='color: #e67e22;'><b>[POSIX CEVAP]</b></span> %1").arg(replyString));
+
+    // Cevabı parse et: "REPORT_REPLY:196:deneme"
+    QStringList parts = replyString.split(":");
+    if (parts.size() >= 3 && parts[0] == "REPORT_REPLY") {
+        int reportId = parts[1].toInt();
+        QString message = parts.mid(2).join(":"); // Mesajda ':' olabilir
+
+        // Bildirim JSON'u oluştur
+        QJsonObject replyNotification;
+        replyNotification["report_id"] = reportId;
+        replyNotification["message"] = message;
+        replyNotification["type"] = "Rapor Cevabı";
+        replyNotification["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        replyNotification["icon"] = "📋";
+        replyNotification["title"] = QString("Yeni Rapor Cevabı");
+        replyNotification["color"] = "#17a2b8";
+
+        QJsonDocument doc(replyNotification);
+        QString notificationJson = QString::fromUtf8(doc.toJson());
+
+        // Bildirim dialog'unu modal ve ekranda kalıcı şekilde göster
+        NotificationDialog* dialog = new NotificationDialog(notificationJson, this);
+        dialog->setModal(true);
+        dialog->setWindowFlags(Qt::Dialog | Qt::WindowStaysOnTopHint | Qt::WindowCloseButtonHint);
+        dialog->showWithAnimation();
+        // Kapatıldığında bellek temizliği
+        connect(dialog, &NotificationDialog::dialogClosed, dialog, &NotificationDialog::deleteLater);
+        logTextEdit->append("<b>[NOTIFICATION]</b> POSIX rapor cevabı dialog'u gösterildi.");
+    } else {
+        // Format hatalıysa logla
+        logTextEdit->append("[HATA] POSIX cevabı parse edilemedi: " + replyString);
     }
 }

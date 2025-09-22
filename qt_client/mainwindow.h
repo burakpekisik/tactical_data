@@ -83,6 +83,7 @@ private slots:
     void onNewReportReplyReceived(int reportId, const QString& message);
     void onWatchReportReplies();
     void onAdminNotificationReceived(const QString& notification);
+    void onReportReplyReceived(const QString& replyString);
     void onConnectionTypeChanged(ClientWrapper::ConnectionType type);
     void onFallbackStatusChanged(const QString& status);
     void onFallbackTestResult(const QString& connectionType, bool success, const QString& message);
